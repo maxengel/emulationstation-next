@@ -5517,19 +5517,25 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		SystemConf::getInstance()->set("syncthing.enabled", syncthingenabled ? "1" : "0");
 	});
 
-       auto mount_cloud = std::make_shared<SwitchComponent>(mWindow);
-	bool mntcloudEnabled = SystemConf::getInstance()->get("clouddrive.mounted") == "1";
-	mount_cloud->setState(mntcloudEnabled);
-	s->addWithLabel(_("MOUNT CLOUD DRIVE"), mount_cloud);
-	mount_cloud->setOnChangedCallback([mount_cloud] {
-		if (mount_cloud->getState() == false) {
-			Utils::Platform::runSystemCommand("rclonectl unmount", "", nullptr);
-		} else {
-			Utils::Platform::runSystemCommand("rclonectl mount", "", nullptr);
-		}
-		bool cloudenabled = mount_cloud->getState();
-		SystemConf::getInstance()->set("clouddrive.mounted", cloudenabled ? "1" : "0");
-	});
+	if (Utils::FileSystem::exists("/usr/bin/cloud_backup"))
+	{
+		s->addEntry(_("CLOUD BACKUP"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("BACK UP GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+				[] {
+				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_backup\"", "", nullptr);
+				}, _("NO"), nullptr));
+		});
+	}
+
+	if (Utils::FileSystem::exists("/usr/bin/cloud_restore"))
+	{
+		s->addEntry(_("CLOUD RESTORE"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("RESTORE GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+				[] {
+				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore\"", "", nullptr);
+				}, _("NO"), nullptr));
+		});
+	}
 
 	s->addGroup(_("VPN SERVICES"));
 
