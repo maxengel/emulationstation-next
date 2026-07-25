@@ -253,14 +253,14 @@ void GuiMenu::openResetOptions()
 	auto s = new GuiSettings(mWindow, _("SYSTEM MANAGEMENT AND RESET").c_str());
 
 	s->addGroup(_("DATA MANAGEMENT"));
-	s->addEntry(_("BACKUP CONFIGURATIONS"), true, [window] {
+	s->addEntry(_("BACKUP CONFIGURATIONS TO DEVICE"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWIFI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
 		}, _("NO"), nullptr));
 	});
 
-	s->addEntry(_("RESTORE FROM BACKUP"), true, [window] {
+	s->addEntry(_("RESTORE CONFIGURATION FROM DEVICE"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WIFI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool restore\"", "", nullptr);
@@ -269,14 +269,14 @@ void GuiMenu::openResetOptions()
 
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		s->addEntry(_("BACK UP TO CLOUD"), true, [window] {
+		s->addEntry(_("BACKUP CONFIGURATIONS TO CLOUD"), true, [window] {
 		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS AND UPLOAD THE BACKUP TO YOUR CLOUD REMOTE?"), _("YES"),
 			[] {
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup && /usr/bin/cloud_backup --yes --system-only\"", "", nullptr);
 			}, _("NO"), nullptr));
 		});
 
-		s->addEntry(_("RESTORE FROM CLOUD"), true, [window] {
+		s->addEntry(_("RESTORE CONFIGURATION FROM CLOUD"), true, [window] {
 		window->pushGui(new GuiMsgBox(window, _("DOWNLOAD YOUR BACKUP FROM THE CLOUD AND RESTORE IT?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT."), _("YES"),
 			[] {
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
