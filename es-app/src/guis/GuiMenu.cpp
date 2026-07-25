@@ -280,7 +280,7 @@ void GuiMenu::openResetOptions()
 				_("NO"), nullptr));
 		};
 
-		s->addEntry(_("BACKUP CONFIGURATIONS TO CLOUD"), true, [window] {
+		s->addEntry(_("BACKUP CONFIGURATIONS TO CLOUD"), true, [window, requireCloud] {
 	requireCloud([window] {
 		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS AND UPLOAD THE BACKUP TO YOUR CLOUD REMOTE?"), _("YES"),
 			[] {
@@ -289,7 +289,7 @@ void GuiMenu::openResetOptions()
 		});
 		});
 
-		s->addEntry(_("RESTORE CONFIGURATION FROM CLOUD"), true, [window] {
+		s->addEntry(_("RESTORE CONFIGURATION FROM CLOUD"), true, [window, requireCloud] {
 	requireCloud([window] {
 		window->pushGui(new GuiMsgBox(window, _("DOWNLOAD YOUR BACKUP FROM THE CLOUD AND RESTORE IT?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT."), _("YES"),
 			[] {
