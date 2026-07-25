@@ -255,7 +255,7 @@ void GuiMenu::openResetOptions()
 	auto s = new GuiSettings(mWindow, _("SYSTEM MANAGEMENT AND RESET").c_str());
 
 	s->addGroup(_("DATA MANAGEMENT"));
-	s->addEntry(_("BACKUP CONFIGURATIONS TO DEVICE"), true, [window] {
+	s->addEntry(_("BACK UP CONFIGURATIONS TO DEVICE"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWIFI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
@@ -280,7 +280,7 @@ void GuiMenu::openResetOptions()
 				_("NO"), nullptr));
 		};
 
-		s->addEntry(_("BACKUP CONFIGURATIONS TO CLOUD"), true, [window, requireCloud] {
+		s->addEntry(_("BACK UP CONFIGURATIONS TO CLOUD"), true, [window, requireCloud] {
 	requireCloud([window] {
 		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS AND UPLOAD THE BACKUP TO YOUR CLOUD REMOTE?"), _("YES"),
 			[] {
