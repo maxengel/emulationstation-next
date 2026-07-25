@@ -5725,21 +5725,21 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 
 		s->addEntry(_("SYNC WITH CLOUD"), true, [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
-				[] {
+				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC WITH CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
 		s->addEntry(_("UPLOAD TO CLOUD"), true, [window] {
 			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-				[] {
+				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD TO CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
 		s->addEntry(_("DOWNLOAD FROM CLOUD"), true, [window] {
 			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
-				[] {
+				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
 				}, _("NO"), nullptr));
 		});
