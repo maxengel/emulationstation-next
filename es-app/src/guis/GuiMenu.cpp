@@ -3948,6 +3948,31 @@ void GuiMenu::openGamesSettings()
 	{
 		s->addGroup(_("CLOUD TOOLS"));
 
+		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+
+		// Unconfigured entries render dimmed and offer to run the setup flow.
+		auto addCloudEntry = [s, window, cloudConfigured](const std::string& label, const std::function<void()>& action)
+		{
+			if (cloudConfigured)
+			{
+				s->addEntry(label, true, action);
+				return;
+			}
+
+			auto theme = ThemeData::getMenuTheme();
+			ComponentListRow row;
+			auto text = std::make_shared<TextComponent>(window, label, theme->Text.font, (theme->Text.color & 0xFFFFFF00) | 0x50);
+			row.addElement(text, true);
+			row.makeAcceptInputHandler([window]
+			{
+				window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
+					[] { Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr); },
+					_("NO"), nullptr));
+			});
+			s->addRow(row);
+		};
+
+
 		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 		{
 			s->addEntry(_("SET UP CLOUD REMOTE"), true, [window] {
@@ -3955,21 +3980,21 @@ void GuiMenu::openGamesSettings()
 			});
 		}
 
-		s->addEntry(_("SYNC WITH CLOUD"), true, [window] {
+		addCloudEntry(_("SYNC WITH CLOUD"), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC WITH CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
-		s->addEntry(_("UPLOAD TO CLOUD"), true, [window] {
+		addCloudEntry(_("UPLOAD TO CLOUD"), [window] {
 			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD TO CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
-		s->addEntry(_("DOWNLOAD FROM CLOUD"), true, [window] {
+		addCloudEntry(_("DOWNLOAD FROM CLOUD"), [window] {
 			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
@@ -3978,7 +4003,7 @@ void GuiMenu::openGamesSettings()
 
 		if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
 		{
-			s->addEntry(_("RESTORE CONTENT FROM CLOUD"), true, [window] {
+			addCloudEntry(_("RESTORE CONTENT FROM CLOUD"), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
