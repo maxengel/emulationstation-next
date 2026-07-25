@@ -673,7 +673,7 @@ int main(int argc, char* argv[])
 			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
 			std::string key = SystemConf::getInstance()->get("wifi.key");
 			if (SystemConf::getInstance()->getBool("wifi.enabled") && !ssid.empty() && !key.empty())
-				ApiSystem::getInstance()->enableWifi(ssid, key);
+				ApiSystem::getInstance()->enableWifi(ssid, key, SystemConf::getInstance()->get("wifi.country"));
 		});
 		window.pushGui(restoreGui);
 	}
