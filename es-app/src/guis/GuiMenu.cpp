@@ -5715,6 +5715,13 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	{
 		s->addGroup(_("CLOUD SAVES"));
 
+		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
+		{
+			s->addEntry(_("SET UP CLOUD REMOTE"), true, [window] {
+				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr);
+			});
+		}
+
 		s->addEntry(_("SYNC WITH CLOUD"), true, [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[] {
