@@ -254,14 +254,14 @@ void GuiMenu::openResetOptions()
 
 	s->addGroup(_("DATA MANAGEMENT"));
 	s->addEntry(_("BACKUP CONFIGURATIONS"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("WARNING THIS WILL RESTART EMULATIONSTATION!\n\nAFTER THE SCRIPT IS DONE REMEMBER TO COPY THE FILE /storage/roms/backup/ROCKNIX_BACKUP.zip TO SOME PLACE SAFE OR IT WILL BE DELETED ON NEXT REBOOT!\n\nBACKUP CURRENT CONFIG AND RESTART?"), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWIFI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESTORE FROM BACKUP"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("WARNING THIS WILL REBOOT YOUR DEVICE!\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN!\n\nRESTORE FROM BACKUP AND RESTART?"), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WIFI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool restore\"", "", nullptr);
 		}, _("NO"), nullptr));
