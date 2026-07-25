@@ -4138,6 +4138,103 @@ void GuiMenu::openGamesSettings()
 		s->addSaveFunc([autoControllers] { SystemConf::getInstance()->set("global.disableautocontrollers", autoControllers->getState() ? "" : "1"); });
 	}
 
+	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
+	{
+		s->addGroup(_("CLOUD TOOLS"));
+
+		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
+		{
+			s->addEntry(_("SET UP CLOUD REMOTE"), true, [window] {
+				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr);
+			});
+		}
+
+		s->addEntry(_("SYNC WITH CLOUD"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
+				[window] {
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC WITH CLOUD"));
+				}, _("NO"), nullptr));
+		});
+
+		s->addEntry(_("UPLOAD TO CLOUD"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+				[window] {
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD TO CLOUD"));
+				}, _("NO"), nullptr));
+		});
+
+		s->addEntry(_("DOWNLOAD FROM CLOUD"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+				[window] {
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
+				}, _("NO"), nullptr));
+		});
+
+		if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
+		{
+			s->addEntry(_("RESTORE CONTENT FROM CLOUD"), true, [window] {
+				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
+					[](auto gui)
+					{
+						std::vector<std::string> dirs;
+						std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_content_restore --list");
+						for (auto& line : Utils::String::split(out, '\n'))
+						{
+							auto dir = Utils::String::trim(line);
+							if (!dir.empty())
+								dirs.push_back(dir);
+						}
+						return dirs;
+					},
+					[window](std::vector<std::string> dirs)
+					{
+						if (dirs.empty())
+						{
+							window->pushGui(new GuiMsgBox(window, _("NO DIRECTORIES FOUND ON THE CLOUD REMOTE.")));
+							return;
+						}
+						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM CLOUD"));
+						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
+						picker->addEntry(_("EVERYTHING"), true, [window] {
+							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD ALL CONTENT FROM THE CLOUD TO THIS DEVICE?"), _("YES"),
+								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --all", _("RESTORE CONTENT")); },
+								_("NO"), nullptr));
+						});
+						for (auto dir : dirs)
+						{
+							picker->addEntry(dir, true, [window, dir] {
+								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("DOWNLOAD \"%s\" FROM THE CLOUD TO THIS DEVICE?").c_str(), dir.c_str()), _("YES"),
+									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore " + std::string("\"") + dir + "\"", _("RESTORE CONTENT")); },
+									_("NO"), nullptr));
+							});
+						}
+						window->pushGui(picker);
+					}));
+			});
+		}
+
+
+		s->addEntry(_("CHANGE SYNC SETTINGS"), true, [window] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/rclone config\"", "", nullptr);
+		});
+
+		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
+		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
+		s->addWithLabel(_("SYNC DURING STARTUP"), cloud_startup);
+		cloud_startup->setOnChangedCallback([cloud_startup] {
+			SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
+			SystemConf::getInstance()->saveSystemConf();
+		});
+
+		auto cloud_gameexit = std::make_shared<SwitchComponent>(mWindow);
+		cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
+		s->addWithLabel(_("SYNC WHEN EXITING A GAME"), cloud_gameexit);
+		cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
+			SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
+			SystemConf::getInstance()->saveSystemConf();
+		});
+	}
+
 	s->addGroup(_("SYSTEM SETTINGS"));
 
 	// Custom config for systems
@@ -5713,102 +5810,6 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		SystemConf::getInstance()->set("syncthing.enabled", syncthingenabled ? "1" : "0");
 	});
 
-	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
-	{
-		s->addGroup(_("CLOUD SAVES"));
-
-		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
-		{
-			s->addEntry(_("SET UP CLOUD REMOTE"), true, [window] {
-				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr);
-			});
-		}
-
-		s->addEntry(_("SYNC WITH CLOUD"), true, [window] {
-			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC WITH CLOUD"));
-				}, _("NO"), nullptr));
-		});
-
-		s->addEntry(_("UPLOAD TO CLOUD"), true, [window] {
-			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD TO CLOUD"));
-				}, _("NO"), nullptr));
-		});
-
-		s->addEntry(_("DOWNLOAD FROM CLOUD"), true, [window] {
-			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
-				}, _("NO"), nullptr));
-		});
-
-		if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
-		{
-			s->addEntry(_("RESTORE CONTENT FROM CLOUD"), true, [window] {
-				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
-					[](auto gui)
-					{
-						std::vector<std::string> dirs;
-						std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_content_restore --list");
-						for (auto& line : Utils::String::split(out, '\n'))
-						{
-							auto dir = Utils::String::trim(line);
-							if (!dir.empty())
-								dirs.push_back(dir);
-						}
-						return dirs;
-					},
-					[window](std::vector<std::string> dirs)
-					{
-						if (dirs.empty())
-						{
-							window->pushGui(new GuiMsgBox(window, _("NO DIRECTORIES FOUND ON THE CLOUD REMOTE.")));
-							return;
-						}
-						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM CLOUD"));
-						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
-						picker->addEntry(_("EVERYTHING"), true, [window] {
-							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD ALL CONTENT FROM THE CLOUD TO THIS DEVICE?"), _("YES"),
-								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --all", _("RESTORE CONTENT")); },
-								_("NO"), nullptr));
-						});
-						for (auto dir : dirs)
-						{
-							picker->addEntry(dir, true, [window, dir] {
-								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("DOWNLOAD \"%s\" FROM THE CLOUD TO THIS DEVICE?").c_str(), dir.c_str()), _("YES"),
-									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore " + std::string("\"") + dir + "\"", _("RESTORE CONTENT")); },
-									_("NO"), nullptr));
-							});
-						}
-						window->pushGui(picker);
-					}));
-			});
-		}
-
-
-		s->addEntry(_("CHANGE SYNC SETTINGS"), true, [window] {
-			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/rclone config\"", "", nullptr);
-		});
-
-		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
-		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
-		s->addWithLabel(_("SYNC DURING STARTUP"), cloud_startup);
-		cloud_startup->setOnChangedCallback([cloud_startup] {
-			SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
-			SystemConf::getInstance()->saveSystemConf();
-		});
-
-		auto cloud_gameexit = std::make_shared<SwitchComponent>(mWindow);
-		cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
-		s->addWithLabel(_("SYNC WHEN EXITING A GAME"), cloud_gameexit);
-		cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
-			SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
-			SystemConf::getInstance()->saveSystemConf();
-		});
-	}
 
 	s->addGroup(_("VPN SERVICES"));
 
