@@ -4,6 +4,8 @@
 #include "services/HttpServerThread.h"
 #include "guis/GuiDetectDevice.h"
 #include "guis/GuiMsgBox.h"
+#include "SystemConf.h"
+#include "guis/GuiSettings.h"
 #include "utils/FileSystemUtil.h"
 #include "views/ViewController.h"
 #include "CollectionSystemManager.h"
@@ -653,7 +655,22 @@ int main(int argc, char* argv[])
 	if (Utils::FileSystem::exists(restoreMarker))
 	{
 		std::remove(restoreMarker.c_str());
-		window.pushGui(new GuiMsgBox(&window, _("YOUR BACKUP WAS RESTORED.\n\nFOR SECURITY, BACKUPS DO NOT INCLUDE PASSWORDS. PLEASE RE-ENTER THEM IN THE MAIN MENU:\nWIFI KEY (NETWORK SETTINGS), RETROACHIEVEMENTS AND NETPLAY (GAME SETTINGS), SCREENSCRAPER (SCRAPER)."), _("OK")));
+		// Native re-entry page: masked on-screen-keyboard rows bound to the
+		// stores each credential lives in; wifi reconnects on close.
+		GuiSettings* restoreGui = new GuiSettings(&window, _("FINISH RESTORE SETUP"));
+		restoreGui->addGroup(_("FOR SECURITY, BACKUPS DO NOT INCLUDE PASSWORDS. RE-ENTER THEM HERE OR LATER IN THE MAIN MENU."));
+		restoreGui->addInputTextConfigRow(_("WIFI KEY"), "wifi.key", true);
+		restoreGui->addInputTextConfigRow(_("RETROACHIEVEMENTS PASSWORD"), "global.retroachievements.password", true);
+		restoreGui->addInputTextConfigRow(_("NETPLAY PASSWORD"), "global.netplay.password", true);
+		restoreGui->addInputTextConfigRow(_("SCREENSCRAPER PASSWORD"), "ScreenScraperPass", true, true);
+		restoreGui->addSaveFunc([]
+		{
+			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
+			std::string key = SystemConf::getInstance()->get("wifi.key");
+			if (SystemConf::getInstance()->getBool("wifi.enabled") && !ssid.empty() && !key.empty())
+				ApiSystem::getInstance()->enableWifi(ssid, key);
+		});
+		window.pushGui(restoreGui);
 	}
 
 	// Create a flag in  temporary directory to signal READY state
