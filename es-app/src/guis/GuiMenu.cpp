@@ -271,18 +271,31 @@ void GuiMenu::openResetOptions()
 
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
+		const bool cloudReady = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+		auto requireCloud = [window, cloudReady](const std::function<void()>& action)
+		{
+			if (cloudReady) { action(); return; }
+			window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
+				[] { Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr); },
+				_("NO"), nullptr));
+		};
+
 		s->addEntry(_("BACKUP CONFIGURATIONS TO CLOUD"), true, [window] {
+	requireCloud([window] {
 		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS AND UPLOAD THE BACKUP TO YOUR CLOUD REMOTE?"), _("YES"),
 			[] {
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup && /usr/bin/cloud_backup --yes --system-only\"", "", nullptr);
 			}, _("NO"), nullptr));
 		});
+		});
 
 		s->addEntry(_("RESTORE CONFIGURATION FROM CLOUD"), true, [window] {
+	requireCloud([window] {
 		window->pushGui(new GuiMsgBox(window, _("DOWNLOAD YOUR BACKUP FROM THE CLOUD AND RESTORE IT?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT."), _("YES"),
 			[] {
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
 			}, _("NO"), nullptr));
+		});
 		});
 	}
 
