@@ -5517,23 +5517,49 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		SystemConf::getInstance()->set("syncthing.enabled", syncthingenabled ? "1" : "0");
 	});
 
-	if (Utils::FileSystem::exists("/usr/bin/cloud_backup"))
+	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		s->addEntry(_("CLOUD BACKUP"), true, [window] {
-			window->pushGui(new GuiMsgBox(window, _("BACK UP GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+		s->addGroup(_("CLOUD SAVES"));
+
+		s->addEntry(_("SYNC TO CLOUD"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[] {
 				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_backup\"", "", nullptr);
 				}, _("NO"), nullptr));
 		});
-	}
 
-	if (Utils::FileSystem::exists("/usr/bin/cloud_restore"))
-	{
-		s->addEntry(_("CLOUD RESTORE"), true, [window] {
-			window->pushGui(new GuiMsgBox(window, _("RESTORE GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+		s->addEntry(_("SYNC TO DEVICE"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[] {
 				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore\"", "", nullptr);
 				}, _("NO"), nullptr));
+		});
+
+		s->addEntry(_("BIDIRECTIONAL SYNC"), true, [window] {
+			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
+				[] {
+				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update\"", "", nullptr);
+				}, _("NO"), nullptr));
+		});
+
+		s->addEntry(_("CHANGE SYNC SETTINGS"), true, [window] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/rclone config\"", "", nullptr);
+		});
+
+		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
+		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
+		s->addWithLabel(_("SYNC DURING STARTUP"), cloud_startup);
+		cloud_startup->setOnChangedCallback([cloud_startup] {
+			SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
+			SystemConf::getInstance()->saveSystemConf();
+		});
+
+		auto cloud_gameexit = std::make_shared<SwitchComponent>(mWindow);
+		cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
+		s->addWithLabel(_("SYNC WHEN EXITING A GAME"), cloud_gameexit);
+		cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
+			SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
+			SystemConf::getInstance()->saveSystemConf();
 		});
 	}
 
