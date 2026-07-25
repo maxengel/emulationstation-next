@@ -17,6 +17,7 @@
 #include "guis/GuiGamelistOptions.h"
 #include "guis/GuiImageViewer.h"
 #include "guis/GuiMoonlight.h"
+#include "ThreadedCloudSync.h"
 #include "guis/GuiNetPlaySettings.h"
 #include "guis/GuiRetroAchievementsSettings.h"
 #include "guis/GuiSystemInformation.h"
@@ -5725,21 +5726,21 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		s->addEntry(_("SYNC WITH CLOUD"), true, [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[] {
-				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update\"", "", nullptr);
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC WITH CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
 		s->addEntry(_("UPLOAD TO CLOUD"), true, [window] {
 			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[] {
-				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_backup\"", "", nullptr);
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD TO CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
 		s->addEntry(_("DOWNLOAD FROM CLOUD"), true, [window] {
 			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[] {
-				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore\"", "", nullptr);
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
