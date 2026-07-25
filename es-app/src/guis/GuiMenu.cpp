@@ -18,6 +18,7 @@
 #include "guis/GuiImageViewer.h"
 #include "guis/GuiMoonlight.h"
 #include "ThreadedCloudSync.h"
+#include "guis/GuiLoading.h"
 #include "guis/GuiNetPlaySettings.h"
 #include "guis/GuiRetroAchievementsSettings.h"
 #include "guis/GuiSystemInformation.h"
@@ -5549,6 +5550,49 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
 				}, _("NO"), nullptr));
 		});
+
+		if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
+		{
+			s->addEntry(_("RESTORE CONTENT FROM CLOUD"), true, [window] {
+				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
+					[](auto gui)
+					{
+						std::vector<std::string> dirs;
+						std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_content_restore --list");
+						for (auto& line : Utils::String::split(out, '\n'))
+						{
+							auto dir = Utils::String::trim(line);
+							if (!dir.empty())
+								dirs.push_back(dir);
+						}
+						return dirs;
+					},
+					[window](std::vector<std::string> dirs)
+					{
+						if (dirs.empty())
+						{
+							window->pushGui(new GuiMsgBox(window, _("NO DIRECTORIES FOUND ON THE CLOUD REMOTE.")));
+							return;
+						}
+						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM CLOUD"));
+						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
+						picker->addEntry(_("EVERYTHING"), true, [window] {
+							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD ALL CONTENT FROM THE CLOUD TO THIS DEVICE?"), _("YES"),
+								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --all", _("RESTORE CONTENT")); },
+								_("NO"), nullptr));
+						});
+						for (auto dir : dirs)
+						{
+							picker->addEntry(dir, true, [window, dir] {
+								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("DOWNLOAD \"%s\" FROM THE CLOUD TO THIS DEVICE?").c_str(), dir.c_str()), _("YES"),
+									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore " + std::string("\"") + dir + "\"", _("RESTORE CONTENT")); },
+									_("NO"), nullptr));
+							});
+						}
+						window->pushGui(picker);
+					}));
+			});
+		}
 
 
 		s->addEntry(_("CHANGE SYNC SETTINGS"), true, [window] {
