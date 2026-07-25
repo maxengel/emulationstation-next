@@ -269,6 +269,23 @@ void GuiMenu::openResetOptions()
 		}, _("NO"), nullptr));
 	});
 
+	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
+	{
+		s->addEntry(_("BACK UP TO CLOUD"), true, [window] {
+		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS AND UPLOAD THE BACKUP TO YOUR CLOUD REMOTE?"), _("YES"),
+			[] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup && /usr/bin/cloud_backup --yes --system-only\"", "", nullptr);
+			}, _("NO"), nullptr));
+		});
+
+		s->addEntry(_("RESTORE FROM CLOUD"), true, [window] {
+		window->pushGui(new GuiMsgBox(window, _("DOWNLOAD YOUR BACKUP FROM THE CLOUD AND RESTORE IT?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT."), _("YES"),
+			[] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
+			}, _("NO"), nullptr));
+		});
+	}
+
 	s->addEntry(_("CLEAN GAMELISTS & REMOVE UNUSED MEDIA"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("ARE YOU SURE?"), _("YES"), [&]
 	{

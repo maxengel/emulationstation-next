@@ -652,6 +652,15 @@ int main(int argc, char* argv[])
 		std::remove(markerFile.c_str());
 	}
 
+	// A finished backup restore leaves a one-shot marker (see backuptool);
+	// remind the user to re-enter the credentials backups exclude.
+	std::string restoreMarker = "/storage/.config/.restore-finish-pending";
+	if (Utils::FileSystem::exists(restoreMarker))
+	{
+		std::remove(restoreMarker.c_str());
+		window.pushGui(new GuiMsgBox(&window, _("YOUR BACKUP WAS RESTORED.\n\nFOR SECURITY, BACKUPS DO NOT INCLUDE PASSWORDS. PLEASE RE-ENTER THEM IN THE MAIN MENU:\nWIFI KEY (NETWORK SETTINGS), RETROACHIEVEMENTS AND NETPLAY (GAME SETTINGS), SCREENSCRAPER (SCRAPER)."), _("OK")));
+	}
+
 	// Create a flag in  temporary directory to signal READY state
 	ApiSystem::getInstance()->setReadyFlag();
 
