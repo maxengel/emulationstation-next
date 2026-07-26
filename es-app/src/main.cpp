@@ -651,6 +651,18 @@ int main(int argc, char* argv[])
 
 	// A finished backup restore leaves a one-shot marker (see backuptool);
 	// remind the user to re-enter the credentials backups exclude.
+	// Continuation of the one-touch cloud journey: after the settings restore
+	// reboot, offer to pull games and saves down from the cloud.
+	std::string journeyMarker = "/storage/.config/.cloud-journey-pending";
+	if (Utils::FileSystem::exists(journeyMarker))
+	{
+		std::remove(journeyMarker.c_str());
+		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES AND SAVES FROM THE CLOUD NOW?"), _("YES"),
+			[&window] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_content_restore --all && /usr/bin/cloud_restore --yes\"", "", &window);
+			}, _("LATER"), nullptr));
+	}
+
 	std::string restoreMarker = "/storage/.config/.restore-finish-pending";
 	if (Utils::FileSystem::exists(restoreMarker))
 	{
