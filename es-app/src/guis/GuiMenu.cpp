@@ -4174,6 +4174,22 @@ void GuiMenu::openGamesSettings()
 			});
 		}
 
+		// One-touch journey actions (fresh-handheld flow, fork issue #26)
+		addCloudEntry(_("RESTORE EVERYTHING"), [window] {
+			window->pushGui(new GuiMsgBox(window, _("SET UP THIS DEVICE FROM YOUR CLOUD BACKUP?\n\nSETTINGS ARE RESTORED FIRST AND THE DEVICE REBOOTS; GAMES AND SAVES ARE RESTORED AFTER THE RESTART."), _("YES"),
+				[] {
+				Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
+				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
+				}, _("NO"), nullptr));
+		});
+
+		addCloudEntry(_("BACK UP EVERYTHING"), [window] {
+			window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+				[window] {
+				ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACK UP EVERYTHING"));
+				}, _("NO"), nullptr));
+		});
+
 		addCloudEntry(_("SYNC WITH CLOUD"), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
@@ -4194,6 +4210,49 @@ void GuiMenu::openGamesSettings()
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
 				}, _("NO"), nullptr));
 		});
+
+		if (Utils::FileSystem::exists("/usr/bin/cloud_content_backup"))
+		{
+			addCloudEntry(_("UPLOAD CONTENT TO CLOUD"), [window] {
+				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
+					[](auto gui)
+					{
+						std::vector<std::string> dirs;
+						std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_content_backup --list");
+						for (auto& line : Utils::String::split(out, '\n'))
+						{
+							auto dir = Utils::String::trim(line);
+							if (!dir.empty())
+								dirs.push_back(dir);
+						}
+						return dirs;
+					},
+					[window](std::vector<std::string> dirs)
+					{
+						if (dirs.empty())
+						{
+							window->pushGui(new GuiMsgBox(window, _("NO CONTENT FOUND ON THIS DEVICE.")));
+							return;
+						}
+						auto picker = new GuiSettings(window, _("UPLOAD CONTENT TO CLOUD"));
+						picker->addGroup(_("COPIES FILES TO YOUR CLOUD REMOTE. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED."));
+						picker->addEntry(_("EVERYTHING"), true, [window] {
+							window->pushGui(new GuiMsgBox(window, _("UPLOAD ALL CONTENT FROM THIS DEVICE TO THE CLOUD?"), _("YES"),
+								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --all", _("UPLOAD CONTENT")); },
+								_("NO"), nullptr));
+						});
+						for (auto dir : dirs)
+						{
+							picker->addEntry(dir, true, [window, dir] {
+								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("UPLOAD \"%s\" TO THE CLOUD?").c_str(), dir.c_str()), _("YES"),
+									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup " + std::string("\"") + dir + "\"", _("UPLOAD CONTENT")); },
+									_("NO"), nullptr));
+							});
+						}
+						window->pushGui(picker);
+					}));
+			});
+		}
 
 		if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
 		{
