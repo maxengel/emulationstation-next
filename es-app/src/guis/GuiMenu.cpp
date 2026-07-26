@@ -255,19 +255,49 @@ void GuiMenu::openResetOptions()
 	auto s = new GuiSettings(mWindow, _("SYSTEM MANAGEMENT AND RESET").c_str());
 
 	s->addGroup(_("DATA MANAGEMENT"));
-	s->addEntry(_("BACKUP CONFIGURATIONS"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("WARNING THIS WILL RESTART EMULATIONSTATION!\n\nAFTER THE SCRIPT IS DONE REMEMBER TO COPY THE FILE /storage/roms/backup/ROCKNIX_BACKUP.zip TO SOME PLACE SAFE OR IT WILL BE DELETED ON NEXT REBOOT!\n\nBACKUP CURRENT CONFIG AND RESTART?"), _("YES"),
+	s->addEntry(_("BACK UP CONFIGURATIONS TO DEVICE"), true, [window] {
+	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWIFI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
 		}, _("NO"), nullptr));
 	});
 
-	s->addEntry(_("RESTORE FROM BACKUP"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("WARNING THIS WILL REBOOT YOUR DEVICE!\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN!\n\nRESTORE FROM BACKUP AND RESTART?"), _("YES"),
+	s->addEntry(_("RESTORE CONFIGURATION FROM DEVICE"), true, [window] {
+	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WIFI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool restore\"", "", nullptr);
 		}, _("NO"), nullptr));
 	});
+
+	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
+	{
+		const bool cloudReady = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+		auto requireCloud = [window, cloudReady](const std::function<void()>& action)
+		{
+			if (cloudReady) { action(); return; }
+			window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
+				[] { Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr); },
+				_("NO"), nullptr));
+		};
+
+		s->addEntry(_("BACK UP CONFIGURATIONS TO CLOUD"), true, [window, requireCloud] {
+	requireCloud([window] {
+		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS AND UPLOAD THE BACKUP TO YOUR CLOUD REMOTE?"), _("YES"),
+			[] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup && /usr/bin/cloud_backup --yes --system-only\"", "", nullptr);
+			}, _("NO"), nullptr));
+		});
+		});
+
+		s->addEntry(_("RESTORE CONFIGURATION FROM CLOUD"), true, [window, requireCloud] {
+	requireCloud([window] {
+		window->pushGui(new GuiMsgBox(window, _("DOWNLOAD YOUR BACKUP FROM THE CLOUD AND RESTORE IT?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT."), _("YES"),
+			[] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
+			}, _("NO"), nullptr));
+		});
+		});
+	}
 
 	s->addEntry(_("CLEAN GAMELISTS & REMOVE UNUSED MEDIA"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("ARE YOU SURE?"), _("YES"), [&]

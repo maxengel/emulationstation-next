@@ -4,6 +4,8 @@
 #include "services/HttpServerThread.h"
 #include "guis/GuiDetectDevice.h"
 #include "guis/GuiMsgBox.h"
+#include "SystemConf.h"
+#include "guis/GuiSettings.h"
 #include "utils/FileSystemUtil.h"
 #include "views/ViewController.h"
 #include "CollectionSystemManager.h"
@@ -645,6 +647,42 @@ int main(int argc, char* argv[])
 		window.pushGui(new GuiMsgBox(&window, "ROCKNIX IS FREE SOFTWARE.\n\n IF YOU PAID FOR ROCKNIX YOU HAVE BEEN SCAMMED.\n\n PLEASE REQUEST A REFUND FROM THE SELLER!", _("AGREE")));
 
 		std::remove(markerFile.c_str());
+	}
+
+	// A finished backup restore leaves a one-shot marker (see backuptool);
+	// remind the user to re-enter the credentials backups exclude.
+	// Continuation of the one-touch cloud journey: after the settings restore
+	// reboot, offer to pull games and saves down from the cloud.
+	std::string journeyMarker = "/storage/.config/.cloud-journey-pending";
+	if (Utils::FileSystem::exists(journeyMarker))
+	{
+		std::remove(journeyMarker.c_str());
+		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES AND SAVES FROM THE CLOUD NOW?"), _("YES"),
+			[&window] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_content_restore --all && /usr/bin/cloud_restore --yes\"", "", &window);
+			}, _("LATER"), nullptr));
+	}
+
+	std::string restoreMarker = "/storage/.config/.restore-finish-pending";
+	if (Utils::FileSystem::exists(restoreMarker))
+	{
+		std::remove(restoreMarker.c_str());
+		// Native re-entry page: masked on-screen-keyboard rows bound to the
+		// stores each credential lives in; wifi reconnects on close.
+		GuiSettings* restoreGui = new GuiSettings(&window, _("FINISH RESTORE SETUP"));
+		restoreGui->addGroup(_("FOR SECURITY, BACKUPS DO NOT INCLUDE PASSWORDS. RE-ENTER THEM HERE OR LATER IN THE MAIN MENU."));
+		restoreGui->addInputTextConfigRow(_("WIFI KEY"), "wifi.key", true);
+		restoreGui->addInputTextConfigRow(_("RETROACHIEVEMENTS PASSWORD"), "global.retroachievements.password", true);
+		restoreGui->addInputTextConfigRow(_("NETPLAY PASSWORD"), "global.netplay.password", true);
+		restoreGui->addInputTextConfigRow(_("SCREENSCRAPER PASSWORD"), "ScreenScraperPass", true, true);
+		restoreGui->addSaveFunc([]
+		{
+			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
+			std::string key = SystemConf::getInstance()->get("wifi.key");
+			if (SystemConf::getInstance()->getBool("wifi.enabled") && !ssid.empty() && !key.empty())
+				ApiSystem::getInstance()->enableWifi(ssid, key, SystemConf::getInstance()->get("wifi.country"));
+		});
+		window.pushGui(restoreGui);
 	}
 
 	// Create a flag in  temporary directory to signal READY state
