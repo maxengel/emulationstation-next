@@ -72,6 +72,7 @@
 #include <string>
 #include <utility>
 #include <array>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <cstdio>
@@ -4190,7 +4191,7 @@ void GuiMenu::openGamesSettings()
 			row.makeAcceptInputHandler([window]
 			{
 				window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
-					[] { Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr); },
+					[window] { GuiMenu::openCloudSetup(window); },
 					_("NO"), nullptr));
 			});
 			s->addRow(row);
@@ -4199,9 +4200,7 @@ void GuiMenu::openGamesSettings()
 
 		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 		{
-			s->addEntry(_("SET UP CLOUD REMOTE"), true, [window] {
-				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr);
-			});
+			s->addEntry(_("SET UP CLOUD REMOTE"), true, [window] { GuiMenu::openCloudSetup(window); });
 		}
 
 		// One-touch journey actions (fresh-handheld flow, fork issue #26)
@@ -4384,6 +4383,92 @@ void GuiMenu::openGamesSettings()
 void GuiMenu::openMissingBiosSettings()
 {
 	GuiBios::show(mWindow);
+}
+
+// Native cloud-remote setup page: shows the SSH connection facts from
+// `cloud_setup --info` and verifies the remote with `cloud_setup --check`
+// when the player says they are done. The interactive provider sign-in
+// itself happens in the player's computer terminal (rclone config); this
+// page only has to present text and verify - no console hop needed.
+void GuiMenu::openCloudSetup(Window* window)
+{
+	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("PLEASE WAIT"),
+		[](auto gui)
+		{
+			std::map<std::string, std::string> info;
+			std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_setup --info");
+			for (auto& line : Utils::String::split(out, '\n'))
+			{
+				auto pos = line.find('=');
+				if (pos != std::string::npos)
+					info[line.substr(0, pos)] = Utils::String::trim(line.substr(pos + 1));
+			}
+			return info;
+		},
+		[window](std::map<std::string, std::string> info)
+		{
+			if (info["IP"].empty())
+			{
+				window->pushGui(new GuiMsgBox(window, _("NO NETWORK CONNECTION DETECTED.\n\nCONNECT TO A NETWORK FIRST, THEN TRY AGAIN.")));
+				return;
+			}
+
+			auto s = new GuiSettings(window, _("SET UP CLOUD REMOTE"));
+			auto theme = ThemeData::getMenuTheme();
+
+			s->addGroup(_("FROM A COMPUTER ON YOUR NETWORK"));
+
+			auto addFact = [s, window, theme](const std::string& label, const std::string& value)
+			{
+				ComponentListRow row;
+				auto lbl = std::make_shared<TextComponent>(window, label, theme->Text.font, theme->Text.color);
+				auto val = std::make_shared<TextComponent>(window, value, theme->Text.font, theme->Text.selectedColor);
+				row.addElement(lbl, true);
+				row.addElement(val, false);
+				s->addRow(row);
+			};
+
+			addFact(_("1. CONNECT"), info["SSH_CMD"]);
+			addFact(_("   PASSWORD"), info["PASSWORD"].empty() ? _("<NOT SET>") : info["PASSWORD"]);
+			addFact(_("2. RUN"), "rclone config");
+
+			s->addGroup(_("IN RCLONE CONFIG"));
+			s->addEntry(_("CHOOSE 'N' FOR A NEW REMOTE AND PICK YOUR PROVIDER."), false, nullptr);
+			s->addEntry(_("DEFAULTS ARE FINE IF YOU ARE UNSURE."), false, nullptr);
+			s->addEntry(_("ANSWER 'Y' TO 'USE AUTO CONFIG?' AND OPEN THE SIGN-IN LINK IN YOUR COMPUTER'S BROWSER."), false, nullptr);
+			s->addEntry(_("QUIT WITH 'Q' WHEN YOUR REMOTE IS LISTED."), false, nullptr);
+
+			s->addGroup(_("WHEN YOU ARE DONE"));
+			s->addEntry(_("CHECK CLOUD REMOTE"), true, [window]
+			{
+				window->pushGui(new GuiLoading<std::pair<int, std::string>>(window, _("CHECKING..."),
+					[](auto gui)
+					{
+						std::string out = Utils::String::trim(Utils::Platform::GetShOutput("/usr/bin/cloud_setup --check; echo RC=$?"));
+						int rc = 1;
+						auto pos = out.rfind("RC=");
+						if (pos != std::string::npos)
+						{
+							rc = atoi(out.substr(pos + 3).c_str());
+							out = Utils::String::trim(out.substr(0, pos));
+						}
+						return std::pair<int, std::string>(rc, out);
+					},
+					[window](std::pair<int, std::string> result)
+					{
+						std::string remote = result.second.find(' ') != std::string::npos
+							? result.second.substr(result.second.find(' ') + 1) : result.second;
+						if (result.first == 0)
+							window->pushGui(new GuiMsgBox(window, _("CLOUD REMOTE CONFIGURED AND WORKING:") + "\n" + remote + "\n\n" + _("YOU CAN NOW USE THE CLOUD BACKUP AND RESTORE TOOLS.")));
+						else if (result.first == 2)
+							window->pushGui(new GuiMsgBox(window, _("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + "\n" + remote + "\n\n" + _("ITS SIGN-IN MAY BE INCOMPLETE OR EXPIRED. CONNECT AGAIN AND RUN:") + "\nrclone config reconnect " + remote));
+						else
+							window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE CONFIGURED YET.\n\nCOMPLETE 'RCLONE CONFIG' FROM YOUR COMPUTER, THEN CHECK AGAIN.")));
+					}));
+			});
+
+			window->pushGui(s);
+		}));
 }
 
 void GuiMenu::updateGameLists(Window* window, bool confirm)
