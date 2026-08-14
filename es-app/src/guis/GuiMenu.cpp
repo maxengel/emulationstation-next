@@ -4191,20 +4191,20 @@ void GuiMenu::openMissingBiosSettings()
 	GuiBios::show(mWindow);
 }
 
-// Native cloud-remote setup wizard: a step-by-step flow (connect ->
-// configure -> done) driven by the cloud_setup script. `--info` supplies
-// the connection facts, `--connected` proves an SSH session is actually
-// open before the connect step can be passed, and `--check` proves the
-// remote works before the configure step can be passed. Every gate offers
-// EXIT SETUP instead - the mandatory steps cannot be skipped, only left.
-// The interactive provider sign-in itself happens in the player's computer
-// terminal (rclone config); these pages present text and verify.
+// Native cloud-remote setup wizard, driven by the cloud_setup script:
+// 1 password, 2 SSH service, 3 connect, 4 create/repair the remote, then
+// a completion page. Every step verifies real state - the preconditions
+// via `--info`, the connection via `--connected` (an SSH session must
+// actually be open) and the remote via `--check` - so mandatory steps
+// cannot be skipped, only exited. GuiLoading is the spinner during each
+// check; check-circle/warning glyphs mark the step state. The interactive
+// provider sign-in itself happens in the player's computer terminal
+// (rclone config); these pages show short instructions and verify.
 
 enum class CloudSetupMode { FirstRemote, AddRemote, RepairRemote };
 
-// `remote` is the remote being repaired (RepairRemote mode); `preexisting`
-// is the space-separated remote list from wizard start (AddRemote mode), so
-// the final check can target the remote that was actually added.
+static void cloudSetupShowPasswordStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
+static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
 static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
 static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
 static void cloudSetupShowDoneStep(Window* window, const std::string& remote);
@@ -4225,8 +4225,9 @@ static std::string cloudSetupTitle(CloudSetupMode mode)
 static std::map<std::string, std::string> cloudSetupInfo()
 {
 	std::map<std::string, std::string> info;
-	std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_setup --info");
-	for (auto& line : Utils::String::split(out, '\n'))
+	// executeEnumerationScript keeps line boundaries; GetShOutput joins
+	// all output lines together, which breaks the key=value parse.
+	for (auto& line : ApiSystem::getInstance()->executeEnumerationScript("/usr/bin/cloud_setup --info"))
 	{
 		auto pos = line.find('=');
 		if (pos != std::string::npos)
@@ -4273,11 +4274,12 @@ static void cloudSetupRunCheck(Window* window, const std::string& remote, const 
 		}));
 }
 
-// Step 1 of 3: how to connect. Re-fetches --info on every entry so the
-// password / SSH-service rows refresh after their fix-it actions run.
-static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
+// Step 1 of 4: SSH needs a device password; set one here if missing.
+// CONTINUE only exists once the check passes - re-entering the step
+// after the fix action re-reads live state.
+static void cloudSetupShowPasswordStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
 {
-	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("PLEASE WAIT"),
+	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("CHECKING..."),
 		[](auto gui) { return cloudSetupInfo(); },
 		[window, mode, remote, preexisting](std::map<std::string, std::string> info)
 		{
@@ -4287,18 +4289,22 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 				return;
 			}
 
-			auto s = new GuiSettings(window, cloudSetupTitle(mode) + " - " + _("STEP 1 OF 3: CONNECT"));
-
-			s->addGroup(_("HOW TO CONNECT"));
-			s->addEntry(_("USE A COMPUTER ON THE SAME NETWORK AS THIS DEVICE."), false, nullptr);
-			s->addEntry(_("OPEN A TERMINAL THERE (WINDOWS: POWERSHELL, MAC: TERMINAL) AND TYPE:"), false, nullptr);
-			cloudSetupAddFact(s, window, _("COMMAND"), info["SSH_CMD"]);
-			cloudSetupAddFact(s, window, _("DEVICE IP"), info["IP"]);
+			auto s = new GuiSettings(window, cloudSetupTitle(mode));
+			s->setSubTitle(_("STEP 1 OF 4 - DEVICE PASSWORD"));
 
 			if (!info["PASSWORD"].empty())
-				cloudSetupAddFact(s, window, _("PASSWORD (WHEN ASKED)"), info["PASSWORD"]);
+			{
+				s->addEntry(_U("\uF058  ") + _("A PASSWORD IS SET:") + " " + info["PASSWORD"], false, nullptr);
+				s->addEntry(_("CONTINUE"), true, [window, s, mode, remote, preexisting]
+				{
+					s->close();
+					cloudSetupShowSshStep(window, mode, remote, preexisting);
+				});
+			}
 			else
-				s->addEntry(_("NO PASSWORD IS SET - SET ONE NOW"), true, [window, s, mode, remote, preexisting]
+			{
+				s->addEntry(_U("\uF071  ") + _("NO PASSWORD IS SET - SSH NEEDS ONE"), false, nullptr);
+				s->addEntry(_("SET A PASSWORD"), true, [window, s, mode, remote, preexisting]
 				{
 					auto pw = new GuiSettings(window, _("SET ROOT PASSWORD"));
 					pw->addInputTextConfigRow(_("ROOT PASSWORD"), "root.password", false);
@@ -4310,13 +4316,40 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 					pw->onFinalize([window, s, mode, remote, preexisting]
 					{
 						s->close();
-						cloudSetupShowConnectStep(window, mode, remote, preexisting);
+						cloudSetupShowPasswordStep(window, mode, remote, preexisting);
 					});
 					window->pushGui(pw);
 				});
+			}
+			s->addEntry(_("EXIT SETUP"), false, [s] { s->close(); });
 
-			if (info["SSH_UP"] != "active")
-				s->addEntry(_("SSH IS DISABLED - ENABLE IT NOW"), true, [window, s, mode, remote, preexisting]
+			window->pushGui(s);
+		}));
+}
+
+// Step 2 of 4: the SSH service must be running; enable it here if not.
+static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
+{
+	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("CHECKING..."),
+		[](auto gui) { return cloudSetupInfo(); },
+		[window, mode, remote, preexisting](std::map<std::string, std::string> info)
+		{
+			auto s = new GuiSettings(window, cloudSetupTitle(mode));
+			s->setSubTitle(_("STEP 2 OF 4 - SSH SERVICE"));
+
+			if (info["SSH_UP"] == "active")
+			{
+				s->addEntry(_U("\uF058  ") + _("SSH IS ENABLED AND RUNNING"), false, nullptr);
+				s->addEntry(_("CONTINUE"), true, [window, s, mode, remote, preexisting]
+				{
+					s->close();
+					cloudSetupShowConnectStep(window, mode, remote, preexisting);
+				});
+			}
+			else
+			{
+				s->addEntry(_U("\uF071  ") + _("SSH IS DISABLED"), false, nullptr);
+				s->addEntry(_("ENABLE SSH"), true, [window, s, mode, remote, preexisting]
 				{
 					Utils::Platform::runSystemCommand("mkdir -p /storage/.cache/services/", "", nullptr);
 					Utils::Platform::runSystemCommand("touch /storage/.cache/services/sshd.conf", "", nullptr);
@@ -4325,8 +4358,33 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 					SystemConf::getInstance()->set("ssh.enabled", "1");
 					SystemConf::getInstance()->saveSystemConf();
 					s->close();
-					cloudSetupShowConnectStep(window, mode, remote, preexisting);
+					cloudSetupShowSshStep(window, mode, remote, preexisting);
 				});
+			}
+			s->addEntry(_("EXIT SETUP"), false, [s] { s->close(); });
+
+			window->pushGui(s);
+		}));
+}
+
+// Step 3 of 4: connect from the computer; CONTINUE passes only when
+// --connected sees an established inbound SSH session.
+static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
+{
+	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("PLEASE WAIT"),
+		[](auto gui) { return cloudSetupInfo(); },
+		[window, mode, remote, preexisting](std::map<std::string, std::string> info)
+		{
+			auto s = new GuiSettings(window, cloudSetupTitle(mode));
+			s->setSubTitle(_("STEP 3 OF 4 - CONNECT FROM YOUR COMPUTER"));
+
+			s->addEntry(_("OPEN A TERMINAL ON A COMPUTER ON YOUR NETWORK AND RUN:"), false, nullptr);
+			cloudSetupAddFact(s, window, _("COMMAND"), info["SSH_CMD"]);
+			// With a connection override the direct address is not the one
+			// to use, so showing it would only mislead.
+			if (info["OVERRIDE"] != "1")
+				cloudSetupAddFact(s, window, _("DEVICE IP"), info["IP"]);
+			cloudSetupAddFact(s, window, _("PASSWORD"), info["PASSWORD"]);
 
 			s->addGroup(_("WHEN YOU ARE CONNECTED"));
 			s->addEntry(_("CONTINUE"), true, [window, s, mode, remote, preexisting]
@@ -4345,7 +4403,7 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 							return;
 						}
 						window->pushGui(new GuiMsgBox(window,
-							_("NO SSH CONNECTION TO THIS DEVICE WAS FOUND.\n\nFINISH THE CONNECT STEP FROM YOUR COMPUTER, KEEP THAT TERMINAL OPEN, THEN CONTINUE AGAIN."),
+							_("NO SSH CONNECTION TO THIS DEVICE WAS FOUND.\n\nCONNECT FROM YOUR COMPUTER, KEEP THAT TERMINAL OPEN, THEN CONTINUE AGAIN."),
 							_("OK"), nullptr,
 							_("EXIT SETUP"), [s] { s->close(); }));
 					}));
@@ -4380,26 +4438,31 @@ static void cloudSetupGateCheck(Window* window, GuiSettings* s, const std::strin
 	});
 }
 
-// Step 2 of 3: what to do inside the SSH session, branched by scenario.
+// Step 4 of 4: what to do inside the SSH session, as short numbered
+// steps branched by scenario; CONTINUE passes only when the remote
+// verifies via --check.
 static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
 {
-	auto s = new GuiSettings(window, cloudSetupTitle(mode) + " - " + _("STEP 2 OF 3: CONFIGURE"));
+	auto s = new GuiSettings(window, cloudSetupTitle(mode));
 
-	s->addGroup(_("IN THE CONNECTED TERMINAL"));
 	if (mode == CloudSetupMode::RepairRemote)
 	{
-		s->addEntry(_("IF THE SIGN-IN EXPIRED, RENEW IT WITH:"), false, nullptr);
+		s->setSubTitle(_("STEP 4 OF 4 - REPAIR THE REMOTE"));
 		cloudSetupAddFact(s, window, _("RUN"), "rclone config reconnect " + remote);
-		s->addEntry(_("TO CHANGE OTHER OPTIONS, RUN 'rclone config' AND CHOOSE 'E' TO EDIT IT."), false, nullptr);
-		s->addEntry(_("QUIT WITH 'Q' WHEN YOU ARE DONE."), false, nullptr);
+		s->addEntry(_("THAT RENEWS AN EXPIRED SIGN-IN."), false, nullptr);
+		s->addEntry(_("FOR OTHER OPTIONS: RUN 'rclone config', PRESS 'E' TO EDIT."), false, nullptr);
+		s->addEntry(_("PRESS 'Q' TO QUIT WHEN YOU ARE DONE."), false, nullptr);
 	}
 	else
 	{
+		s->setSubTitle(_("STEP 4 OF 4 - CREATE THE REMOTE"));
 		cloudSetupAddFact(s, window, _("RUN"), "rclone config");
-		s->addEntry(_("CHOOSE 'N' FOR A NEW REMOTE AND PICK YOUR PROVIDER."), false, nullptr);
-		s->addEntry(_("DEFAULTS ARE FINE IF YOU ARE UNSURE."), false, nullptr);
-		s->addEntry(_("ANSWER 'Y' TO 'USE AUTO CONFIG?' AND OPEN THE SIGN-IN LINK IN YOUR COMPUTER'S BROWSER."), false, nullptr);
-		s->addEntry(_("QUIT WITH 'Q' WHEN YOUR REMOTE IS LISTED."), false, nullptr);
+		s->addEntry(_("1. PRESS 'N' FOR A NEW REMOTE"), false, nullptr);
+		s->addEntry(_("2. NAME IT AND PICK YOUR PROVIDER"), false, nullptr);
+		s->addEntry(_("3. DEFAULTS ARE FINE IF YOU ARE UNSURE"), false, nullptr);
+		s->addEntry(_("4. AT 'USE AUTO CONFIG?' PRESS 'Y'"), false, nullptr);
+		s->addEntry(_("5. SIGN IN VIA THE LINK IN YOUR BROWSER"), false, nullptr);
+		s->addEntry(_("6. PRESS 'Q' TO QUIT WHEN THE REMOTE IS LISTED"), false, nullptr);
 		if (mode == CloudSetupMode::AddRemote)
 			s->addEntry(_("NOTE: THE CLOUD TOOLS USE THE FIRST REMOTE IN ALPHABETICAL ORDER."), false, nullptr);
 	}
@@ -4444,13 +4507,13 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 	window->pushGui(s);
 }
 
-// Step 3 of 3: confirmation plus clearly-optional follow-ups.
+// Completion page: confirmation plus clearly-optional follow-ups.
 static void cloudSetupShowDoneStep(Window* window, const std::string& remote)
 {
-	auto s = new GuiSettings(window, _("CLOUD SETUP COMPLETE") + " - " + _("STEP 3 OF 3"));
+	auto s = new GuiSettings(window, _("CLOUD SETUP COMPLETE"));
+	s->setSubTitle(_("ALL STEPS DONE"));
 
-	s->addGroup(_("CLOUD REMOTE CONFIGURED AND WORKING"));
-	cloudSetupAddFact(s, window, _("REMOTE"), remote);
+	s->addEntry(_U("\uF058  ") + _("REMOTE CONFIGURED AND WORKING:") + " " + remote, false, nullptr);
 	s->addEntry(_("THE CLOUD TOOLS IN GAME SETTINGS ARE NOW AVAILABLE."), false, nullptr);
 	s->addEntry(_("YOU CAN CLOSE THE TERMINAL ON YOUR COMPUTER."), false, nullptr);
 
@@ -4492,7 +4555,7 @@ void GuiMenu::openCloudSetup(Window* window)
 
 			if (remotes.empty())
 			{
-				cloudSetupShowConnectStep(window, CloudSetupMode::FirstRemote, "", "");
+				cloudSetupShowPasswordStep(window, CloudSetupMode::FirstRemote, "", "");
 				return;
 			}
 
@@ -4520,14 +4583,14 @@ void GuiMenu::openCloudSetup(Window* window)
 			s->addEntry(_("ADD ANOTHER REMOTE"), true, [window, s, preexisting]
 			{
 				s->close();
-				cloudSetupShowConnectStep(window, CloudSetupMode::AddRemote, "", preexisting);
+				cloudSetupShowPasswordStep(window, CloudSetupMode::AddRemote, "", preexisting);
 			});
 			s->addEntry(_("REPAIR OR MODIFY A REMOTE"), true, [window, s, remotes]
 			{
 				if (remotes.size() == 1)
 				{
 					s->close();
-					cloudSetupShowConnectStep(window, CloudSetupMode::RepairRemote, remotes.front(), "");
+					cloudSetupShowPasswordStep(window, CloudSetupMode::RepairRemote, remotes.front(), "");
 					return;
 				}
 				auto picker = new GuiSettings(window, _("WHICH REMOTE?"));
@@ -4537,7 +4600,7 @@ void GuiMenu::openCloudSetup(Window* window)
 					{
 						picker->close();
 						s->close();
-						cloudSetupShowConnectStep(window, CloudSetupMode::RepairRemote, remote, "");
+						cloudSetupShowPasswordStep(window, CloudSetupMode::RepairRemote, remote, "");
 					});
 				}
 				window->pushGui(picker);
@@ -4546,7 +4609,6 @@ void GuiMenu::openCloudSetup(Window* window)
 			window->pushGui(s);
 		}));
 }
-
 void GuiMenu::updateGameLists(Window* window, bool confirm)
 {
 	if (ThreadedScraper::isRunning())
