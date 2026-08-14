@@ -4419,9 +4419,9 @@ static std::string cloudSetupTitle(CloudSetupMode mode)
 static std::map<std::string, std::string> cloudSetupInfo()
 {
 	std::map<std::string, std::string> info;
-	// executeEnumerationScript keeps line boundaries; GetShOutput joins
-	// all output lines together, which breaks the key=value parse.
-	for (auto& line : ApiSystem::getInstance()->executeEnumerationScript("/usr/bin/cloud_setup --info"))
+	// executeScriptLegacy keeps line boundaries; GetShOutput joins all
+	// output lines together, which breaks the key=value parse.
+	for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --info"))
 	{
 		auto pos = line.find('=');
 		if (pos != std::string::npos)
