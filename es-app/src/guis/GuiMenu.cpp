@@ -4192,24 +4192,24 @@ void GuiMenu::openMissingBiosSettings()
 }
 
 // Native cloud-remote setup wizard, driven by the cloud_setup script:
-// 1 password, 2 SSH service, 3 connect, 4 create/repair the remote, then
-// a completion page. Every step verifies real state - the preconditions
-// via `--info`, the connection via `--connected` (an SSH session must
-// actually be open) and the remote via `--check` - so mandatory steps
-// cannot be skipped, only exited. CONTINUE and EXIT SETUP are bottom
-// buttons (replacing BACK), and CONTINUE only exists once the step's
-// check passes. GuiLoading is the spinner during each check;
-// check-circle/warning glyphs mark the step state. The interactive
-// provider sign-in itself happens in the player's computer terminal
-// (rclone config); these pages show short instructions and verify.
+// 1 SSH setup (password + service), 2 connect, 3 create/repair the
+// remote, then a completion page. Every step verifies real state - the
+// preconditions via `--info`, the connection via `--connected` (an SSH
+// session must actually be open) and the remote via `--check` - so
+// mandatory steps cannot be skipped, only exited. EXIT SETUP and
+// CONTINUE are bottom buttons (exit left, continue right; CONTINUE only
+// exists once the step's check passes). GuiLoading is the spinner during
+// each check; check-circle/warning glyphs mark the row states. The
+// interactive provider sign-in itself happens in the player's computer
+// terminal (rclone config); these pages show short instructions and
+// verify.
 
 enum class CloudSetupMode { FirstRemote, AddRemote, RepairRemote };
 
-static void cloudSetupShowPasswordStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
-static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
-static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
-static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting);
-static void cloudSetupShowDoneStep(Window* window, const std::string& remote);
+static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev);
+static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev);
+static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev);
+static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev);
 
 static std::string cloudSetupTitle(CloudSetupMode mode)
 {
@@ -4249,25 +4249,27 @@ static void cloudSetupAddFact(GuiSettings* s, Window* window, const std::string&
 	s->addRow(row);
 }
 
-// Close the current page and run `next` - deferred to the UI queue.
-// Closing a page from inside one of its own row/button handlers
-// destroys the executing closure with its captures; touching them
-// afterwards is a use-after-free (it crashed ES). The posted copy is
-// owned by the Window queue, so it survives the page teardown.
-static void cloudSetupAdvance(Window* window, GuiSettings* s, const std::function<void()>& next)
+// Show a freshly built wizard page: push it first, then close the page
+// it replaces. Closing first would flash the menu underneath between
+// steps (and the close-inside-own-handler variant of that was a
+// use-after-free crash).
+static void cloudSetupPresent(Window* window, GuiSettings* s, GuiSettings* prev)
 {
-	window->postToUiThread([s, next] { s->close(); next(); });
+	window->pushGui(s);
+	if (prev != nullptr)
+		prev->close();
 }
 
-// Bottom button row for a wizard page: CONTINUE (only when the step's
-// check has passed) and EXIT SETUP, replacing the default BACK button
-// so each page offers exactly those two ways out.
+// Bottom button row for a wizard page: EXIT SETUP on the left and,
+// once the step's check has passed, CONTINUE on the right - replacing
+// the default BACK button so each page offers exactly those two ways
+// out.
 static void cloudSetupSetButtons(GuiSettings* s, const std::function<void()>& onContinue)
 {
 	s->getMenu().clearButtons();
+	s->getMenu().addButton(_("EXIT SETUP"), _("exit setup"), [s] { s->close(); });
 	if (onContinue != nullptr)
 		s->getMenu().addButton(_("CONTINUE"), _("continue"), onContinue);
-	s->getMenu().addButton(_("EXIT SETUP"), _("exit setup"), [s] { s->close(); });
 }
 
 // Run `cloud_setup --check [remote]` and hand (exit code, remote name) to
@@ -4298,14 +4300,14 @@ static void cloudSetupRunCheck(Window* window, const std::string& remote, const 
 		}));
 }
 
-// Step 1 of 4: SSH needs a device password. The row is the action
-// itself, marked with its state; enter it to view or change the
-// password. CONTINUE appears once a password is set.
-static void cloudSetupShowPasswordStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
+// Step 1 of 3: SSH must be reachable - a device password and a running
+// SSH service, checked together on one page. Each row is the action,
+// marked with its state; CONTINUE appears once both checks pass.
+static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev)
 {
 	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("CHECKING..."),
 		[](auto gui) { return cloudSetupInfo(); },
-		[window, mode, remote, preexisting](std::map<std::string, std::string> info)
+		[window, mode, remote, preexisting, prev](std::map<std::string, std::string> info)
 		{
 			if (info["IP"].empty())
 			{
@@ -4313,14 +4315,15 @@ static void cloudSetupShowPasswordStep(Window* window, CloudSetupMode mode, cons
 				return;
 			}
 
-			const bool ok = !info["PASSWORD"].empty();
-			LOG(LogInfo) << "cloud_setup wizard: step 1 password, set=" << ok;
+			const bool pwOk = !info["PASSWORD"].empty();
+			const bool sshOk = info["SSH_UP"] == "active";
+			LOG(LogInfo) << "cloud_setup wizard: step 1 ssh setup, password=" << pwOk << " sshd=" << info["SSH_UP"];
 
 			auto s = new GuiSettings(window, cloudSetupTitle(mode));
-			s->setSubTitle(_("STEP 1 OF 4 - CONFIRM DEVICE PASSWORD SETUP"));
+			s->setSubTitle(_("STEP 1 OF 3 - SET UP SSH"));
 
 			const std::string current = info["PASSWORD"];
-			s->addEntry((ok ? _U("\uF058  ") : _U("\uF071  ")) + _("SET SSH PASSWORD"), true, [window, s, mode, remote, preexisting, current]
+			s->addEntry((pwOk ? _U("\uF058  ") : _U("\uF071  ")) + _("SET SSH PASSWORD"), true, [window, s, mode, remote, preexisting, current]
 			{
 				auto pw = new GuiSettings(window, _("SSH PASSWORD"));
 				cloudSetupAddFact(pw, window, _("CURRENT PASSWORD"), current.empty() ? _("<NOT SET>") : current);
@@ -4339,38 +4342,12 @@ static void cloudSetupShowPasswordStep(Window* window, CloudSetupMode mode, cons
 				});
 				pw->onFinalize([window, s, mode, remote, preexisting]
 				{
-					s->close();
-					cloudSetupShowPasswordStep(window, mode, remote, preexisting);
+					cloudSetupShowSshStep(window, mode, remote, preexisting, s);
 				});
 				window->pushGui(pw);
 			});
 
-			std::function<void()> onContinue = nullptr;
-			if (ok)
-				onContinue = [window, s, mode, remote, preexisting]
-				{
-					cloudSetupAdvance(window, s, [window, mode, remote, preexisting] { cloudSetupShowSshStep(window, mode, remote, preexisting); });
-				};
-			cloudSetupSetButtons(s, onContinue);
-
-			window->pushGui(s);
-		}));
-}
-
-// Step 2 of 4: the SSH service must be running; enable it here if not.
-static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
-{
-	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("CHECKING..."),
-		[](auto gui) { return cloudSetupInfo(); },
-		[window, mode, remote, preexisting](std::map<std::string, std::string> info)
-		{
-			const bool ok = info["SSH_UP"] == "active";
-			LOG(LogInfo) << "cloud_setup wizard: step 2 ssh, state=" << info["SSH_UP"];
-
-			auto s = new GuiSettings(window, cloudSetupTitle(mode));
-			s->setSubTitle(_("STEP 2 OF 4 - CONFIRM SSH IS ENABLED"));
-
-			if (ok)
+			if (sshOk)
 				s->addEntry(_U("\uF058  ") + _("SSH SERVICE IS ENABLED"), false, nullptr);
 			else
 				s->addEntry(_U("\uF071  ") + _("ENABLE SSH SERVICE"), true, [window, s, mode, remote, preexisting]
@@ -4382,41 +4359,43 @@ static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std
 					Utils::Platform::runSystemCommand("systemctl start sshd", "", nullptr);
 					SystemConf::getInstance()->set("ssh.enabled", "1");
 					SystemConf::getInstance()->saveSystemConf();
-					cloudSetupAdvance(window, s, [window, mode, remote, preexisting] { cloudSetupShowSshStep(window, mode, remote, preexisting); });
+					cloudSetupShowSshStep(window, mode, remote, preexisting, s);
 				});
 
 			std::function<void()> onContinue = nullptr;
-			if (ok)
+			if (pwOk && sshOk)
 				onContinue = [window, s, mode, remote, preexisting]
 				{
-					cloudSetupAdvance(window, s, [window, mode, remote, preexisting] { cloudSetupShowConnectStep(window, mode, remote, preexisting); });
+					cloudSetupShowConnectStep(window, mode, remote, preexisting, s);
 				};
 			cloudSetupSetButtons(s, onContinue);
 
-			window->pushGui(s);
+			cloudSetupPresent(window, s, prev);
 		}));
 }
 
-// Step 3 of 4: connect from the computer; CONTINUE passes only when
+// Step 2 of 3: connect from the computer; CONTINUE passes only when
 // --connected sees an established inbound SSH session.
-static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
+static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev)
 {
 	window->pushGui(new GuiLoading<std::map<std::string, std::string>>(window, _("PLEASE WAIT"),
 		[](auto gui) { return cloudSetupInfo(); },
-		[window, mode, remote, preexisting](std::map<std::string, std::string> info)
+		[window, mode, remote, preexisting, prev](std::map<std::string, std::string> info)
 		{
-			LOG(LogInfo) << "cloud_setup wizard: step 3 connect, override=" << info["OVERRIDE"];
+			LOG(LogInfo) << "cloud_setup wizard: step 2 connect, override=" << info["OVERRIDE"];
 
 			auto s = new GuiSettings(window, cloudSetupTitle(mode));
-			s->setSubTitle(_("STEP 3 OF 4 - CONNECT FROM YOUR COMPUTER"));
+			s->setSubTitle(_("STEP 2 OF 3 - CONNECT FROM YOUR COMPUTER"));
 
-			s->addEntry(_("OPEN A TERMINAL ON A COMPUTER ON YOUR NETWORK AND RUN:"), false, nullptr);
-			cloudSetupAddFact(s, window, _("COMMAND"), info["SSH_CMD"]);
+			s->addWithDescription(_("HOW TO CONNECT"), _("OPEN A TERMINAL ON A COMPUTER ON THE SAME NETWORK, RUN THE COMMAND BELOW, AND ENTER THE PASSWORD WHEN ASKED."), nullptr, nullptr, "", false, true);
+			// The command is typed verbatim on the computer - keep it a raw
+			// full-width row (never a title, which would be uppercased).
+			s->addEntry(info["SSH_CMD"], false, nullptr);
+			cloudSetupAddFact(s, window, _("PASSWORD"), info["PASSWORD"]);
 			// With a connection override the direct address is not the one
 			// to use, so showing it would only mislead.
 			if (info["OVERRIDE"] != "1")
 				cloudSetupAddFact(s, window, _("DEVICE IP"), info["IP"]);
-			cloudSetupAddFact(s, window, _("PASSWORD"), info["PASSWORD"]);
 
 			cloudSetupSetButtons(s, [window, s, mode, remote, preexisting]
 			{
@@ -4431,17 +4410,17 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 					{
 						if (connected)
 						{
-							cloudSetupAdvance(window, s, [window, mode, remote, preexisting] { cloudSetupShowConfigureStep(window, mode, remote, preexisting); });
+							cloudSetupShowConfigureStep(window, mode, remote, preexisting, s);
 							return;
 						}
 						window->pushGui(new GuiMsgBox(window,
-							_("NO SSH CONNECTION TO THIS DEVICE WAS FOUND.\n\nCONNECT FROM YOUR COMPUTER, KEEP THAT TERMINAL OPEN, THEN CONTINUE AGAIN."),
+							_("THERE IS NO ACTIVE SSH CONNECTION TO THE DEVICE.\n\nTRY CONNECTING FROM YOUR COMPUTER AGAIN, LEAVE THE TERMINAL OPEN, AND THEN SELECT 'CONTINUE'."),
 							_("OK"), nullptr,
 							_("EXIT SETUP"), [s] { s->close(); }));
 					}));
 			});
 
-			window->pushGui(s);
+			cloudSetupPresent(window, s, prev);
 		}));
 }
 
@@ -4453,7 +4432,7 @@ static void cloudSetupGateCheck(Window* window, GuiSettings* s, const std::strin
 	{
 		if (rc == 0)
 		{
-			cloudSetupAdvance(window, s, [window, name] { cloudSetupShowDoneStep(window, name); });
+			cloudSetupShowDoneStep(window, name, s);
 		}
 		else if (rc == 2)
 			window->pushGui(new GuiMsgBox(window,
@@ -4462,24 +4441,24 @@ static void cloudSetupGateCheck(Window* window, GuiSettings* s, const std::strin
 				_("EXIT SETUP"), [s] { s->close(); }));
 		else
 			window->pushGui(new GuiMsgBox(window,
-				_("NO CLOUD REMOTE IS CONFIGURED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN CONTINUE AGAIN."),
+				_("NO CLOUD REMOTE IS CONFIGURED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
 				_("OK"), nullptr,
 				_("EXIT SETUP"), [s] { s->close(); }));
 	});
 }
 
-// Step 4 of 4: what to do inside the SSH session, as short numbered
+// Step 3 of 3: what to do inside the SSH session, as short numbered
 // steps branched by scenario; CONTINUE passes only when the remote
 // verifies via --check.
-static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting)
+static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev)
 {
-	LOG(LogInfo) << "cloud_setup wizard: step 4 configure, mode=" << (int)mode << " remote=" << remote;
+	LOG(LogInfo) << "cloud_setup wizard: step 3 configure, mode=" << (int)mode << " remote=" << remote;
 
 	auto s = new GuiSettings(window, cloudSetupTitle(mode));
 
 	if (mode == CloudSetupMode::RepairRemote)
 	{
-		s->setSubTitle(_("STEP 4 OF 4 - REPAIR THE REMOTE"));
+		s->setSubTitle(_("STEP 3 OF 3 - REPAIR THE REMOTE"));
 		cloudSetupAddFact(s, window, _("RUN"), "rclone config reconnect " + remote);
 		s->addEntry(_("THAT RENEWS AN EXPIRED SIGN-IN."), false, nullptr);
 		s->addEntry(_("FOR OTHER OPTIONS: RUN 'rclone config', PRESS 'E' TO EDIT."), false, nullptr);
@@ -4487,7 +4466,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 	}
 	else
 	{
-		s->setSubTitle(_("STEP 4 OF 4 - CREATE THE REMOTE"));
+		s->setSubTitle(_("STEP 3 OF 3 - CREATE THE REMOTE"));
 		cloudSetupAddFact(s, window, _("RUN"), "rclone config");
 		s->addEntry(_("1. PRESS 'N' FOR A NEW REMOTE"), false, nullptr);
 		s->addEntry(_("2. NAME IT AND PICK YOUR PROVIDER"), false, nullptr);
@@ -4523,7 +4502,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 					if (newRemote.empty())
 					{
 						window->pushGui(new GuiMsgBox(window,
-							_("NO NEW REMOTE WAS ADDED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN CONTINUE AGAIN."),
+							_("NO NEW REMOTE WAS ADDED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
 							_("OK"), nullptr,
 							_("EXIT SETUP"), [s] { s->close(); }));
 						return;
@@ -4535,11 +4514,11 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 		cloudSetupGateCheck(window, s, mode == CloudSetupMode::RepairRemote ? remote : "");
 	});
 
-	window->pushGui(s);
+	cloudSetupPresent(window, s, prev);
 }
 
 // Completion page: confirmation plus a clearly-optional follow-up.
-static void cloudSetupShowDoneStep(Window* window, const std::string& remote)
+static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev)
 {
 	LOG(LogInfo) << "cloud_setup wizard: complete, remote=" << remote;
 
@@ -4564,7 +4543,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote)
 	s->getMenu().clearButtons();
 	s->getMenu().addButton(_("FINISH"), _("finish"), [s] { s->close(); });
 
-	window->pushGui(s);
+	cloudSetupPresent(window, s, prev);
 }
 
 // Wizard entry point: network is a hard precondition; then branch on the
@@ -4592,7 +4571,7 @@ void GuiMenu::openCloudSetup(Window* window)
 
 			if (remotes.empty())
 			{
-				cloudSetupShowPasswordStep(window, CloudSetupMode::FirstRemote, "", "");
+				cloudSetupShowSshStep(window, CloudSetupMode::FirstRemote, "", "", nullptr);
 				return;
 			}
 
@@ -4619,13 +4598,13 @@ void GuiMenu::openCloudSetup(Window* window)
 			std::string preexisting = Utils::String::trim(info["REMOTES"]);
 			s->addEntry(_("ADD ANOTHER REMOTE"), true, [window, s, preexisting]
 			{
-				cloudSetupAdvance(window, s, [window, preexisting] { cloudSetupShowPasswordStep(window, CloudSetupMode::AddRemote, "", preexisting); });
+				cloudSetupShowSshStep(window, CloudSetupMode::AddRemote, "", preexisting, s);
 			});
 			s->addEntry(_("REPAIR OR MODIFY A REMOTE"), true, [window, s, remotes]
 			{
 				if (remotes.size() == 1)
 				{
-					cloudSetupAdvance(window, s, [window, remotes] { cloudSetupShowPasswordStep(window, CloudSetupMode::RepairRemote, remotes.front(), ""); });
+					cloudSetupShowSshStep(window, CloudSetupMode::RepairRemote, remotes.front(), "", s);
 					return;
 				}
 				auto picker = new GuiSettings(window, _("WHICH REMOTE?"));
@@ -4633,12 +4612,11 @@ void GuiMenu::openCloudSetup(Window* window)
 				{
 					picker->addEntry(remote, true, [window, s, picker, remote]
 					{
-						window->postToUiThread([window, s, picker, remote]
-						{
-							picker->close();
-							s->close();
-							cloudSetupShowPasswordStep(window, CloudSetupMode::RepairRemote, remote, "");
-						});
+						// The chooser (s) is not the page owning this
+						// handler, so closing it here is safe; the picker
+						// itself is replaced by the wizard page.
+						s->close();
+						cloudSetupShowSshStep(window, CloudSetupMode::RepairRemote, remote, "", picker);
 					});
 				}
 				window->pushGui(picker);
