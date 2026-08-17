@@ -3595,7 +3595,11 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 	}
 }
 
-void GuiMenu::openGamesSettings() 
+// Defined with the cloud-setup wizard further down; the Cloud Tools
+// group uses it for the CLOUD FOLDER row.
+static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
+
+void GuiMenu::openGamesSettings()
 {
 	Window* window = mWindow;
 
@@ -3952,11 +3956,11 @@ void GuiMenu::openGamesSettings()
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 
 		// Unconfigured entries render dimmed and offer to run the setup flow.
-		auto addCloudEntry = [s, window, cloudConfigured](const std::string& label, const std::function<void()>& action)
+		auto addCloudEntry = [s, window, cloudConfigured](const std::string& label, const std::string& description, const std::function<void()>& action)
 		{
 			if (cloudConfigured)
 			{
-				s->addEntry(label, true, action);
+				s->addWithDescription(label, description, nullptr, action);
 				return;
 			}
 
@@ -3976,11 +3980,22 @@ void GuiMenu::openGamesSettings()
 
 		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 		{
-			s->addEntry(_("SET UP CLOUD REMOTE"), true, [window] { GuiMenu::openCloudSetup(window); });
+			s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE AND OTHER PROVIDERS."), nullptr, [window] { GuiMenu::openCloudSetup(window); });
+
+			if (cloudConfigured)
+			{
+				// Live value read cheaply at menu build; the editor writes
+				// it back through cloud_setup --set-syncpath.
+				std::string syncpath = Utils::String::trim(Utils::Platform::GetShOutput(". /storage/.config/cloud_sync.conf 2>/dev/null; echo -n \"${SYNCPATH}\""));
+				s->addWithDescription(_("CLOUD FOLDER"), _("THE FOLDER ON YOUR CLOUD REMOTE WHERE EVERYTHING IS STORED. CURRENT:") + " " + syncpath, nullptr, [window, syncpath]
+				{
+					cloudSetupOpenSyncPathEditor(window, syncpath, nullptr);
+				});
+			}
 		}
 
 		// One-touch journey actions (fresh-handheld flow, fork issue #26)
-		addCloudEntry(_("RESTORE EVERYTHING"), [window] {
+		addCloudEntry(_("RESTORE EVERYTHING"), _("SYSTEM SETTINGS FIRST (THE DEVICE REBOOTS), THEN GAME SAVES. ROMS AND BIOS ARE RESTORED SEPARATELY."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SET UP THIS DEVICE FROM YOUR CLOUD BACKUP?\n\nSETTINGS ARE RESTORED FIRST AND THE DEVICE REBOOTS; GAMES AND SAVES ARE RESTORED AFTER THE RESTART."), _("YES"),
 				[] {
 				Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
@@ -3988,28 +4003,28 @@ void GuiMenu::openGamesSettings()
 				}, _("NO"), nullptr));
 		});
 
-		addCloudEntry(_("BACK UP EVERYTHING"), [window] {
+		addCloudEntry(_("BACK UP EVERYTHING"), _("GAME SAVES, SAVESTATES, SCREENSHOTS AND SYSTEM SETTINGS. ROMS AND BIOS ARE UPLOADED SEPARATELY."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACK UP EVERYTHING"));
 				}, _("NO"), nullptr));
 		});
 
-		addCloudEntry(_("SYNC WITH CLOUD"), [window] {
+		addCloudEntry(_("SYNC WITH CLOUD"), _("TWO-WAY GAME-SAVE SYNC: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC WITH CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
-		addCloudEntry(_("UPLOAD TO CLOUD"), [window] {
+		addCloudEntry(_("UPLOAD TO CLOUD"), _("GAME SAVES, SAVESTATES AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD TO CLOUD"));
 				}, _("NO"), nullptr));
 		});
 
-		addCloudEntry(_("DOWNLOAD FROM CLOUD"), [window] {
+		addCloudEntry(_("DOWNLOAD FROM CLOUD"), _("GAME SAVES, SAVESTATES AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
@@ -4018,7 +4033,7 @@ void GuiMenu::openGamesSettings()
 
 		if (Utils::FileSystem::exists("/usr/bin/cloud_content_backup"))
 		{
-			addCloudEntry(_("UPLOAD CONTENT TO CLOUD"), [window] {
+			addCloudEntry(_("UPLOAD CONTENT TO CLOUD"), _("ROMS, BIOS AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
@@ -4061,7 +4076,7 @@ void GuiMenu::openGamesSettings()
 
 		if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
 		{
-			addCloudEntry(_("RESTORE CONTENT FROM CLOUD"), [window] {
+			addCloudEntry(_("RESTORE CONTENT FROM CLOUD"), _("ROMS, BIOS AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
@@ -4102,10 +4117,6 @@ void GuiMenu::openGamesSettings()
 			});
 		}
 
-
-		s->addEntry(_("CHANGE SYNC SETTINGS"), true, [window] {
-			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/rclone config\"", "", nullptr);
-		});
 
 		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
 		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
@@ -4168,12 +4179,14 @@ void GuiMenu::openMissingBiosSettings()
 // session must actually be open) and the remote via `--check` - so
 // mandatory steps cannot be skipped, only exited. EXIT SETUP and
 // CONTINUE are bottom buttons (exit left, continue right; CONTINUE only
-// exists once the step's check passes). Info rows are non-selectable;
-// check-circle/warning glyphs mark actionable state. `--info` and
-// `--connected` are fast and run synchronously; only the network-bound
-// `--check` uses the GuiLoading spinner. The interactive provider
-// sign-in itself happens in the player's computer terminal (rclone
-// config); these pages show short instructions and verify.
+// exists once the step's check passes).
+//
+// Page typography, consistent across steps: section headers via
+// addGroup; body text in the small theme font on non-selectable rows
+// padded to align with selectable ones; commands and values in the
+// accent color with commands additionally 'quoted'; actions in the
+// standard menu font. Remote names lose the trailing colon rclone
+// prints before they are shown.
 
 enum class CloudSetupMode { FirstRemote, AddRemote, RepairRemote };
 
@@ -4195,6 +4208,16 @@ static std::string cloudSetupTitle(CloudSetupMode mode)
 	}
 }
 
+// rclone prints remote names with a trailing colon ("dropbox:"); the
+// colon is rclone path syntax, not part of the name - strip it for
+// anything the player reads.
+static std::string cloudSetupDisplayName(const std::string& remote)
+{
+	if (!remote.empty() && remote.back() == ':')
+		return remote.substr(0, remote.size() - 1);
+	return remote;
+}
+
 static std::map<std::string, std::string> cloudSetupInfo()
 {
 	std::map<std::string, std::string> info;
@@ -4209,32 +4232,37 @@ static std::map<std::string, std::string> cloudSetupInfo()
 	return info;
 }
 
-// A plain informational row: never selectable, never highlighted.
-static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::string& text)
+// Horizontal padding matching what ComponentList applies to selectable
+// rows, so informational text lines up with the actionable rows.
+#define CLOUD_SETUP_ROW_PADDING Vector4f(10, 0, 10, 0)
+
+// A body-text row: never selectable, small theme font, padded to align
+// with the selectable rows. `accent` renders the accent color used for
+// values and commands.
+static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::string& text, bool accent = false)
 {
 	auto theme = ThemeData::getMenuTheme();
 	ComponentListRow row;
 	row.selectable = false;
-	row.addElement(std::make_shared<TextComponent>(window, text, theme->Text.font, theme->Text.color), true);
+	auto tc = std::make_shared<TextComponent>(window, text, theme->TextSmall.font, accent ? theme->Text.selectedColor : theme->Text.color);
+	tc->setPadding(CLOUD_SETUP_ROW_PADDING);
+	row.addElement(tc, true);
 	s->addRow(row);
 }
 
-// An informational row whose body text wraps over multiple lines.
-static void cloudSetupAddWrappedInfoRow(GuiSettings* s, Window* window, const std::string& title, const std::string& text)
-{
-	ComponentListRow row;
-	row.selectable = false;
-	row.addElement(std::make_shared<MultiLineMenuEntry>(window, title, text, true), true);
-	s->addRow(row);
-}
-
-// A label/value row; selectable only when it carries an action.
+// A label/value row in the same small font; selectable only when it
+// carries an action.
 static void cloudSetupAddFact(GuiSettings* s, Window* window, const std::string& label, const std::string& value, const std::function<void()>& func = nullptr)
 {
 	auto theme = ThemeData::getMenuTheme();
 	ComponentListRow row;
-	auto lbl = std::make_shared<TextComponent>(window, label, theme->Text.font, theme->Text.color);
-	auto val = std::make_shared<TextComponent>(window, value, theme->Text.font, theme->Text.selectedColor);
+	auto lbl = std::make_shared<TextComponent>(window, label, theme->TextSmall.font, theme->Text.color);
+	auto val = std::make_shared<TextComponent>(window, value, theme->TextSmall.font, theme->Text.selectedColor);
+	if (func == nullptr)
+	{
+		lbl->setPadding(CLOUD_SETUP_ROW_PADDING);
+		val->setPadding(CLOUD_SETUP_ROW_PADDING);
+	}
 	row.addElement(lbl, true);
 	row.addElement(val, false);
 	row.selectable = (func != nullptr);
@@ -4293,6 +4321,27 @@ static void cloudSetupOpenPasswordPage(Window* window, const std::string& curren
 	});
 	pw->onFinalize(onDone);
 	window->pushGui(pw);
+}
+
+// Edit the cloud folder (SYNCPATH) the sync tools read from and write
+// to, without touching config files by hand. onDone runs after a
+// successful change.
+static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone)
+{
+	auto save = [window, onDone](const std::string& value)
+	{
+		const std::string trimmed = Utils::String::trim(value);
+		if (trimmed.empty() || trimmed == "/")
+			return;
+		LOG(LogInfo) << "cloud_setup wizard: setting sync path to " << trimmed;
+		Utils::Platform::runSystemCommand("/usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\"", "", nullptr);
+		if (onDone != nullptr)
+			onDone();
+	};
+	if (Settings::getInstance()->getBool("UseOSK"))
+		window->pushGui(new GuiTextEditPopupKeyboard(window, _("CLOUD FOLDER"), current, save, false));
+	else
+		window->pushGui(new GuiTextEditPopup(window, _("CLOUD FOLDER"), current, save, false));
 }
 
 // Run `cloud_setup --check [remote]` and hand (exit code, remote name) to
@@ -4389,11 +4438,12 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 	auto s = new GuiSettings(window, cloudSetupTitle(mode));
 	s->setSubTitle(_("STEP 2 OF 3 - CONNECT FROM YOUR COMPUTER"));
 
-	cloudSetupAddWrappedInfoRow(s, window, _("HOW TO CONNECT"), _("OPEN A TERMINAL ON A COMPUTER ON THE SAME NETWORK, RUN THE COMMAND BELOW, AND ENTER THE PASSWORD WHEN ASKED."));
-	// The command is typed verbatim on the computer - keep it a raw
-	// full-width row (a row title would be uppercased, corrupting its
-	// case-sensitive flags).
-	cloudSetupAddInfoRow(s, window, info["SSH_CMD"]);
+	s->addGroup(_("HOW TO CONNECT"));
+	cloudSetupAddInfoRow(s, window, _("OPEN A TERMINAL ON A COMPUTER ON THE SAME NETWORK,"));
+	cloudSetupAddInfoRow(s, window, _("RUN THE COMMAND BELOW AND ENTER THE PASSWORD WHEN ASKED."));
+	cloudSetupAddInfoRow(s, window, info["SSH_CMD"], true);
+
+	s->addGroup(_("CONNECTION DETAILS"));
 	const std::string current = info["PASSWORD"];
 	cloudSetupAddFact(s, window, _("CURRENT PASSWORD"), current, [window, s, mode, remote, preexisting, current]
 	{
@@ -4437,7 +4487,7 @@ static void cloudSetupGateCheck(Window* window, GuiSettings* s, const std::strin
 		}
 		else if (rc == 2)
 			window->pushGui(new GuiMsgBox(window,
-				_("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + "\n" + name + "\n\n" + _("ITS SIGN-IN MAY BE INCOMPLETE OR EXPIRED. IN THE TERMINAL, RUN:") + "\nrclone config reconnect " + name,
+				_("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + " " + cloudSetupDisplayName(name) + "\n\n" + _("ITS SIGN-IN MAY BE INCOMPLETE OR EXPIRED. IN THE TERMINAL, RUN:") + "\n'rclone config reconnect " + name + "'",
 				_("OK"), nullptr,
 				_("EXIT SETUP"), [s] { s->close(); }));
 		else
@@ -4464,7 +4514,8 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 	if (mode == CloudSetupMode::RepairRemote)
 	{
 		s->setSubTitle(_("STEP 3 OF 3 - REPAIR THE REMOTE"));
-		cloudSetupAddInfoRow(s, window, _("1. RUN: ") + "rclone config reconnect " + remote);
+		s->addGroup(_("IN THE TERMINAL"));
+		cloudSetupAddInfoRow(s, window, _("1. RUN 'rclone config reconnect ") + remote + "'");
 		cloudSetupAddInfoRow(s, window, _("2. THAT RENEWS AN EXPIRED SIGN-IN."));
 		cloudSetupAddInfoRow(s, window, _("3. FOR OTHER OPTIONS: RUN 'rclone config', PRESS 'E' TO EDIT."));
 		cloudSetupAddInfoRow(s, window, _("4. PRESS 'Q' TO QUIT WHEN YOU ARE DONE."));
@@ -4472,14 +4523,18 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 	else
 	{
 		s->setSubTitle(_("STEP 3 OF 3 - CREATE THE REMOTE"));
-		cloudSetupAddInfoRow(s, window, _("1. RUN: ") + "rclone config");
+		s->addGroup(_("IN THE TERMINAL"));
+		cloudSetupAddInfoRow(s, window, _("1. RUN 'rclone config'"));
 		cloudSetupAddInfoRow(s, window, _("2. PRESS 'N' FOR A NEW REMOTE"));
 		cloudSetupAddInfoRow(s, window, _("3. NAME IT AND PICK YOUR PROVIDER"));
 		cloudSetupAddInfoRow(s, window, _("4. DEFAULTS ARE FINE IF YOU ARE UNSURE"));
 		cloudSetupAddInfoRow(s, window, _("5. AT 'USE AUTO CONFIG?' PRESS 'Y'"));
 		cloudSetupAddInfoRow(s, window, _("6. SIGN IN VIA THE LINK IN YOUR BROWSER"));
 		cloudSetupAddInfoRow(s, window, _("7. PRESS 'Q' TO QUIT WHEN THE REMOTE IS LISTED"));
-		cloudSetupAddWrappedInfoRow(s, window, _("IMPORTANT"), _("ALWAYS PRESS 'Y' AT 'USE AUTO CONFIG?' - THE STEP 2 CONNECTION TUNNELS THE SIGN-IN TO YOUR COMPUTER'S BROWSER. DO NOT USE 'rclone authorize': IT CANNOT BIND ITS PORT WHILE THAT CONNECTION IS OPEN."));
+		s->addGroup(_("IMPORTANT"));
+		cloudSetupAddInfoRow(s, window, _("ALWAYS PRESS 'Y' AT 'USE AUTO CONFIG?' - THE SIGN-IN OPENS"));
+		cloudSetupAddInfoRow(s, window, _("IN YOUR COMPUTER'S BROWSER THROUGH THE STEP 2 CONNECTION."));
+		cloudSetupAddInfoRow(s, window, _("DO NOT USE 'rclone authorize' - IT FAILS WHILE CONNECTED."));
 		if (mode == CloudSetupMode::AddRemote)
 			cloudSetupAddInfoRow(s, window, _("NOTE: THE CLOUD TOOLS USE THE FIRST REMOTE IN ALPHABETICAL ORDER."));
 	}
@@ -4523,19 +4578,29 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 	cloudSetupPresent(window, s, prev);
 }
 
-// Completion page: confirmation plus a clearly-optional follow-up.
+// Completion page: confirmation, the cloud-folder setting, and a
+// clearly-optional immediate backup.
 static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev)
 {
-	LOG(LogInfo) << "cloud_setup wizard: complete, remote=" << remote;
+	auto info = cloudSetupInfo();
+	LOG(LogInfo) << "cloud_setup wizard: complete, remote=" << remote << " syncpath=" << info["SYNCPATH"];
 
 	auto s = new GuiSettings(window, _("CLOUD SETUP COMPLETE"));
-	s->setSubTitle(_("ALL STEPS DONE"));
+	s->setSubTitle(_("YOUR CLOUD REMOTE IS READY"));
 
-	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("REMOTE CONFIGURED AND WORKING:") + " " + remote);
+	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("REMOTE '") + cloudSetupDisplayName(remote) + _("' IS CONFIGURED AND WORKING."));
 	cloudSetupAddInfoRow(s, window, _("THE CLOUD TOOLS IN GAME SETTINGS ARE NOW AVAILABLE."));
 	cloudSetupAddInfoRow(s, window, _("YOU CAN CLOSE THE TERMINAL ON YOUR COMPUTER."));
 
-	s->addGroup(_("OPTIONAL NEXT STEP"));
+	s->addGroup(_("OPTIONAL NEXT STEPS"));
+	const std::string syncpath = info["SYNCPATH"];
+	cloudSetupAddFact(s, window, _("CLOUD FOLDER"), syncpath, [window, s, remote, syncpath]
+	{
+		cloudSetupOpenSyncPathEditor(window, syncpath, [window, s, remote]
+		{
+			cloudSetupShowDoneStep(window, remote, s);
+		});
+	});
 	s->addEntry(_("BACK UP EVERYTHING NOW"), true, [window, s]
 	{
 		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
@@ -4583,14 +4648,14 @@ void GuiMenu::openCloudSetup(Window* window)
 	s->addGroup(_("YOUR CLOUD REMOTES"));
 	for (auto remote : remotes)
 	{
-		s->addEntry(remote + "  -  " + _("CHECK IT WORKS"), true, [window, remote]
+		s->addEntry(cloudSetupDisplayName(remote) + "  -  " + _("CHECK IT WORKS"), true, [window, remote]
 		{
 			cloudSetupRunCheck(window, remote, [window](int rc, const std::string& name)
 			{
 				if (rc == 0)
-					window->pushGui(new GuiMsgBox(window, _("CLOUD REMOTE CONFIGURED AND WORKING:") + "\n" + name));
+					window->pushGui(new GuiMsgBox(window, _("CLOUD REMOTE CONFIGURED AND WORKING:") + " " + cloudSetupDisplayName(name)));
 				else if (rc == 2)
-					window->pushGui(new GuiMsgBox(window, _("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + "\n" + name + "\n\n" + _("USE 'REPAIR OR MODIFY A REMOTE' TO RENEW ITS SIGN-IN.")));
+					window->pushGui(new GuiMsgBox(window, _("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + " " + cloudSetupDisplayName(name) + "\n\n" + _("USE 'REPAIR OR MODIFY A REMOTE' TO RENEW ITS SIGN-IN.")));
 				else
 					window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.")));
 			});
@@ -4598,6 +4663,15 @@ void GuiMenu::openCloudSetup(Window* window)
 	}
 
 	s->addGroup(_("WHAT DO YOU WANT TO DO?"));
+	const std::string syncpath = info["SYNCPATH"];
+	cloudSetupAddFact(s, window, _("CLOUD FOLDER"), syncpath, [window, s, syncpath]
+	{
+		cloudSetupOpenSyncPathEditor(window, syncpath, [window, s]
+		{
+			s->close();
+			GuiMenu::openCloudSetup(window);
+		});
+	});
 	std::string preexisting = Utils::String::trim(info["REMOTES"]);
 	s->addEntry(_("ADD ANOTHER REMOTE"), true, [window, s, preexisting]
 	{
@@ -4613,7 +4687,7 @@ void GuiMenu::openCloudSetup(Window* window)
 		auto picker = new GuiSettings(window, _("WHICH REMOTE?"));
 		for (auto remote : remotes)
 		{
-			picker->addEntry(remote, true, [window, s, picker, remote]
+			picker->addEntry(cloudSetupDisplayName(remote), true, [window, s, picker, remote]
 			{
 				// The chooser (s) is not the page owning this handler,
 				// so closing it here is safe; the picker itself is
