@@ -40,6 +40,9 @@ public:
         static void updateGameLists(Window* window, bool confirm = true);
         static void editKeyboardMappings(Window *window, IKeyboardMapContainer* mapping, bool editable);
         static void openCloudSetup(Window* window);
+        // consumeMarker: clear .restore-finish-pending on FINISH (the
+        // post-restore boot); false when opened from the menu later.
+        static void openRestoreRelink(Window* window, bool consumeMarker = false);
 
 private:
         void addEntry(const std::string& name, bool add_arrow, const std::function<void()>& func, const std::string iconName = "");

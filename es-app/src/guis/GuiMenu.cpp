@@ -4206,6 +4206,11 @@ void GuiMenu::openGamesSettings()
 		{
 			s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE AND OTHER PROVIDERS."), nullptr, [window] { GuiMenu::openCloudSetup(window); });
 
+			// Reachable at any time, not only on the post-restore boot:
+			// a player who chose LATER (or restored long ago) can still
+			// find the credentials a backup could not carry.
+			s->addWithDescription(_("FINISH RESTORE SETUP"), _("RE-ENTER THE PASSWORDS A BACKUP CANNOT INCLUDE: WI-FI, ACCOUNTS, DEVICE PASSWORD."), nullptr, [window] { GuiMenu::openRestoreRelink(window, false); });
+
 			if (cloudConfigured)
 			{
 				// Live value read cheaply at menu build; the editor writes
@@ -4925,6 +4930,177 @@ void GuiMenu::openCloudSetup(Window* window)
 
 	window->pushGui(s);
 }
+// Post-restore credential re-entry. Backups deliberately carry no
+// secrets, so a restored device needs its credentials back; this page
+// shows each one with its verified state and an inline way to fix it.
+//
+// It is a single page rather than a gated wizard on purpose: every item
+// here is independent and optional (a player with no RetroAchievements
+// account should not be walked through a step for it), so there is no
+// mandatory sequence to enforce - only state to show and actions to
+// offer.
+//
+// Wi-Fi comes first because it is the one item other things depend on:
+// the sanitized system.cfg drops `wifi.key`, so a settings restore
+// disconnects Wi-Fi, and the cloud-journey continuation that follows
+// this page needs the network back.
+void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
+{
+	const std::string restoreMarker = "/storage/.config/.restore-finish-pending";
+
+	auto theme = ThemeData::getMenuTheme();
+	auto s = new GuiSettings(window, _("FINISH RESTORE SETUP"));
+	s->setSubTitle(_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE"));
+
+	// A state row: check-circle when the credential is present, warning
+	// when it still needs attention. Entering the row opens its editor.
+	auto addCredentialRow = [s, window](const std::string& label, bool ok, const std::function<void()>& action)
+	{
+		s->addEntry((ok ? _U("\uF058  ") : _U("\uF071  ")) + label, true, action);
+	};
+
+	auto reopen = [window, consumeMarker]
+	{
+		// Rebuild so every row re-reads live state after an edit.
+		GuiMenu::openRestoreRelink(window, consumeMarker);
+	};
+
+	s->addGroup(_("NETWORK"));
+	const bool online = !ApiSystem::getInstance()->getIpAddress().empty()
+		&& ApiSystem::getInstance()->getIpAddress() != "NOT CONNECTED";
+	addCredentialRow(_("WIFI PASSWORD"), online, [window, s, reopen]
+	{
+		auto wifi = new GuiSettings(window, _("WIFI PASSWORD"));
+		wifi->addInputTextConfigRow(_("WIFI PASSWORD"), "wifi.key", true);
+		wifi->addSaveFunc([]
+		{
+			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
+			std::string key = SystemConf::getInstance()->get("wifi.key");
+			if (SystemConf::getInstance()->getBool("wifi.enabled") && !ssid.empty() && !key.empty())
+			{
+				LOG(LogInfo) << "restore relink: reconnecting wifi to " << ssid;
+				ApiSystem::getInstance()->enableWifi(ssid, key, SystemConf::getInstance()->get("wifi.country"));
+			}
+		});
+		wifi->onFinalize([s, reopen] { s->close(); reopen(); });
+		window->pushGui(wifi);
+	});
+
+	// Account rows appear only when the restored configuration actually
+	// references that service - the username survives a backup, the
+	// password does not, so a username is the signal that an account
+	// exists and needs its password back.
+	const std::string raUser = SystemConf::getInstance()->get("global.retroachievements.username");
+	const std::string ssUser = Settings::getInstance()->getString("ScreenScraperUser");
+	if (!raUser.empty() || !ssUser.empty())
+	{
+		s->addGroup(_("ACCOUNTS"));
+		if (!raUser.empty())
+			addCredentialRow(_("RETROACHIEVEMENTS") + " (" + raUser + ")",
+				!SystemConf::getInstance()->get("global.retroachievements.password").empty(),
+				[window, s, reopen]
+			{
+				auto ra = new GuiSettings(window, _("RETROACHIEVEMENTS"));
+				ra->addInputTextConfigRow(_("PASSWORD"), "global.retroachievements.password", true);
+				ra->onFinalize([s, reopen] { s->close(); reopen(); });
+				window->pushGui(ra);
+			});
+
+		if (!ssUser.empty())
+			addCredentialRow(_("SCREENSCRAPER") + " (" + ssUser + ")",
+				!Settings::getInstance()->getString("ScreenScraperPass").empty(),
+				[window, s, reopen]
+			{
+				auto ss = new GuiSettings(window, _("SCREENSCRAPER"));
+				ss->addInputTextConfigRow(_("PASSWORD"), "ScreenScraperPass", true, true);
+				ss->onFinalize([s, reopen] { s->close(); reopen(); });
+				window->pushGui(ss);
+			});
+	}
+
+	// Netplay's password is stripped too, but it is only meaningful to a
+	// player who has netplay switched on.
+	if (SystemConf::getInstance()->getBool("global.netplay"))
+	{
+		s->addGroup(_("NETPLAY"));
+		addCredentialRow(_("NETPLAY PASSWORD"),
+			!SystemConf::getInstance()->get("global.netplay.password").empty(),
+			[window, s, reopen]
+		{
+			auto np = new GuiSettings(window, _("NETPLAY PASSWORD"));
+			np->addInputTextConfigRow(_("NETPLAY PASSWORD"), "global.netplay.password", true);
+			np->onFinalize([s, reopen] { s->close(); reopen(); });
+			window->pushGui(np);
+		});
+	}
+
+	s->addGroup(_("THIS DEVICE"));
+	// One password covers SSH, Samba, the Syncthing GUI and the file
+	// server - they all derive from it via setrootpass.
+	const std::string rootPass = SystemConf::getInstance()->get("root.password");
+	addCredentialRow(_("DEVICE PASSWORD (SSH, SAMBA, FILE SERVER)"), !rootPass.empty(), [window, s, reopen, rootPass]
+	{
+		auto pw = new GuiSettings(window, _("DEVICE PASSWORD"));
+		pw->addInputTextConfigRow(_("DEVICE PASSWORD"), "root.password", false);
+		pw->addSaveFunc([rootPass]
+		{
+			const std::string changed = SystemConf::getInstance()->get("root.password");
+			if (!changed.empty() && changed != rootPass)
+			{
+				SystemConf::getInstance()->saveSystemConf();
+				LOG(LogInfo) << "restore relink: applying device password";
+				Utils::Platform::runSystemCommand("setrootpass " + changed, "", nullptr);
+			}
+		});
+		pw->onFinalize([s, reopen] { s->close(); reopen(); });
+		window->pushGui(pw);
+	});
+
+	if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
+	{
+		// Checked on demand rather than at page build: it is a network
+		// round-trip to the provider and would stall this page.
+		s->addEntry(_("CHECK CLOUD REMOTE"), true, [window]
+		{
+			window->pushGui(new GuiLoading<int>(window, _("CHECKING..."),
+				[](auto gui)
+				{
+					std::string out = Utils::String::trim(Utils::Platform::GetShOutput("/usr/bin/cloud_setup --check >/dev/null 2>&1; echo $?"));
+					int rc = atoi(out.c_str());
+					LOG(LogInfo) << "restore relink: cloud --check rc=" << rc;
+					return rc;
+				},
+				[window](int rc)
+				{
+					if (rc == 0)
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
+					else
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE SET UP CLOUD REMOTE IN GAME SETTINGS > CLOUD TOOLS.")));
+				}));
+		});
+	}
+
+	s->addEntry(_("BLUETOOTH CONTROLLERS MUST BE PAIRED AGAIN"), false, nullptr);
+
+	// FINISH consumes the marker; LATER leaves it so the next boot
+	// offers this page again. Consuming on completion rather than on
+	// display means a crash, a power-off or a walk-away cannot silently
+	// lose the flow.
+	s->getMenu().clearButtons();
+	s->getMenu().addButton(_("LATER"), _("later"), [s] { s->close(); });
+	s->getMenu().addButton(_("FINISH"), _("finish"), [s, restoreMarker, consumeMarker]
+	{
+		if (consumeMarker)
+		{
+			LOG(LogInfo) << "restore relink: complete, clearing marker";
+			std::remove(restoreMarker.c_str());
+		}
+		s->close();
+	});
+
+	window->pushGui(s);
+}
+
 void GuiMenu::updateGameLists(Window* window, bool confirm)
 {
 	if (ThreadedScraper::isRunning())

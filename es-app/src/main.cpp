@@ -3,6 +3,7 @@
 
 #include "services/HttpServerThread.h"
 #include "guis/GuiDetectDevice.h"
+#include "guis/GuiMenu.h"
 #include "guis/GuiMsgBox.h"
 #include "SystemConf.h"
 #include "guis/GuiSettings.h"
@@ -654,10 +655,13 @@ int main(int argc, char* argv[])
 		std::remove(markerFile.c_str());
 	}
 
-	// A finished backup restore leaves a one-shot marker (see backuptool);
-	// remind the user to re-enter the credentials backups exclude.
-	// Continuation of the one-touch cloud journey: after the settings restore
-	// reboot, offer to pull games and saves down from the cloud.
+	// Two one-shot markers can both be waiting after a one-touch restore.
+	// Order matters and is deliberate: a settings restore ships a
+	// sanitized system.cfg with `wifi.key` removed, so it leaves the
+	// device without Wi-Fi - and the journey continuation below downloads
+	// from the cloud. Credentials are therefore pushed LAST so they land
+	// on top and are dealt with first; only then does the player reach
+	// the download prompt, by which time the network is back.
 	std::string journeyMarker = "/storage/.config/.cloud-journey-pending";
 	if (Utils::FileSystem::exists(journeyMarker))
 	{
@@ -668,27 +672,12 @@ int main(int argc, char* argv[])
 			}, _("LATER"), nullptr));
 	}
 
-	std::string restoreMarker = "/storage/.config/.restore-finish-pending";
-	if (Utils::FileSystem::exists(restoreMarker))
-	{
-		std::remove(restoreMarker.c_str());
-		// Native re-entry page: masked on-screen-keyboard rows bound to the
-		// stores each credential lives in; wifi reconnects on close.
-		GuiSettings* restoreGui = new GuiSettings(&window, _("FINISH RESTORE SETUP"));
-		restoreGui->addGroup(_("FOR SECURITY, BACKUPS DO NOT INCLUDE PASSWORDS. RE-ENTER THEM HERE OR LATER IN THE MAIN MENU."));
-		restoreGui->addInputTextConfigRow(_("WIFI KEY"), "wifi.key", true);
-		restoreGui->addInputTextConfigRow(_("RETROACHIEVEMENTS PASSWORD"), "global.retroachievements.password", true);
-		restoreGui->addInputTextConfigRow(_("NETPLAY PASSWORD"), "global.netplay.password", true);
-		restoreGui->addInputTextConfigRow(_("SCREENSCRAPER PASSWORD"), "ScreenScraperPass", true, true);
-		restoreGui->addSaveFunc([]
-		{
-			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
-			std::string key = SystemConf::getInstance()->get("wifi.key");
-			if (SystemConf::getInstance()->getBool("wifi.enabled") && !ssid.empty() && !key.empty())
-				ApiSystem::getInstance()->enableWifi(ssid, key, SystemConf::getInstance()->get("wifi.country"));
-		});
-		window.pushGui(restoreGui);
-	}
+	// A finished backup restore leaves a one-shot marker (see backuptool).
+	// The page itself clears it on FINISH, not here: consuming it on
+	// display would lose the flow for good if the device crashed or the
+	// player walked away mid-way.
+	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
+		GuiMenu::openRestoreRelink(&window, true);
 
 	// Create a flag in  temporary directory to signal READY state
 	ApiSystem::getInstance()->setReadyFlag();
