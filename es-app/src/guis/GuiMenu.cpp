@@ -270,35 +270,11 @@ void GuiMenu::openResetOptions()
 		}, _("NO"), nullptr));
 	});
 
-	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
-	{
-		const bool cloudReady = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
-		auto requireCloud = [window, cloudReady](const std::function<void()>& action)
-		{
-			if (cloudReady) { action(); return; }
-			window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
-				[] { Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_setup\"", "", nullptr); },
-				_("NO"), nullptr));
-		};
+	// The cloud copies of these live in NETWORK SETTINGS > RCLONE SERVICES >
+	// BACKUP/RESTORE SYSTEM DATA, which does the same job with the save data
+	// included. The two entries that used to be here backed up settings only
+	// and were a second, quieter path to the same operation.
 
-		s->addEntry(_("BACK UP CONFIGURATIONS TO CLOUD"), true, [window, requireCloud] {
-	requireCloud([window] {
-		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS AND UPLOAD THE BACKUP TO YOUR CLOUD REMOTE?"), _("YES"),
-			[] {
-			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup && /usr/bin/cloud_backup --yes --system-only\"", "", nullptr);
-			}, _("NO"), nullptr));
-		});
-		});
-
-		s->addEntry(_("RESTORE CONFIGURATION FROM CLOUD"), true, [window, requireCloud] {
-	requireCloud([window] {
-		window->pushGui(new GuiMsgBox(window, _("DOWNLOAD YOUR BACKUP FROM THE CLOUD AND RESTORE IT?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT."), _("YES"),
-			[] {
-			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
-			}, _("NO"), nullptr));
-		});
-		});
-	}
 
 	s->addEntry(_("CLEAN GAMELISTS & REMOVE UNUSED MEDIA"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("ARE YOU SURE?"), _("YES"), [&]
@@ -4918,7 +4894,7 @@ void GuiMenu::openCloudSetup(Window* window)
 // here - they are bulk content and live under GAME SETTINGS > CLOUD TOOLS.
 void GuiMenu::openCloudSystemBackup(Window* window)
 {
-	auto s = new GuiSettings(window, _("BACKUP/RESTORE SYSTEM CONFIG"));
+	auto s = new GuiSettings(window, _("BACKUP/RESTORE SYSTEM DATA"));
 
 	s->addWithDescription(_("BACKUP ALL SYSTEM DATA"), _("UPLOAD WHAT'S ON THIS DEVICE TO A NEW SNAPSHOT ON YOUR CLOUD."), nullptr, [window]
 	{
@@ -6651,7 +6627,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONFIGURE RCLONE TO CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE, AND OTHERS."), nullptr,
 			[window] { GuiMenu::openCloudSetup(window); }, "", false, true);
 
-		cloudAddGatedEntry(s, window, cloudConfigured, _("BACKUP/RESTORE SYSTEM CONFIG"),
+		cloudAddGatedEntry(s, window, cloudConfigured, _("BACKUP/RESTORE SYSTEM DATA"),
 			_("STORE SAVE DATA, SETTINGS, AND MORE. BIOS FILES AND ROMS ARE HANDLED SEPARATELY."),
 			[window] { GuiMenu::openCloudSystemBackup(window); });
 
