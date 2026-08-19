@@ -4184,7 +4184,7 @@ void GuiMenu::openGamesSettings()
 		{
 			if (cloudConfigured)
 			{
-				s->addWithDescription(label, description, nullptr, action);
+				s->addWithDescription(label, description, nullptr, action, "", false, true);
 				return;
 			}
 
@@ -4193,7 +4193,7 @@ void GuiMenu::openGamesSettings()
 			// up, so the scope line has to be readable then too.
 			auto theme = ThemeData::getMenuTheme();
 			ComponentListRow row;
-			auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, false);
+			auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
 			entry->setColor((theme->Text.color & 0xFFFFFF00) | 0x50);
 			row.addElement(entry, true);
 			row.makeAcceptInputHandler([window]
@@ -4208,12 +4208,12 @@ void GuiMenu::openGamesSettings()
 
 		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 		{
-			s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE AND OTHER PROVIDERS."), nullptr, [window] { GuiMenu::openCloudSetup(window); });
+			s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE AND OTHER PROVIDERS."), nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
 
 			// Reachable at any time, not only on the post-restore boot:
 			// a player who chose LATER (or restored long ago) can still
 			// find the credentials a backup could not carry.
-			s->addWithDescription(_("FINISH RESTORE SETUP"), _("RE-ENTER THE PASSWORDS A BACKUP CANNOT INCLUDE: WI-FI, ACCOUNTS, DEVICE PASSWORD."), nullptr, [window] { GuiMenu::openRestoreRelink(window, false); });
+			s->addWithDescription(_("FINISH RESTORE SETUP"), _("RE-ENTER THE PASSWORDS A BACKUP CANNOT INCLUDE: WI-FI, ACCOUNTS, DEVICE PASSWORD."), nullptr, [window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
 
 			if (cloudConfigured)
 			{
@@ -4223,7 +4223,7 @@ void GuiMenu::openGamesSettings()
 				s->addWithDescription(_("CLOUD FOLDER"), _("THE FOLDER ON YOUR CLOUD REMOTE WHERE EVERYTHING IS STORED. CURRENT:") + " " + syncpath, nullptr, [window, syncpath]
 				{
 					cloudSetupOpenSyncPathEditor(window, syncpath, nullptr);
-				});
+				}, "", false, true);
 			}
 		}
 
@@ -4483,25 +4483,26 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 	s->addRow(row);
 }
 
-// A label/value row in the same small font; selectable only when it
-// carries an action.
+// A block of prose that ES wraps for us. Hand-splitting a sentence across
+// fixed rows breaks on a narrower screen and in every translation, so
+// anything longer than a line goes through MultiLineMenuEntry - the same
+// component every description row uses - with wrapping switched on.
+static void cloudSetupAddProse(GuiSettings* s, Window* window, const std::string& title, const std::string& body)
+{
+	ComponentListRow row;
+	row.selectable = false;
+	row.addElement(std::make_shared<MultiLineMenuEntry>(window, title, body, true), true);
+	s->addRow(row);
+}
+
+// A label/value row: the same read-only fact shape the rest of the app
+// uses (see NETWORK SETTINGS' IP ADDRESS and the system information
+// page) - a label with the value as its right-hand component. Passing a
+// func makes the row actionable; without one it is a plain fact.
 static void cloudSetupAddFact(GuiSettings* s, Window* window, const std::string& label, const std::string& value, const std::function<void()>& func = nullptr)
 {
 	auto theme = ThemeData::getMenuTheme();
-	ComponentListRow row;
-	auto lbl = std::make_shared<TextComponent>(window, label, theme->TextSmall.font, theme->Text.color);
-	auto val = std::make_shared<TextComponent>(window, value, theme->TextSmall.font, theme->Text.selectedColor);
-	if (func == nullptr)
-	{
-		lbl->setPadding(CLOUD_SETUP_ROW_PADDING);
-		val->setPadding(CLOUD_SETUP_ROW_PADDING);
-	}
-	row.addElement(lbl, true);
-	row.addElement(val, false);
-	row.selectable = (func != nullptr);
-	if (func != nullptr)
-		row.makeAcceptInputHandler(func);
-	s->addRow(row);
+	s->addWithLabel(label, std::make_shared<TextComponent>(window, value, theme->Text.font, theme->Text.color), false, func);
 }
 
 // Show a freshly built wizard page: give it the standard large-menu
@@ -4672,8 +4673,8 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 	s->setSubTitle(_("STEP 2 OF 3 - CONNECT FROM YOUR COMPUTER"));
 
 	s->addGroup(_("HOW TO CONNECT"));
-	cloudSetupAddInfoRow(s, window, _("OPEN A TERMINAL ON A COMPUTER ON THE SAME NETWORK,"));
-	cloudSetupAddInfoRow(s, window, _("RUN THE COMMAND BELOW AND ENTER THE PASSWORD WHEN ASKED."));
+	cloudSetupAddProse(s, window, _("ON YOUR COMPUTER"),
+		_("OPEN A TERMINAL ON A COMPUTER ON THE SAME NETWORK, RUN THE COMMAND BELOW, AND ENTER THE PASSWORD WHEN ASKED."));
 	cloudSetupAddInfoRow(s, window, info["SSH_CMD"], true);
 
 	s->addGroup(_("CONNECTION DETAILS"));
@@ -4765,9 +4766,8 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 		cloudSetupAddInfoRow(s, window, _("6. SIGN IN VIA THE LINK IN YOUR BROWSER"));
 		cloudSetupAddInfoRow(s, window, _("7. PRESS 'Q' TO QUIT WHEN THE REMOTE IS LISTED"));
 		s->addGroup(_("IMPORTANT"));
-		cloudSetupAddInfoRow(s, window, _("ALWAYS PRESS 'Y' AT 'USE AUTO CONFIG?' - THE SIGN-IN OPENS"));
-		cloudSetupAddInfoRow(s, window, _("IN YOUR COMPUTER'S BROWSER THROUGH THE STEP 2 CONNECTION."));
-		cloudSetupAddInfoRow(s, window, _("DO NOT USE 'rclone authorize' - IT FAILS WHILE CONNECTED."));
+		cloudSetupAddProse(s, window, _("USE AUTO CONFIG"),
+			_("ALWAYS ANSWER 'Y' TO 'USE AUTO CONFIG?'. THE SIGN-IN OPENS IN YOUR COMPUTER'S BROWSER THROUGH THE STEP 2 CONNECTION. DO NOT USE 'rclone authorize' - IT CANNOT BIND ITS PORT WHILE THAT CONNECTION IS OPEN."));
 		if (mode == CloudSetupMode::AddRemote)
 			cloudSetupAddInfoRow(s, window, _("NOTE: THE CLOUD TOOLS USE THE FIRST REMOTE IN ALPHABETICAL ORDER."));
 	}
