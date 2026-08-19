@@ -4781,7 +4781,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	s->setSubTitle(_("YOUR CLOUD REMOTE IS READY"));
 
 	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("REMOTE '") + cloudSetupDisplayName(remote) + _("' IS CONFIGURED AND WORKING."));
-	cloudSetupAddInfoRow(s, window, _("THE CLOUD TOOLS IN GAME SETTINGS ARE NOW AVAILABLE."));
+	cloudSetupAddInfoRow(s, window, _("CLOUD SAVES AND CLOUD TOOLS ARE NOW AVAILABLE IN GAME SETTINGS."));
 	cloudSetupAddInfoRow(s, window, _("YOU CAN CLOSE THE TERMINAL ON YOUR COMPUTER."));
 
 	s->addGroup(_("OPTIONAL NEXT STEPS"));
@@ -5072,7 +5072,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 					if (rc == 0)
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE SET UP CLOUD REMOTE IN GAME SETTINGS > CLOUD TOOLS.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE SET UP CLOUD REMOTE IN NETWORK SETTINGS > RCLONE SERVICES.")));
 				}));
 		});
 	}
