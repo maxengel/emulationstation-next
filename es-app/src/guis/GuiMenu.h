@@ -43,6 +43,9 @@ public:
         // consumeMarker: clear .restore-finish-pending on FINISH (the
         // post-restore boot); false when opened from the menu later.
         static void openRestoreRelink(Window* window, bool consumeMarker = false);
+        // Whole-device snapshot to and from the cloud, plus the credential
+        // re-entry that follows a restore.
+        static void openCloudSystemBackup(Window* window);
 
 private:
         void addEntry(const std::string& name, bool add_arrow, const std::function<void()>& func, const std::string iconName = "");

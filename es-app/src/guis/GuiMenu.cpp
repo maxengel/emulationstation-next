@@ -3819,9 +3819,11 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 	}
 }
 
-// Defined with the cloud-setup wizard further down; the Cloud Tools
-// group uses it for the CLOUD FOLDER row.
+// Defined with the cloud-setup wizard further down; the cloud menus use
+// these for the CLOUD FOLDER row and for rows that must stay visible
+// before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
+static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
 
 void GuiMenu::openGamesSettings()
 {
@@ -4175,104 +4177,70 @@ void GuiMenu::openGamesSettings()
 
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		s->addGroup(_("CLOUD TOOLS"));
-
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 
-		// Unconfigured entries render dimmed and offer to run the setup flow.
-		auto addCloudEntry = [s, window, cloudConfigured](const std::string& label, const std::string& description, const std::function<void()>& action)
-		{
-			if (cloudConfigured)
-			{
-				s->addWithDescription(label, description, nullptr, action, "", false, true);
-				return;
-			}
+		// Save data lives with the games it belongs to. Setting the remote up
+		// and backing up the system as a whole are network-level concerns and
+		// live under NETWORK SETTINGS > RCLONE SERVICES.
+		s->addGroup(_("CLOUD SAVES"));
 
-			// Dimmed, but still described: before a remote exists is exactly
-			// when someone is deciding whether these tools are worth setting
-			// up, so the scope line has to be readable then too.
-			auto theme = ThemeData::getMenuTheme();
-			ComponentListRow row;
-			auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
-			entry->setColor((theme->Text.color & 0xFFFFFF00) | 0x50);
-			row.addElement(entry, true);
-			row.makeAcceptInputHandler([window]
-			{
-				window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
-					[window] { GuiMenu::openCloudSetup(window); },
-					_("NO"), nullptr));
-			});
-			s->addRow(row);
-		};
-
-
-		if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
-		{
-			s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE AND OTHER PROVIDERS."), nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
-
-			// Reachable at any time, not only on the post-restore boot:
-			// a player who chose LATER (or restored long ago) can still
-			// find the credentials a backup could not carry.
-			s->addWithDescription(_("FINISH RESTORE SETUP"), _("RE-ENTER THE PASSWORDS A BACKUP CANNOT INCLUDE: WI-FI, ACCOUNTS, DEVICE PASSWORD."), nullptr, [window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
-
-			if (cloudConfigured)
-			{
-				// Live value read cheaply at menu build; the editor writes
-				// it back through cloud_setup --set-syncpath.
-				std::string syncpath = Utils::String::trim(Utils::Platform::GetShOutput(". /storage/.config/cloud_sync.conf 2>/dev/null; echo -n \"${SYNCPATH}\""));
-				s->addWithDescription(_("CLOUD FOLDER"), _("THE FOLDER ON YOUR CLOUD REMOTE WHERE EVERYTHING IS STORED. CURRENT:") + " " + syncpath, nullptr, [window, syncpath]
-				{
-					cloudSetupOpenSyncPathEditor(window, syncpath, nullptr);
-				}, "", false, true);
-			}
-		}
-
-		// One-touch journey actions (fresh-handheld flow, fork issue #26)
-		addCloudEntry(_("RESTORE EVERYTHING"), _("SYSTEM SETTINGS FIRST (THE DEVICE REBOOTS), THEN GAME SAVES. ROMS AND BIOS ARE RESTORED SEPARATELY."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("SET UP THIS DEVICE FROM YOUR CLOUD BACKUP?\n\nSETTINGS ARE RESTORED FIRST AND THE DEVICE REBOOTS; GAMES AND SAVES ARE RESTORED AFTER THE RESTART."), _("YES"),
-				[] {
-				Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
-				Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
-				}, _("NO"), nullptr));
-		});
-
-		addCloudEntry(_("BACK UP EVERYTHING"), _("GAME SAVES, SAVESTATES, SCREENSHOTS AND SYSTEM SETTINGS. ROMS AND BIOS ARE UPLOADED SEPARATELY."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACK UP EVERYTHING"));
-				}, _("NO"), nullptr));
-		});
-
-		addCloudEntry(_("SYNC WITH CLOUD"), _("TWO-WAY GAME-SAVE SYNC: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES."), [window] {
+		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVE DATA WITH THE CLOUD"),
+			_("TWO-WAY: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC WITH CLOUD"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
-		addCloudEntry(_("UPLOAD TO CLOUD"), _("GAME SAVES, SAVESTATES AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
+		cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD SAVE DATA TO THE CLOUD"),
+			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD TO CLOUD"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
-		addCloudEntry(_("DOWNLOAD FROM CLOUD"), _("GAME SAVES, SAVESTATES AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
+		cloudAddGatedEntry(s, window, cloudConfigured, _("DOWNLOAD SAVE DATA FROM THE CLOUD"),
+			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD FROM CLOUD"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
-		if (Utils::FileSystem::exists("/usr/bin/cloud_content_backup"))
+		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
+		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
+		s->addWithDescription(_("SYNC DURING STARTUP"), _("REQUIRES NETWORK ACCESS"), cloud_startup);
+		cloud_startup->setOnChangedCallback([cloud_startup] {
+			SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
+			SystemConf::getInstance()->saveSystemConf();
+		});
+
+		auto cloud_gameexit = std::make_shared<SwitchComponent>(mWindow);
+		cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
+		s->addWithLabel(_("SYNC WHEN EXITING A GAME"), cloud_gameexit);
+		cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
+			SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
+			SystemConf::getInstance()->saveSystemConf();
+		});
+
+		// ROMs and BIOS are bulk content, deliberately separate from save data:
+		// they are large, they rarely change, and they are never touched by the
+		// save-sync allowlist.
+		const bool hasContentUp = Utils::FileSystem::exists("/usr/bin/cloud_content_backup");
+		const bool hasContentDown = Utils::FileSystem::exists("/usr/bin/cloud_content_restore");
+		if (hasContentUp || hasContentDown)
+			s->addGroup(_("CLOUD TOOLS"));
+
+		if (hasContentUp)
 		{
-			addCloudEntry(_("UPLOAD CONTENT TO CLOUD"), _("ROMS, BIOS AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
+			cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD CONTENT TO THE CLOUD"),
+				_("ROMS, BIOS AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
 						std::vector<std::string> dirs;
-						std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_content_backup --list");
-						for (auto& line : Utils::String::split(out, '\n'))
+						for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_backup --list"))
 						{
 							auto dir = Utils::String::trim(line);
 							if (!dir.empty())
@@ -4287,7 +4255,7 @@ void GuiMenu::openGamesSettings()
 							window->pushGui(new GuiMsgBox(window, _("NO CONTENT FOUND ON THIS DEVICE.")));
 							return;
 						}
-						auto picker = new GuiSettings(window, _("UPLOAD CONTENT TO CLOUD"));
+						auto picker = new GuiSettings(window, _("UPLOAD CONTENT TO THE CLOUD"));
 						picker->addGroup(_("COPIES FILES TO YOUR CLOUD REMOTE. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED."));
 						picker->addEntry(_("EVERYTHING"), true, [window] {
 							window->pushGui(new GuiMsgBox(window, _("UPLOAD ALL CONTENT FROM THIS DEVICE TO THE CLOUD?"), _("YES"),
@@ -4307,15 +4275,15 @@ void GuiMenu::openGamesSettings()
 			});
 		}
 
-		if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
+		if (hasContentDown)
 		{
-			addCloudEntry(_("RESTORE CONTENT FROM CLOUD"), _("ROMS, BIOS AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
+			cloudAddGatedEntry(s, window, cloudConfigured, _("RESTORE CONTENT FROM THE CLOUD"),
+				_("ROMS, BIOS AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
 						std::vector<std::string> dirs;
-						std::string out = Utils::Platform::GetShOutput("/usr/bin/cloud_content_restore --list");
-						for (auto& line : Utils::String::split(out, '\n'))
+						for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --list"))
 						{
 							auto dir = Utils::String::trim(line);
 							if (!dir.empty())
@@ -4330,7 +4298,7 @@ void GuiMenu::openGamesSettings()
 							window->pushGui(new GuiMsgBox(window, _("NO DIRECTORIES FOUND ON THE CLOUD REMOTE.")));
 							return;
 						}
-						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM CLOUD"));
+						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM THE CLOUD"));
 						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
 						picker->addEntry(_("EVERYTHING"), true, [window] {
 							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD ALL CONTENT FROM THE CLOUD TO THIS DEVICE?"), _("YES"),
@@ -4349,23 +4317,6 @@ void GuiMenu::openGamesSettings()
 					}));
 			});
 		}
-
-
-		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
-		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
-		s->addWithLabel(_("SYNC DURING STARTUP"), cloud_startup);
-		cloud_startup->setOnChangedCallback([cloud_startup] {
-			SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
-			SystemConf::getInstance()->saveSystemConf();
-		});
-
-		auto cloud_gameexit = std::make_shared<SwitchComponent>(mWindow);
-		cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
-		s->addWithLabel(_("SYNC WHEN EXITING A GAME"), cloud_gameexit);
-		cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
-			SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
-			SystemConf::getInstance()->saveSystemConf();
-		});
 	}
 
 	s->addGroup(_("SYSTEM SETTINGS"));
@@ -4480,6 +4431,33 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 	auto tc = std::make_shared<TextComponent>(window, text, theme->TextSmall.font, accent ? theme->Text.selectedColor : theme->Text.color);
 	tc->setPadding(CLOUD_SETUP_ROW_PADDING);
 	row.addElement(tc, true);
+	s->addRow(row);
+}
+
+// A cloud action row. Before a remote exists the row stays visible but
+// dimmed and offers the setup flow instead of its action - hiding it
+// would tell the player nothing about what configuring a remote buys
+// them. Shared by the CLOUD SAVES, CLOUD TOOLS and RCLONE SERVICES
+// groups so all three behave identically.
+static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action)
+{
+	if (configured)
+	{
+		s->addWithDescription(label, description, nullptr, action, "", false, true);
+		return;
+	}
+
+	auto theme = ThemeData::getMenuTheme();
+	ComponentListRow row;
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
+	entry->setColor((theme->Text.color & 0xFFFFFF00) | 0x50);
+	row.addElement(entry, true);
+	row.makeAcceptInputHandler([window]
+	{
+		window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
+			[window] { GuiMenu::openCloudSetup(window); },
+			_("NO"), nullptr));
+	});
 	s->addRow(row);
 }
 
@@ -4934,6 +4912,40 @@ void GuiMenu::openCloudSetup(Window* window)
 
 	window->pushGui(s);
 }
+// Whole-device snapshot: everything a backup can carry (save data and
+// system settings) in one action each way, plus the credential re-entry
+// that a restore leaves outstanding. ROMs and BIOS are deliberately not
+// here - they are bulk content and live under GAME SETTINGS > CLOUD TOOLS.
+void GuiMenu::openCloudSystemBackup(Window* window)
+{
+	auto s = new GuiSettings(window, _("BACKUP/RESTORE SYSTEM CONFIG"));
+
+	s->addWithDescription(_("BACKUP ALL SYSTEM DATA"), _("UPLOAD WHAT'S ON THIS DEVICE TO A NEW SNAPSHOT ON YOUR CLOUD."), nullptr, [window]
+	{
+		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+			[window] {
+			ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACKUP ALL SYSTEM DATA"));
+			}, _("NO"), nullptr));
+	}, "", false, true);
+
+	s->addWithDescription(_("RESTORE ALL SYSTEM DATA"), _("REPLACE WHAT'S ON THIS DEVICE FROM THE LATEST SNAPSHOT ON YOUR CLOUD."), nullptr, [window]
+	{
+		window->pushGui(new GuiMsgBox(window, _("SET UP THIS DEVICE FROM YOUR CLOUD BACKUP?\n\nSETTINGS ARE RESTORED FIRST AND THE DEVICE REBOOTS; GAMES AND SAVES ARE RESTORED AFTER THE RESTART."), _("YES"),
+			[] {
+			Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
+			}, _("NO"), nullptr));
+	}, "", false, true);
+
+	// Reachable at any time, not only on the post-restore boot: a player
+	// who chose LATER, or restored long ago, can still find the credentials
+	// a backup cannot carry.
+	s->addWithDescription(_("FINALIZE RESTORE"), _("RE-ENTER PASSWORD INFO THAT'S NOT BACKED UP TO THE CLOUD (WI-FI, ACCOUNTS, ETC.)"), nullptr,
+		[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
+
+	window->pushGui(s);
+}
+
 // Post-restore credential re-entry. Backups deliberately carry no
 // secrets, so a restored device needs its credentials back; this page
 // shows each one with its verified state and an inline way to fix it.
@@ -6626,8 +6638,35 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		}
 	});
 
-	// CLOUD SERVICES
-	s->addGroup(_("CLOUD SERVICES"));
+	// RCLONE SERVICES - setting the remote up, and whole-device snapshots.
+	// Per-game save syncing lives in GAME SETTINGS > CLOUD SAVES, next to
+	// the games it belongs to.
+	if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
+	{
+		s->addGroup(_("RCLONE SERVICES"));
+
+		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+		Window* window = mWindow;
+
+		s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONFIGURE RCLONE TO CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE, AND OTHERS."), nullptr,
+			[window] { GuiMenu::openCloudSetup(window); }, "", false, true);
+
+		cloudAddGatedEntry(s, window, cloudConfigured, _("BACKUP/RESTORE SYSTEM CONFIG"),
+			_("STORE SAVE DATA, SETTINGS, AND MORE. BIOS FILES AND ROMS ARE HANDLED SEPARATELY."),
+			[window] { GuiMenu::openCloudSystemBackup(window); });
+
+		if (cloudConfigured)
+		{
+			// Live value read at menu build; the editor writes it back
+			// through cloud_setup --set-syncpath.
+			std::string syncpath = Utils::String::trim(Utils::Platform::GetShOutput(". /storage/.config/cloud_sync.conf 2>/dev/null; echo -n \"${SYNCPATH}\""));
+			s->addWithDescription(_("CLOUD FOLDER"), _("THE FOLDER ON YOUR CLOUD REMOTE WHERE EVERYTHING IS STORED. CURRENT:") + " " + syncpath, nullptr,
+				[window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); }, "", false, true);
+		}
+	}
+
+	// SYNCTHING SERVICES
+	s->addGroup(_("SYNCTHING SERVICES"));
 
        auto enable_syncthing = std::make_shared<SwitchComponent>(mWindow);
 	bool syncthingEnabled = SystemConf::getInstance()->get("syncthing.enabled") == "1";
