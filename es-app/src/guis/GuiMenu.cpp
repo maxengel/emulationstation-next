@@ -3994,10 +3994,14 @@ void GuiMenu::openGamesSettings()
 				return;
 			}
 
+			// Dimmed, but still described: before a remote exists is exactly
+			// when someone is deciding whether these tools are worth setting
+			// up, so the scope line has to be readable then too.
 			auto theme = ThemeData::getMenuTheme();
 			ComponentListRow row;
-			auto text = std::make_shared<TextComponent>(window, label, theme->Text.font, (theme->Text.color & 0xFFFFFF00) | 0x50);
-			row.addElement(text, true);
+			auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, false);
+			entry->setColor((theme->Text.color & 0xFFFFFF00) | 0x50);
+			row.addElement(entry, true);
 			row.makeAcceptInputHandler([window]
 			{
 				window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
