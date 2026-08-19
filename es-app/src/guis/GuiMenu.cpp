@@ -4404,7 +4404,12 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 	auto theme = ThemeData::getMenuTheme();
 	ComponentListRow row;
 	row.selectable = false;
-	auto tc = std::make_shared<TextComponent>(window, text, theme->TextSmall.font, accent ? theme->Text.selectedColor : theme->Text.color);
+	// Standard text size, not the small one: these rows carry a step's own
+	// content - a status, an instruction, the command to type - so they sit
+	// at the same weight as the action rows beside them. Only genuinely
+	// subordinate text (a row's description) drops to the small size, which
+	// MultiLineMenuEntry already does for us.
+	auto tc = std::make_shared<TextComponent>(window, text, theme->Text.font, accent ? theme->Text.selectedColor : theme->Text.color);
 	tc->setPadding(CLOUD_SETUP_ROW_PADDING);
 	row.addElement(tc, true);
 	s->addRow(row);
