@@ -4949,11 +4949,18 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	auto s = new GuiSettings(window, _("FINISH RESTORE SETUP"));
 	s->setSubTitle(_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE"));
 
-	// A state row: check-circle when the credential is present, warning
-	// when it still needs attention. Entering the row opens its editor.
-	auto addCredentialRow = [s, window](const std::string& label, bool ok, const std::function<void()>& action)
+	// A state row: check-circle when the credential is present, an empty
+	// circle when it is not. Deliberately NOT a warning triangle -- these
+	// rows are a checklist of things a backup cannot carry, so "not set
+	// yet" is the expected state on arrival, and an alert glyph reads as
+	// "something is broken" to someone who has just restored.
+	// Each row carries a description: the label alone does not say why the
+	// item is here or what happens if it is skipped.
+	auto addCredentialRow = [s, window](const std::string& label, const std::string& description,
+	                                    bool ok, const std::function<void()>& action)
 	{
-		s->addEntry((ok ? _U("\uF058  ") : _U("\uF071  ")) + label, true, action);
+		s->addWithDescription((ok ? _U("\uF058  ") : _U("\uF10C  ")) + label,
+			description, nullptr, action, "", false, true);
 	};
 
 	auto reopen = [window, consumeMarker]
@@ -4965,7 +4972,9 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	s->addGroup(_("NETWORK"));
 	const bool online = !ApiSystem::getInstance()->getIpAddress().empty()
 		&& ApiSystem::getInstance()->getIpAddress() != "NOT CONNECTED";
-	addCredentialRow(_("WIFI PASSWORD"), online, [window, s, reopen]
+	addCredentialRow(_("WIFI PASSWORD"),
+		_("BACKUPS NEVER INCLUDE YOUR WIFI KEY. RE-ENTER IT TO GET BACK ONLINE."),
+		online, [window, s, reopen]
 	{
 		auto wifi = new GuiSettings(window, _("WIFI PASSWORD"));
 		wifi->addInputTextConfigRow(_("WIFI PASSWORD"), "wifi.key", true);
@@ -4994,6 +5003,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 		s->addGroup(_("ACCOUNTS"));
 		if (!raUser.empty())
 			addCredentialRow(_("RETROACHIEVEMENTS") + " (" + raUser + ")",
+				_("YOUR USERNAME WAS RESTORED; THE PASSWORD WAS NOT."),
 				!SystemConf::getInstance()->get("global.retroachievements.password").empty(),
 				[window, s, reopen]
 			{
@@ -5005,6 +5015,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 
 		if (!ssUser.empty())
 			addCredentialRow(_("SCREENSCRAPER") + " (" + ssUser + ")",
+				_("YOUR USERNAME WAS RESTORED; THE PASSWORD WAS NOT."),
 				!Settings::getInstance()->getString("ScreenScraperPass").empty(),
 				[window, s, reopen]
 			{
@@ -5021,6 +5032,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	{
 		s->addGroup(_("NETPLAY"));
 		addCredentialRow(_("NETPLAY PASSWORD"),
+			_("NEEDED TO REJOIN PASSWORD-PROTECTED NETPLAY ROOMS."),
 			!SystemConf::getInstance()->get("global.netplay.password").empty(),
 			[window, s, reopen]
 		{
@@ -5035,7 +5047,9 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	// One password covers SSH, Samba, the Syncthing GUI and the file
 	// server - they all derive from it via setrootpass.
 	const std::string rootPass = SystemConf::getInstance()->get("root.password");
-	addCredentialRow(_("DEVICE PASSWORD (SSH, SAMBA, FILE SERVER)"), !rootPass.empty(), [window, s, reopen, rootPass]
+	addCredentialRow(_("DEVICE PASSWORD (SSH, SAMBA, FILE SERVER)"),
+		_("YOUR EXISTING PASSWORD STILL WORKS -- SET ONE HERE ONLY IF YOU WANT TO CHANGE IT."),
+		!rootPass.empty(), [window, s, reopen, rootPass]
 	{
 		auto pw = new GuiSettings(window, _("DEVICE PASSWORD"));
 		pw->addInputTextConfigRow(_("DEVICE PASSWORD"), "root.password", false);
@@ -5055,9 +5069,17 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 
 	if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 	{
+		// cloud_setup ships in every image, so its presence gates nothing.
+		// What matters is whether a remote is actually configured: without
+		// this, a player who never set up cloud sync was shown the row and
+		// then told their remote "needs attention", implying a fault where
+		// there was simply nothing to check. cloudAddGatedEntry greys the
+		// row and offers to set one up instead.
+		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		// Checked on demand rather than at page build: it is a network
 		// round-trip to the provider and would stall this page.
-		s->addEntry(_("CHECK CLOUD REMOTE"), true, [window]
+		cloudAddGatedEntry(s, window, cloudConfigured, _("CHECK CLOUD REMOTE"),
+			_("CONFIRMS YOUR CLOUD STORAGE STILL SIGNS IN AFTER THE RESTORE."), [window]
 		{
 			window->pushGui(new GuiLoading<int>(window, _("CHECKING..."),
 				[](auto gui)
@@ -5078,6 +5100,12 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	}
 
 	s->addEntry(_("BLUETOOTH CONTROLLERS MUST BE PAIRED AGAIN"), false, nullptr);
+
+	// LATER keeps the marker, so this page returns on the next boot -- but
+	// nothing said so, leaving the player unable to tell defer from discard.
+	s->addWithDescription(_("LATER KEEPS THIS LIST"),
+		_("IT COMES BACK NEXT TIME YOU START UP, OR FIND IT IN NETWORK SETTINGS > FINISH RESTORE SETUP."),
+		nullptr, nullptr, "", false, true);
 
 	// FINISH consumes the marker; LATER leaves it so the next boot
 	// offers this page again. Consuming on completion rather than on
@@ -6622,6 +6650,19 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	// RCLONE SERVICES - setting the remote up, and whole-device snapshots.
 	// Per-game save syncing lives in GAME SETTINGS > CLOUD SAVES, next to
 	// the games it belongs to.
+	// Reachable without a cloud remote. The same page is offered inside
+	// BACKUP/RESTORE SYSTEM DATA, but that entry is gated on a configured
+	// remote, so a player who restored and pressed LATER had no way back to
+	// it except another reboot.
+	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
+	{
+		Window* restoreWindow = mWindow;
+		s->addGroup(_("RESTORE"));
+		s->addWithDescription(_("FINISH RESTORE SETUP"),
+			_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE (WI-FI, ACCOUNTS, THIS DEVICE)."),
+			nullptr, [restoreWindow] { GuiMenu::openRestoreRelink(restoreWindow, true); }, "", false, true);
+	}
+
 	if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 	{
 		s->addGroup(_("RCLONE SERVICES"));
