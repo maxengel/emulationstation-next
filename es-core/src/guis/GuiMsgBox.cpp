@@ -143,6 +143,19 @@ GuiMsgBox::GuiMsgBox(Window* window, const std::string& text,
 	
 	if (msgHeight + mButtonGrid->getSize().y() > Renderer::getScreenHeight())
 	{
+		// The message alone is taller than the screen. onSizeChanged() does
+		// constrain mMsg to the grid row left above the buttons, but a
+		// TextComponent renders at its natural height regardless of that
+		// bound unless it is scrolling -- so the text painted straight
+		// through the button row and the buttons appeared on top of it.
+		// Seen on an RG35XX SP with a two-paragraph message; a
+		// desktop-resolution VM never reaches this branch, which is why it
+		// survived to hardware.
+		//
+		// Set before setSize so the flag is live when onSizeChanged() runs.
+		// The grid still owns the geometry; this only makes the text respect it.
+		mMsg->setAutoScroll(TextComponent::AutoScrollType::VERTICAL);
+
 		setSize(Renderer::getScreenWidth(), Renderer::getScreenHeight());
 		if (mImage != nullptr)
 			mMsg->setSize(Renderer::getScreenWidth() - mImage->getSize().x() - 4* HORIZONTAL_PADDING_PX, 0);
