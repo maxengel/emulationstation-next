@@ -4450,7 +4450,24 @@ static void cloudSetupAddProse(GuiSettings* s, Window* window, const std::string
 {
 	ComponentListRow row;
 	row.selectable = false;
-	row.addElement(std::make_shared<MultiLineMenuEntry>(window, title, body, true), true);
+	// ComponentList insets selectable rows but not unselectable ones, so a
+	// prose row is flush left unless it pads itself -- misaligned against the
+	// group headers and value rows around it.
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, title, body, true);
+	entry->setPadding(CLOUD_SETUP_ROW_PADDING);
+	row.addElement(entry, true);
+	s->addRow(row);
+}
+
+// A blank row. Group headers butt straight against whatever precedes them,
+// which reads as cramped where a group follows body text rather than another
+// group. Small font, so it is one short line rather than a full gap.
+static void cloudSetupAddSpacer(GuiSettings* s, Window* window)
+{
+	auto theme = ThemeData::getMenuTheme();
+	ComponentListRow row;
+	row.selectable = false;
+	row.addElement(std::make_shared<TextComponent>(window, "", theme->TextSmall.font, theme->Text.color), true);
 	s->addRow(row);
 }
 
@@ -4636,6 +4653,7 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 		_("OPEN A TERMINAL ON A COMPUTER ON THE SAME NETWORK, RUN THE COMMAND BELOW, AND ENTER THE PASSWORD WHEN ASKED."));
 	cloudSetupAddInfoRow(s, window, info["SSH_CMD"], true);
 
+	cloudSetupAddSpacer(s, window);
 	s->addGroup(_("CONNECTION DETAILS"));
 	const std::string current = info["PASSWORD"];
 	cloudSetupAddFact(s, window, _("CURRENT PASSWORD"), current, [window, s, mode, remote, preexisting, current]

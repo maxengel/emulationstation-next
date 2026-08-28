@@ -57,6 +57,18 @@ void MultiLineMenuEntry::setColor(unsigned int color)
 	mSubstring->setColor(Utils::HtmlColor::applyColorOpacity(color, SUBSTRING_OPACITY));
 }
 
+// A ComponentGrid draws nothing of its own, so padding set on the entry has
+// to reach the two text components inside it. Without this, an entry placed
+// in a non-selectable row sits flush against the left edge while selectable
+// rows and group headers are inset by ComponentList (which only offsets
+// selectable rows -- see TOTAL_HORIZONTAL_PADDING_PX there).
+void MultiLineMenuEntry::setPadding(const Vector4f padding)
+{
+	GuiComponent::setPadding(padding);
+	mText->setPadding(padding);
+	mSubstring->setPadding(padding);
+}
+
 std::string MultiLineMenuEntry::getDescription()
 {
 	return mSubstring->getText();
