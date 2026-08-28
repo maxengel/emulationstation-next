@@ -4742,9 +4742,15 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 		cloudSetupAddInfoRow(s, window, _("5. AT 'USE AUTO CONFIG?' PRESS 'Y'"));
 		cloudSetupAddInfoRow(s, window, _("6. SIGN IN VIA THE LINK IN YOUR BROWSER"));
 		cloudSetupAddInfoRow(s, window, _("7. PRESS 'Q' TO QUIT WHEN THE REMOTE IS LISTED"));
+		// Kept short on purpose: this page has no selectable rows, so
+		// ComponentList cannot scroll it (the camera follows the cursor,
+		// and the cursor skips unselectable rows). Anything past the fold
+		// is unreachable, so the text has to fit. Steps 5 and 6 already
+		// say to answer 'Y' and sign in; the only new fact is the
+		// 'rclone authorize' trap.
 		s->addGroup(_("IMPORTANT"));
-		cloudSetupAddProse(s, window, _("USE AUTO CONFIG"),
-			_("ALWAYS ANSWER 'Y' TO 'USE AUTO CONFIG?'. THE SIGN-IN OPENS IN YOUR COMPUTER'S BROWSER THROUGH THE STEP 2 CONNECTION. DO NOT USE 'rclone authorize' - IT CANNOT BIND ITS PORT WHILE THAT CONNECTION IS OPEN."));
+		cloudSetupAddProse(s, window, _("DO NOT USE 'rclone authorize'"),
+			_("IT CANNOT BIND ITS PORT WHILE STEP 2'S CONNECTION IS OPEN."));
 		if (mode == CloudSetupMode::AddRemote)
 			cloudSetupAddInfoRow(s, window, _("NOTE: THE CLOUD TOOLS USE THE FIRST REMOTE IN ALPHABETICAL ORDER."));
 	}
