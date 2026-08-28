@@ -4735,13 +4735,21 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 	{
 		s->setSubTitle(_("STEP 3 OF 3 - CREATE THE REMOTE"));
 		s->addGroup(_("IN THE TERMINAL"));
+		// Step 5 is the one people get wrong: rclone's own prompt says to
+		// answer N on a machine with no browser, which describes this
+		// handheld exactly. Answering N is fatal here.
+		// Steps 6-7 describe what rclone actually does. There is no browser
+		// on the device, so it always takes its "Failed to open browser
+		// automatically ... please go to the following link" branch and
+		// prints the URL to the terminal. Saying "the link in your browser"
+		// implied one opens by itself and left people with nothing to click.
 		cloudSetupAddInfoRow(s, window, _("1. RUN 'rclone config'"));
 		cloudSetupAddInfoRow(s, window, _("2. PRESS 'N' FOR A NEW REMOTE"));
-		cloudSetupAddInfoRow(s, window, _("3. NAME IT AND PICK YOUR PROVIDER"));
-		cloudSetupAddInfoRow(s, window, _("4. DEFAULTS ARE FINE IF YOU ARE UNSURE"));
-		cloudSetupAddInfoRow(s, window, _("5. AT 'USE AUTO CONFIG?' PRESS 'Y'"));
-		cloudSetupAddInfoRow(s, window, _("6. SIGN IN VIA THE LINK IN YOUR BROWSER"));
-		cloudSetupAddInfoRow(s, window, _("7. PRESS 'Q' TO QUIT WHEN THE REMOTE IS LISTED"));
+		cloudSetupAddInfoRow(s, window, _("3. NAME IT, PICK YOUR PROVIDER, TAKE DEFAULTS"));
+		cloudSetupAddInfoRow(s, window, _("4. AT 'USE AUTO CONFIG?' PRESS 'Y'"));
+		cloudSetupAddInfoRow(s, window, _("5. 'FAILED TO OPEN BROWSER' IS NORMAL HERE"));
+		cloudSetupAddInfoRow(s, window, _("6. COPY THE LINK IT PRINTS INTO YOUR BROWSER"));
+		cloudSetupAddInfoRow(s, window, _("7. SIGN IN, THEN PRESS 'Q' WHEN THE REMOTE IS LISTED"));
 		// Kept short on purpose: this page has no selectable rows, so
 		// ComponentList cannot scroll it (the camera follows the cursor,
 		// and the cursor skips unselectable rows). Anything past the fold
