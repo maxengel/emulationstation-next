@@ -5082,12 +5082,24 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 				}
 				if (any)
 				{
+					// Seed the map with whatever the list starts on, and keep
+					// it current as the choice changes.
+					//
+					// NOT addSaveFunc: those run from GuiSettings::save(),
+					// which happens when the page closes. CREATE REMOTE builds
+					// its command while the page is still open, so a value
+					// left to save() never reaches it -- the chosen vendor was
+					// dropped, silently and with a success dialog, because
+					// WebDAV tolerates an empty one. On Sharepoint or
+					// Nextcloud that is the wrong dialect, not a no-op.
+					if (!list->getSelected().empty())
+						(*values)[fieldName] = list->getSelected();
+					list->setSelectedChangedCallback(
+						[values, fieldName](const std::string& picked)
+						{
+							(*values)[fieldName] = picked;
+						});
 					s->addWithLabel(Utils::String::toUpper(fieldName), list);
-					s->addSaveFunc([values, fieldName, list]
-					{
-						if (!list->getSelected().empty())
-							(*values)[fieldName] = list->getSelected();
-					});
 					continue;
 				}
 			}
