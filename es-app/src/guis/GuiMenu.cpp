@@ -4885,9 +4885,13 @@ static const std::vector<std::string> CLOUD_RECOMMENDED = {
 
 static std::vector<std::string> cloudRemoteLines(const std::string& args)
 {
-	auto out = Utils::Platform::GetShOutput("/usr/bin/cloud_remote " + args);
+	// GetShOutputLines, not GetShOutput: the latter drops the last character
+	// of every chunk it reads, so multi-line output arrives as one
+	// concatenated string. Parsing that yields a single nonsense record
+	// rather than an error, which is how this first shipped -- the provider
+	// list rendered empty with nothing logged.
 	std::vector<std::string> lines;
-	for (auto& line : Utils::String::split(out, '\n'))
+	for (auto& line : Utils::Platform::GetShOutputLines("/usr/bin/cloud_remote " + args))
 		if (!Utils::String::trim(line).empty())
 			lines.push_back(line);
 	return lines;
