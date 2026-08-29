@@ -879,6 +879,36 @@ namespace Utils
 			return result;
 		}
 
+		std::vector<std::string> GetShOutputLines(const std::string& mStr)
+		{
+			std::vector<std::string> lines;
+
+			FILE* pipe = popen(mStr.c_str(), "r");
+			if (pipe == nullptr)
+				return lines;
+
+			// Accumulate rather than treating each fgets() as a line: a line
+			// longer than the buffer arrives in several reads, and only the
+			// last of them carries the newline.
+			std::string pending;
+			char buffer[512];
+			while (fgets(buffer, sizeof(buffer), pipe) != NULL)
+			{
+				pending += buffer;
+				size_t nl;
+				while ((nl = pending.find('\n')) != std::string::npos)
+				{
+					lines.push_back(pending.substr(0, nl));
+					pending.erase(0, nl + 1);
+				}
+			}
+			if (!pending.empty())
+				lines.push_back(pending);
+
+			pclose(pipe);
+			return lines;
+		}
+
 		unsigned long long getTotalSystemMemory() 
 		{
 #ifdef WIN32

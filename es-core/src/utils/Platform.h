@@ -3,6 +3,7 @@
 #define ES_CORE_PLATFORM_H
 
 #include <string>
+#include <vector>
 
 #ifdef WIN32
 #include <Windows.h>
@@ -79,6 +80,11 @@ namespace Utils
 		int runSystemCommand(const std::string& cmd_utf8, const std::string& name, Window* window); // run a utf-8 encoded in the shell (requires wstring conversion on Windows)
 		std::string GetEnv(const std::string& var);
 		std::string GetShOutput(const std::string& mStr);
+		// GetShOutput concatenates its input into a single string, dropping the
+		// last character of every chunk it reads -- which is the newline. That is
+		// what its single-line callers want, and useless for a command that emits
+		// one record per line. This returns the lines instead.
+		std::vector<std::string> GetShOutputLines(const std::string& mStr);
 	}
 }
 
