@@ -4459,6 +4459,71 @@ static void cloudSetupAddProse(GuiSettings* s, Window* window, const std::string
 	s->addRow(row);
 }
 
+// Several lines of body text stacked as one component, so they can sit in a
+// column beside something tall. ComponentList lays a row's elements out left
+// to right, never top to bottom, so a stack has to be a single element -- and
+// MultiLineMenuEntry is not it: its second line is deliberately smaller and
+// dimmer, which is wrong for an address and a code that both have to be read
+// off the screen and typed.
+static std::shared_ptr<ComponentGrid> cloudSetupTextStack(Window* window,
+	const std::vector<std::pair<std::string, bool>>& lines)
+{
+	auto theme = ThemeData::getMenuTheme();
+	auto grid = std::make_shared<ComponentGrid>(window, Vector2i(1, (int)lines.size()));
+
+	float height = 0;
+	for (int i = 0; i < (int)lines.size(); i++)
+	{
+		auto tc = std::make_shared<TextComponent>(window, lines[i].first, theme->Text.font,
+			lines[i].second ? theme->Text.selectedColor : theme->Text.color);
+		tc->setPadding(CLOUD_SETUP_ROW_PADDING);
+		tc->setVerticalAlignment(ALIGN_TOP);
+		grid->setEntry(tc, Vector2i(0, i), false, true);
+
+		// Absolute row heights, so the stack keeps its shape when
+		// ComponentList later resizes it to the width left over beside the
+		// image. A percentage would re-divide whatever height it was given.
+		const float lineHeight = tc->getSize().y();
+		grid->setRowHeight(i, lineHeight, false);
+		height += lineHeight;
+	}
+
+	grid->setSize(0, height);
+	return grid;
+}
+
+// An image with text beside it rather than under it.
+//
+// The sign-in page cannot scroll: every row on it is unselectable, so
+// ComponentList never moves its camera and anything past the fold is
+// unreachable rather than merely off-screen (which is why a QR stacked above
+// the address cut the address in half). Vertical space is therefore the
+// binding constraint, and a square code sitting alone on a wide row wastes
+// most of it. A row centres its elements vertically and gives fixed-width
+// ones their own column, so the code and its text share one row's height.
+static void cloudSetupAddQrRow(GuiSettings* s, Window* window, const std::string& imagePath,
+	const std::vector<std::pair<std::string, bool>>& lines)
+{
+	ComponentListRow row;
+	row.selectable = false;
+
+	// A share of the screen, not of the menu: the menu is capped at the
+	// screen height, so this stays the same physical size on a wide panel
+	// and a square one, and always leaves the majority of the width to text.
+	const float qrEdge = Renderer::getScreenHeight() * 0.24f;
+
+	auto qr = std::make_shared<ImageComponent>(window);
+	// Padding before setMaxSize -- ImageComponent folds it into the size it
+	// reports, which is what the row measures the column by.
+	qr->setPadding(CLOUD_SETUP_ROW_PADDING);
+	qr->setImage(imagePath, false, MaxSizeInfo(qrEdge, qrEdge));
+	qr->setMaxSize(qrEdge, qrEdge);
+	row.addElement(qr, false);
+
+	row.addElement(cloudSetupTextStack(window, lines), true);
+	s->addRow(row);
+}
+
 // A blank row. Group headers butt straight against whatever precedes them,
 // which reads as cramped where a group follows body text rather than another
 // group. Small font, so it is one short line rather than a full gap.
@@ -5245,15 +5310,38 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 
 	// The listener takes a moment to come up; ask for the address until it
 	// does rather than showing a blank where the instruction should be.
-	std::string url;
+	//
+	// `info` reports the address and the code apart as well as joined. The
+	// QR gets the joined form so scanning skips the code entirely; the screen
+	// shows the two apart, because they are read off a small panel and typed
+	// on a phone, and "?pin=7677" in a browser bar is where that goes wrong.
+	std::string url, address, pin;
 	for (int attempt = 0; attempt < 24 && url.empty(); attempt++)
+	{
+		for (auto& line : Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth info"))
+		{
+			const std::string trimmed = Utils::String::trim(line);
+			if (Utils::String::startsWith(trimmed, "URL="))
+				url = trimmed.substr(4);
+			else if (Utils::String::startsWith(trimmed, "ADDRESS="))
+				address = trimmed.substr(8);
+			else if (Utils::String::startsWith(trimmed, "PIN="))
+				pin = trimmed.substr(4);
+		}
+		if (url.empty())
+			Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
+	}
+
+	// An image whose cloud_oauth predates `info` still answers `url`, and the
+	// joined address remains typeable -- worse, but not broken.
+	if (url.empty())
 	{
 		auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth url");
 		if (!lines.empty())
 			url = Utils::String::trim(lines.front());
-		if (url.empty())
-			Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
 	}
+	if (address.empty())
+		address = url;
 
 	if (url.empty())
 	{
@@ -5266,36 +5354,36 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 
 	// This page cannot scroll -- every row is unselectable, so ComponentList
 	// never moves its camera and anything past the fold is unreachable, not
-	// merely off-screen. The first cut put the QR above the steps and pushed
-	// "the page will fail to load" out of sight, which is the one line that
-	// stops someone thinking they broke it. Everything here has to fit.
+	// merely off-screen. Everything here has to fit, on a 640x480 handheld
+	// panel as well as on a monitor.
+	//
+	// So the handheld says only where to go. The steps belong on the phone
+	// page, which is where they are carried out and which has the room to
+	// explain them -- including the redirect that fails, the one thing that
+	// looks like a fault and is not.
 	s->addGroup(_("ON YOUR PHONE"));
-	cloudSetupAddInfoRow(s, window, _("1. SCAN THIS, OR TYPE THE ADDRESS BELOW"));
-	cloudSetupAddInfoRow(s, window, _("2. SIGN IN AND APPROVE ACCESS"));
-	cloudSetupAddInfoRow(s, window, _("3. THE PAGE THEN FAILS TO LOAD - THAT IS NORMAL"));
-	cloudSetupAddInfoRow(s, window, _("4. COPY ITS ADDRESS BACK INTO THE FORM"));
 
-	// A QR beats typing an address and a PIN on a phone. qrencode is already
-	// a dependency of this package, used by the console flow.
+	// A QR beats typing an address and a code. qrencode is already a
+	// dependency of this package, used by the console flow.
 	const std::string qrPath = "/tmp/cloud-oauth-qr.png";
 	Utils::Platform::runSystemCommand(
 		"rm -f " + qrPath + "; /usr/bin/qrencode -o " + qrPath
 		+ " -s 6 -m 2 " + cloudShellQuote(url), "", nullptr);
 
-	if (Utils::FileSystem::exists(qrPath))
-	{
-		ComponentListRow qrRow;
-		qrRow.selectable = false;
-		auto qr = std::make_shared<ImageComponent>(window);
-		const float qrEdge = Renderer::getScreenHeight() * 0.22f;
-		MaxSizeInfo qrSize(qrEdge, qrEdge);
-		qr->setImage(qrPath, false, qrSize);
-		qr->setMaxSize(qrEdge, qrEdge);
-		qrRow.addElement(qr, true);
-		s->addRow(qrRow);
-	}
+	std::vector<std::pair<std::string, bool>> lines;
+	lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
+	lines.push_back(std::make_pair(address, true));
+	if (!pin.empty())
+		lines.push_back(std::make_pair(_("CODE") + std::string("  ") + pin, true));
 
-	cloudSetupAddInfoRow(s, window, url, true);
+	if (Utils::FileSystem::exists(qrPath))
+		cloudSetupAddQrRow(s, window, qrPath, lines);
+	else
+		for (auto& line : lines)
+			cloudSetupAddInfoRow(s, window, line.first, line.second);
+
+	cloudSetupAddProse(s, window, _("THEN"),
+		_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
 
 	// Ask cloud_oauth, which asks rclone. Nothing here decides on its own
 	// that a sign-in worked.
