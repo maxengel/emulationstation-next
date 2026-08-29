@@ -4879,8 +4879,24 @@ struct CloudBackendField
 // Backends worth putting in front of someone who has not decided yet. rclone
 // carries 69, most of which are plumbing (alias, chunker, combine, hasher,
 // memory) that is meaningless as a "cloud provider" choice.
-static const std::vector<std::string> CLOUD_RECOMMENDED = {
-	"webdav", "sftp", "smb", "s3", "b2", "storj", "mega", "koofr", "protondrive"
+//
+// Each carries a short name of our own. rclone's descriptions are written for
+// its documentation, so "Amazon S3 Compliant Storage Providers including AWS,
+// Alibaba, ArvanCloud..." is accurate and useless on a handheld -- it is
+// truncated mid-word in a menu and tells the player nothing the first three
+// characters did not.
+// Translated at the point of use: _() at static-init time would run
+// before the locale is loaded.
+static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED = {
+	{ "webdav",      "WEBDAV" },
+	{ "sftp",        "SSH / SFTP" },
+	{ "smb",         "WINDOWS SHARE (SMB)" },
+	{ "s3",          "AMAZON S3 AND COMPATIBLE" },
+	{ "b2",          "BACKBLAZE B2" },
+	{ "storj",       "STORJ" },
+	{ "mega",        "MEGA" },
+	{ "koofr",       "KOOFR" },
+	{ "protondrive", "PROTON DRIVE" },
 };
 
 static std::vector<std::string> cloudRemoteLines(const std::string& args)
@@ -4897,12 +4913,21 @@ static std::vector<std::string> cloudRemoteLines(const std::string& args)
 	return lines;
 }
 
+// Split a TSV record, keeping empty fields. removeEmptyEntries would drop
+// them, and most rows have an empty column somewhere -- a backend option with
+// no default, or no help text -- which shifts every later field left and
+// silently discards the row for being too short.
+static std::string cloudTsvField(const std::vector<std::string>& cols, size_t i)
+{
+	return i < cols.size() ? cols[i] : std::string();
+}
+
 static std::vector<CloudBackend> cloudRemoteBackends()
 {
 	std::vector<CloudBackend> list;
 	for (auto& line : cloudRemoteLines("providers"))
 	{
-		auto cols = Utils::String::splitAny(line, "\t", true);
+		auto cols = Utils::String::splitAny(line, "\t", false);
 		if (cols.size() < 3)
 			continue;
 		list.push_back({ cols[0], cols[1], cols[2] });
@@ -4959,17 +4984,17 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 	std::vector<CloudBackendField> fields;
 	for (auto& line : cloudRemoteLines("fields " + backend.name))
 	{
-		auto cols = Utils::String::splitAny(line, "\t", true);
-		if (cols.size() < 7)
+		auto cols = Utils::String::splitAny(line, "\t", false);
+		if (cols.size() < 5 || cols[0].empty())
 			continue;
 		CloudBackendField f;
-		f.name      = cols[0];
-		f.required  = cols[1] == "1";
-		f.password  = cols[2] == "1";
-		f.sensitive = cols[3] == "1";
-		f.type      = cols[4];
-		f.deflt     = cols[5];
-		f.help      = cols[6];
+		f.name      = cloudTsvField(cols, 0);
+		f.required  = cloudTsvField(cols, 1) == "1";
+		f.password  = cloudTsvField(cols, 2) == "1";
+		f.sensitive = cloudTsvField(cols, 3) == "1";
+		f.type      = cloudTsvField(cols, 4);
+		f.deflt     = cloudTsvField(cols, 5);
+		f.help      = cloudTsvField(cols, 6);
 		fields.push_back(f);
 	}
 
@@ -5132,10 +5157,12 @@ void GuiMenu::openCloudAddRemote(Window* window)
 	{
 		for (auto& b : backends)
 		{
-			if (b.name != want || b.tier == "fallback")
+			if (b.name != want.first || b.tier == "fallback")
 				continue;
+			// Show our short name here; the form still titles itself with
+			// rclone's description, which is useful once you have chosen.
 			CloudBackend backend = b;
-			s->addEntry(Utils::String::toUpper(b.label), true, [window, backend]
+			s->addEntry(_(want.second.c_str()), true, [window, backend]
 			{
 				auto values = std::make_shared<std::map<std::string, std::string>>();
 				cloudRemoteShowForm(window, backend, values, nullptr);
