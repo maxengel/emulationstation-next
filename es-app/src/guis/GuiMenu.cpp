@@ -4510,7 +4510,7 @@ static void cloudSetupAddQrRow(GuiSettings* s, Window* window, const std::string
 	// A share of the screen, not of the menu: the menu is capped at the
 	// screen height, so this stays the same physical size on a wide panel
 	// and a square one, and always leaves the majority of the width to text.
-	const float qrEdge = Renderer::getScreenHeight() * 0.24f;
+	const float qrEdge = Renderer::getScreenHeight() * 0.28f;
 
 	auto qr = std::make_shared<ImageComponent>(window);
 	// Padding before setMaxSize -- ImageComponent folds it into the size it
@@ -5290,8 +5290,15 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 static void cloudOAuthStart(Window* window, const CloudBackend& backend,
 	const std::string& remoteName, GuiSettings* prev)
 {
+	// Clear the previous attempt's state first, and wait for it: a finished
+	// session leaves its address and PIN behind, and the poll below would
+	// read those and put a dead code on the screen. Doing it here rather
+	// than inside the detached launch means it has already happened before
+	// the first poll, so there is no window where the old one is readable.
+	Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth cancel", "", nullptr);
+
 	// Detached, because it stays up until someone signs in or it times out.
-	// Its own output carries the URL and PIN, which `cloud_oauth url` reads
+	// Its own output carries the URL and PIN, which `cloud_oauth info` reads
 	// back rather than this parsing them out of a launch.
 	std::string cmd = "setsid sh -c " + cloudShellQuote(
 		"/usr/bin/cloud_oauth serve " + cloudShellQuote(backend.name)
@@ -5315,10 +5322,23 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// QR gets the joined form so scanning skips the code entirely; the screen
 	// shows the two apart, because they are read off a small panel and typed
 	// on a phone, and "?pin=7677" in a browser bar is where that goes wrong.
+	// Wait for the listener to say it is *waiting*, not merely for an address
+	// to appear. A URL on its own proves nothing about whose session it
+	// belongs to, which is how a previous attempt's PIN reached the screen.
 	std::string url, address, pin;
-	for (int attempt = 0; attempt < 24 && url.empty(); attempt++)
+	bool understood = true;
+	for (int attempt = 0; attempt < 24 && understood; attempt++)
 	{
-		for (auto& line : Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth info"))
+		std::string status;
+		url.clear(); address.clear(); pin.clear();
+
+		auto reported = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth info");
+		// An older script answers `info` with its usage on stderr and nothing
+		// on stdout. Fall through to `url` at once rather than spending the
+		// whole poll waiting for a command that will never answer.
+		understood = !reported.empty();
+
+		for (auto& line : reported)
 		{
 			const std::string trimmed = Utils::String::trim(line);
 			if (Utils::String::startsWith(trimmed, "URL="))
@@ -5327,9 +5347,15 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 				address = trimmed.substr(8);
 			else if (Utils::String::startsWith(trimmed, "PIN="))
 				pin = trimmed.substr(4);
+			else if (Utils::String::startsWith(trimmed, "STATUS="))
+				status = trimmed.substr(7);
 		}
-		if (url.empty())
-			Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
+
+		if (status == "waiting" && !url.empty())
+			break;
+
+		url.clear();
+		Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
 	}
 
 	// An image whose cloud_oauth predates `info` still answers `url`, and the
