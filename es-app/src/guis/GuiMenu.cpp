@@ -5211,6 +5211,127 @@ static void cloudRemoteChooseBackend(Window* window, const CloudBackend& backend
 	cloudSetupPresent(window, s, nullptr);
 }
 
+// Sign in to a provider using a phone, with nothing else involved.
+//
+// cloud_oauth starts rclone's own authorize flow, reads the provider's real
+// sign-in URL out of it, and serves that on the LAN behind a PIN. All this
+// page does is start it, show where to go, and ask rclone afterwards whether
+// it worked -- the same shape as the SSH wizard's CONTINUE gate, which exists
+// because a page that assumes success is how a failed setup gets reported as
+// a working one.
+static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev);
+
+static void cloudOAuthStart(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev)
+{
+	// Detached, because it stays up until someone signs in or it times out.
+	// Its own output carries the URL and PIN, which `cloud_oauth url` reads
+	// back rather than this parsing them out of a launch.
+	std::string cmd = "setsid sh -c " + cloudShellQuote(
+		"/usr/bin/cloud_oauth serve " + cloudShellQuote(backend.name)
+		+ " --name " + cloudShellQuote(remoteName)
+		+ " --timeout 900 >/dev/null 2>&1") + " </dev/null >/dev/null 2>&1 &";
+	Utils::Platform::runSystemCommand(cmd, "", nullptr);
+
+	cloudOAuthShowSignIn(window, backend, remoteName, prev);
+}
+
+static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev)
+{
+	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
+	s->setSubTitle(Utils::String::toUpper(backend.label));
+
+	// The listener takes a moment to come up; ask for the address until it
+	// does rather than showing a blank where the instruction should be.
+	std::string url;
+	for (int attempt = 0; attempt < 24 && url.empty(); attempt++)
+	{
+		auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth url");
+		if (!lines.empty())
+			url = Utils::String::trim(lines.front());
+		if (url.empty())
+			Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
+	}
+
+	if (url.empty())
+	{
+		cloudSetupAddProse(s, window, _("SIGN-IN DID NOT START"),
+			_("THE DEVICE COULD NOT REACH THE PROVIDER. CHECK THE NETWORK AND TRY AGAIN."));
+		cloudSetupSetButtons(s, [s] { s->close(); });
+		cloudSetupPresent(window, s, prev);
+		return;
+	}
+
+	s->addGroup(_("ON YOUR PHONE"));
+	cloudSetupAddProse(s, window, _("OPEN THIS PAGE"),
+		_("SCAN THE CODE, OR TYPE THE ADDRESS INTO A BROWSER ON A PHONE OR TABLET ON THIS NETWORK."));
+
+	// A QR beats typing an address and a PIN on a phone. qrencode is already
+	// a dependency of this package, used by the console flow.
+	const std::string qrPath = "/tmp/cloud-oauth-qr.png";
+	Utils::Platform::runSystemCommand(
+		"rm -f " + qrPath + "; /usr/bin/qrencode -o " + qrPath
+		+ " -s 6 -m 2 " + cloudShellQuote(url), "", nullptr);
+
+	if (Utils::FileSystem::exists(qrPath))
+	{
+		ComponentListRow qrRow;
+		qrRow.selectable = false;
+		auto qr = std::make_shared<ImageComponent>(window);
+		MaxSizeInfo qrSize(Renderer::getScreenHeight() * 0.34f,
+		                   Renderer::getScreenHeight() * 0.34f);
+		qr->setImage(qrPath, false, qrSize);
+		qr->setMaxSize(Renderer::getScreenHeight() * 0.34f,
+		               Renderer::getScreenHeight() * 0.34f);
+		qrRow.addElement(qr, true);
+		s->addRow(qrRow);
+	}
+
+	cloudSetupAddInfoRow(s, window, url, true);
+
+	s->addGroup(_("THEN"));
+	cloudSetupAddInfoRow(s, window, _("1. SIGN IN AND APPROVE ACCESS"));
+	cloudSetupAddInfoRow(s, window, _("2. THE PAGE WILL FAIL TO LOAD - THAT IS NORMAL"));
+	cloudSetupAddInfoRow(s, window, _("3. COPY THAT PAGE'S ADDRESS BACK INTO THE FORM"));
+
+	// Ask cloud_oauth, which asks rclone. Nothing here decides on its own
+	// that a sign-in worked.
+	cloudSetupSetButtons(s, [window, backend, remoteName, s]
+	{
+		auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth status");
+		std::string status = lines.empty() ? "" : Utils::String::trim(lines.front());
+		LOG(LogInfo) << "cloud_oauth status=" << status;
+
+		if (status == "signed-in")
+		{
+			window->pushGui(new GuiMsgBox(window,
+				_("CONNECTED. CLOUD TOOLS ARE NOW AVAILABLE."),
+				_("OK"), [s] { s->close(); }));
+			return;
+		}
+		if (status == "failed")
+		{
+			window->pushGui(new GuiMsgBox(window,
+				_("THE SIGN-IN DID NOT COMPLETE.\n\nCODES ARE SINGLE-USE AND EXPIRE QUICKLY - START AGAIN TO GET A NEW ONE."),
+				_("OK"), nullptr,
+				_("EXIT"), [s] { s->close(); }));
+			return;
+		}
+		window->pushGui(new GuiMsgBox(window,
+			_("STILL WAITING FOR THE SIGN-IN.\n\nFINISH IT ON YOUR PHONE, THEN SELECT 'CONTINUE' AGAIN."),
+			_("OK"), nullptr,
+			_("CANCEL SIGN-IN"), [window, s]
+			{
+				Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth cancel", "", nullptr);
+				s->close();
+			}));
+	});
+
+	cloudSetupPresent(window, s, prev);
+}
+
 // A filtered list of backends. `tier` empty means every tier.
 static void cloudRemoteShowList(Window* window, const std::string& title,
 	const std::string& tier, const std::string& textFilter)
@@ -5227,7 +5348,7 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 		// handheld today.
 		if (tier == "needs-browser")
 		{
-			if (b.tier != "fallback" && b.tier != "oauth")
+			if (b.tier != "oauth")
 				continue;
 		}
 		else if (!tier.empty() && b.tier != tier)
@@ -5244,12 +5365,15 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 		// exactly like "fallback" does, and the form would ask a player for
 		// a client_id and a token they have no way to produce. Group it with
 		// what is honest today rather than with what is planned.
-		if (b.tier == "fallback" || b.tier == "oauth")
+		if (b.tier == "oauth")
 		{
-			// Say so before they start, not three screens in.
+			// A provider sign-in, done on a phone. No longer "needs a
+			// computer": cloud_oauth wraps rclone's own authorize flow and
+			// serves the provider's link on the LAN.
 			s->addWithDescription(Utils::String::toUpper(b.label),
-				_("NEEDS A COMPUTER - SET THIS ONE UP WITH SET UP CLOUD REMOTE."),
-				nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
+				_("SIGN IN WITH YOUR PHONE."), nullptr,
+				[window, backend] { cloudOAuthStart(window, backend, backend.name, nullptr); },
+				"", false, true);
 		}
 		else
 		{
@@ -5282,7 +5406,7 @@ void GuiMenu::openCloudAddRemote(Window* window)
 
 	int fallbackCount = 0;
 	for (auto& b : backends)
-		if (b.tier == "fallback" || b.tier == "oauth")
+		if (b.tier == "oauth")
 			fallbackCount++;
 
 	s->addGroup(_("RECOMMENDED"));
@@ -5325,9 +5449,9 @@ void GuiMenu::openCloudAddRemote(Window* window)
 
 	if (fallbackCount > 0)
 	{
-		s->addWithDescription(_("PROVIDERS THAT NEED A COMPUTER"),
-			_("DROPBOX, GOOGLE DRIVE AND OTHERS SIGN IN THROUGH A BROWSER."),
-			nullptr, [window] { cloudRemoteShowList(window, _("NEEDS A COMPUTER"), "needs-browser", ""); },
+		s->addWithDescription(_("PROVIDERS YOU SIGN IN TO"),
+			_("DROPBOX, GOOGLE DRIVE AND OTHERS. YOU WILL NEED A PHONE."),
+			nullptr, [window] { cloudRemoteShowList(window, _("SIGN IN WITH A PHONE"), "needs-browser", ""); },
 			"", false, true);
 	}
 
