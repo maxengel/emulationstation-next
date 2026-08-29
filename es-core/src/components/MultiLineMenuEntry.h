@@ -12,6 +12,7 @@ public:
 	MultiLineMenuEntry(Window* window, const std::string& text, const std::string& substring, bool multiLine = false);
 
 	void setColor(unsigned int color) override;
+	void setPadding(const Vector4f padding) override;
 	void onSizeChanged() override;
 	void onFocusGained() override;
 	void onFocusLost() override;
