@@ -5412,15 +5412,19 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		"rm -f " + qrPath + "; /usr/bin/qrencode -o " + qrPath
 		+ " -s 6 -m 2 " + cloudShellQuote(url), "", nullptr);
 
-	// One thing on the screen, because there is one thing to do with it.
-	// The PIN used to sit on its own line, and it is only ever needed by
-	// somebody typing the address rather than scanning the code -- so for
-	// almost everyone it was a second number to read and wonder about, next
-	// to a page that also asks for something it calls a code. It is now the
-	// tail of the address itself, which is what both paths use.
+	// One thing to act on, and an answer to the question it raises.
+	//
+	// The PIN used to sit on its own line, which made it a second number to
+	// read next to a page that also asks for something it calls a code. It is
+	// the tail of the address now, so both paths use one string -- but a
+	// number nobody has explained is still a number somebody has to wonder
+	// about, and nothing in the UI said what it was for. These two lines cost
+	// nothing: the code beside them is taller than the text either way.
 	std::vector<std::pair<std::string, bool>> lines;
 	lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
 	lines.push_back(std::make_pair(url, true));
+	lines.push_back(std::make_pair(_("THE LAST 4 DIGITS ARE A PIN"), false));
+	lines.push_back(std::make_pair(_("IT KEEPS OTHERS OFF THIS PAGE"), false));
 
 	if (Utils::FileSystem::exists(qrPath))
 		cloudSetupAddQrRow(s, window, qrPath, lines);
