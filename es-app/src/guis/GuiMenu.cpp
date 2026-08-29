@@ -5264,9 +5264,16 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		return;
 	}
 
+	// This page cannot scroll -- every row is unselectable, so ComponentList
+	// never moves its camera and anything past the fold is unreachable, not
+	// merely off-screen. The first cut put the QR above the steps and pushed
+	// "the page will fail to load" out of sight, which is the one line that
+	// stops someone thinking they broke it. Everything here has to fit.
 	s->addGroup(_("ON YOUR PHONE"));
-	cloudSetupAddProse(s, window, _("OPEN THIS PAGE"),
-		_("SCAN THE CODE, OR TYPE THE ADDRESS INTO A BROWSER ON A PHONE OR TABLET ON THIS NETWORK."));
+	cloudSetupAddInfoRow(s, window, _("1. SCAN THIS, OR TYPE THE ADDRESS BELOW"));
+	cloudSetupAddInfoRow(s, window, _("2. SIGN IN AND APPROVE ACCESS"));
+	cloudSetupAddInfoRow(s, window, _("3. THE PAGE THEN FAILS TO LOAD - THAT IS NORMAL"));
+	cloudSetupAddInfoRow(s, window, _("4. COPY ITS ADDRESS BACK INTO THE FORM"));
 
 	// A QR beats typing an address and a PIN on a phone. qrencode is already
 	// a dependency of this package, used by the console flow.
@@ -5280,21 +5287,15 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		ComponentListRow qrRow;
 		qrRow.selectable = false;
 		auto qr = std::make_shared<ImageComponent>(window);
-		MaxSizeInfo qrSize(Renderer::getScreenHeight() * 0.34f,
-		                   Renderer::getScreenHeight() * 0.34f);
+		const float qrEdge = Renderer::getScreenHeight() * 0.22f;
+		MaxSizeInfo qrSize(qrEdge, qrEdge);
 		qr->setImage(qrPath, false, qrSize);
-		qr->setMaxSize(Renderer::getScreenHeight() * 0.34f,
-		               Renderer::getScreenHeight() * 0.34f);
+		qr->setMaxSize(qrEdge, qrEdge);
 		qrRow.addElement(qr, true);
 		s->addRow(qrRow);
 	}
 
 	cloudSetupAddInfoRow(s, window, url, true);
-
-	s->addGroup(_("THEN"));
-	cloudSetupAddInfoRow(s, window, _("1. SIGN IN AND APPROVE ACCESS"));
-	cloudSetupAddInfoRow(s, window, _("2. THE PAGE WILL FAIL TO LOAD - THAT IS NORMAL"));
-	cloudSetupAddInfoRow(s, window, _("3. COPY THAT PAGE'S ADDRESS BACK INTO THE FORM"));
 
 	// Ask cloud_oauth, which asks rclone. Nothing here decides on its own
 	// that a sign-in worked.
