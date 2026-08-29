@@ -4954,16 +4954,30 @@ struct CloudBackendField
 // characters did not.
 // Translated at the point of use: _() at static-init time would run
 // before the locale is loaded.
-static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED = {
+// The consumer clouds people actually have accounts with. These were behind
+// two taps and a group called MORE until the sign-in flow worked, because
+// until then choosing one led nowhere. Now that it does, burying Dropbox
+// under "PROVIDERS YOU SIGN IN TO" is just a list in the wrong order.
+static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED_OAUTH = {
+	{ "dropbox",  "DROPBOX" },
+	{ "drive",    "GOOGLE DRIVE" },
+	{ "onedrive", "MICROSOFT ONEDRIVE" },
+	{ "box",      "BOX" },
+	{ "pcloud",   "PCLOUD" },
+};
+
+// Providers that need nothing but an address and a key -- self-hosted storage
+// and the accounts whose credentials are typed rather than approved.
+static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED_KEYS = {
+	{ "mega",        "MEGA" },
+	{ "protondrive", "PROTON DRIVE" },
+	{ "koofr",       "KOOFR" },
 	{ "webdav",      "WEBDAV" },
 	{ "sftp",        "SSH / SFTP" },
 	{ "smb",         "WINDOWS SHARE (SMB)" },
 	{ "s3",          "AMAZON S3 AND COMPATIBLE" },
 	{ "b2",          "BACKBLAZE B2" },
 	{ "storj",       "STORJ" },
-	{ "mega",        "MEGA" },
-	{ "koofr",       "KOOFR" },
-	{ "protondrive", "PROTON DRIVE" },
 };
 
 static std::vector<std::string> cloudRemoteLines(const std::string& args)
@@ -5300,9 +5314,15 @@ static void cloudOAuthStart(Window* window, const CloudBackend& backend,
 	// Detached, because it stays up until someone signs in or it times out.
 	// Its own output carries the URL and PIN, which `cloud_oauth info` reads
 	// back rather than this parsing them out of a launch.
+	// --label carries the name we already show in our own menu, so the page
+	// on the phone says "Connect Dropbox" rather than "Connect dropbox".
+	// rclone's backend names are lowercase identifiers, and a page headed
+	// with one reads like a typo on the screen where somebody is deciding
+	// whether to trust us with their storage.
 	std::string cmd = "setsid sh -c " + cloudShellQuote(
 		"/usr/bin/cloud_oauth serve " + cloudShellQuote(backend.name)
 		+ " --name " + cloudShellQuote(remoteName)
+		+ " --label " + cloudShellQuote(backend.label)
 		+ " --timeout 900 >/dev/null 2>&1") + " </dev/null >/dev/null 2>&1 &";
 	Utils::Platform::runSystemCommand(cmd, "", nullptr);
 
@@ -5399,8 +5419,11 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	std::vector<std::pair<std::string, bool>> lines;
 	lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
 	lines.push_back(std::make_pair(address, true));
+	// "PIN", not "CODE": the OAuth address the player pastes on the phone is
+	// also a code, and having two of them cost a sign-in -- the tester could
+	// not tell which one the page was asking for.
 	if (!pin.empty())
-		lines.push_back(std::make_pair(_("CODE") + std::string("  ") + pin, true));
+		lines.push_back(std::make_pair(_("PIN") + std::string("  ") + pin, true));
 
 	if (Utils::FileSystem::exists(qrPath))
 		cloudSetupAddQrRow(s, window, qrPath, lines);
@@ -5524,8 +5547,27 @@ void GuiMenu::openCloudAddRemote(Window* window)
 		if (b.tier == "oauth")
 			fallbackCount++;
 
-	s->addGroup(_("RECOMMENDED"));
-	for (auto& want : CLOUD_RECOMMENDED)
+	// Grouped by what the player has to do, not by our internal tiers: one
+	// list you approve on a phone, one you type a key into. The group header
+	// carries that distinction so the rows themselves stay single-line.
+	s->addGroup(_("SIGN IN WITH YOUR PHONE"));
+	for (auto& want : CLOUD_RECOMMENDED_OAUTH)
+	{
+		for (auto& b : backends)
+		{
+			if (b.name != want.first || b.tier != "oauth")
+				continue;
+			CloudBackend backend = b;
+			s->addEntry(_(want.second.c_str()), true, [window, backend]
+			{
+				cloudOAuthStart(window, backend, backend.name, nullptr);
+			});
+			break;
+		}
+	}
+
+	s->addGroup(_("SIGN IN WITH AN ADDRESS AND KEY"));
+	for (auto& want : CLOUD_RECOMMENDED_KEYS)
 	{
 		for (auto& b : backends)
 		{
