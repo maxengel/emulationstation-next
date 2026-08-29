@@ -5092,7 +5092,13 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 					// dropped, silently and with a success dialog, because
 					// WebDAV tolerates an empty one. On Sharepoint or
 					// Nextcloud that is the wrong dialect, not a no-op.
-					if (!list->getSelected().empty())
+					// getSelected() asserts that exactly one entry is
+					// selected and abort()s otherwise, and nothing is
+					// selected when the option has no default and so no
+					// entry matched. getSelectedIndex() returns -1 instead.
+					// Leaving it unset is right: we should not invent a
+					// vendor the player did not choose.
+					if (list->getSelectedIndex() >= 0)
 						(*values)[fieldName] = list->getSelected();
 					list->setSelectedChangedCallback(
 						[values, fieldName](const std::string& picked)
