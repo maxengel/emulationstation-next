@@ -4860,9 +4860,10 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 
 struct CloudBackend
 {
-	std::string tier;   // keys | oauth | fallback
-	std::string name;   // rclone's backend id, e.g. "sftp"
-	std::string label;  // human name, e.g. "SSH/SFTP Connection"
+	std::string tier;         // keys | oauth | fallback | plumbing
+	std::string name;         // rclone's backend id, e.g. "sftp"
+	std::string label;        // human name, e.g. "SSH/SFTP Connection"
+	std::string subprovider;  // vendor within the backend, where it has one
 };
 
 struct CloudBackendField
@@ -4874,6 +4875,7 @@ struct CloudBackendField
 	std::string type;
 	std::string deflt;
 	std::string help;
+	int choices = 0;
 };
 
 // Backends worth putting in front of someone who has not decided yet. rclone
@@ -4930,7 +4932,7 @@ static std::vector<CloudBackend> cloudRemoteBackends()
 		auto cols = Utils::String::splitAny(line, "\t", false);
 		if (cols.size() < 3)
 			continue;
-		list.push_back({ cols[0], cols[1], cols[2] });
+		list.push_back({ cols[0], cols[1], cols[2], std::string() });
 	}
 	return list;
 }
@@ -4982,7 +4984,13 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 	s->setSubTitle(Utils::String::toUpper(backend.label));
 
 	std::vector<CloudBackendField> fields;
-	for (auto& line : cloudRemoteLines("fields " + backend.name))
+	// The backend id is quoted: rclone has ids with spaces in them
+	// ("google cloud storage", "google photos"), which would otherwise split
+	// into extra arguments.
+	std::string fieldsArgs = "fields " + cloudShellQuote(backend.name);
+	if (!backend.subprovider.empty())
+		fieldsArgs += " " + cloudShellQuote(backend.subprovider);
+	for (auto& line : cloudRemoteLines(fieldsArgs))
 	{
 		auto cols = Utils::String::splitAny(line, "\t", false);
 		if (cols.size() < 5 || cols[0].empty())
@@ -4995,6 +5003,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 		f.type      = cloudTsvField(cols, 4);
 		f.deflt     = cloudTsvField(cols, 5);
 		f.help      = cloudTsvField(cols, 6);
+		f.choices   = atoi(cloudTsvField(cols, 7).c_str());
 		fields.push_back(f);
 	}
 
@@ -5029,15 +5038,66 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 			// still shows the value, which is the reveal.
 			bool mask = f.password || f.sensitive;
 			if (!values->count(f.name) && !f.deflt.empty())
-					(*values)[f.name] = f.deflt;
-				std::string current = values->count(f.name) ? (*values)[f.name] : "";
+				(*values)[f.name] = f.deflt;
+			std::string current = values->count(f.name) ? (*values)[f.name] : "";
 			std::string fieldName = f.name;
-s->addInputTextRow(Utils::String::toUpper(fieldName), current, mask,
-					cloudRemoteEditor(values, fieldName),
-					[values, fieldName](const std::string& newVal)
+
+			// Match the widget to the option. Everything was a text box before,
+			// which meant typing "true" for a switch, and guessing that the
+			// answer for a generic WebDAV server is the literal string "other".
+			if (f.type == "bool")
+			{
+				auto sw = std::make_shared<SwitchComponent>(window);
+				sw->setState(current == "true");
+				s->addWithLabel(Utils::String::toUpper(fieldName), sw);
+				sw->setOnChangedCallback([values, fieldName, sw]
+				{
+					(*values)[fieldName] = sw->getState() ? "true" : "false";
+				});
+				continue;
+			}
+
+			// Only offer a list when it is short enough to scroll on a handheld.
+			// s3's endpoint carries 351 suggestions and its region 150; those are
+			// effectively free-form and stay as text.
+			if (f.choices > 0 && f.choices <= 12)
+			{
+				std::string choicesArgs = "choices " + cloudShellQuote(backend.name)
+					+ " " + cloudShellQuote(fieldName);
+				if (!backend.subprovider.empty())
+					choicesArgs += " " + cloudShellQuote(backend.subprovider);
+
+				auto list = std::make_shared<OptionListComponent<std::string>>(
+					window, Utils::String::toUpper(fieldName), false);
+				bool any = false;
+				for (auto& line : cloudRemoteLines(choicesArgs))
+				{
+					auto cols = Utils::String::splitAny(line, "\t", false);
+					if (cols.empty() || cols[0].empty())
+						continue;
+					std::string value = cols[0];
+					std::string label = cloudTsvField(cols, 1).empty() ? value : cols[1];
+					list->add(label, value, current == value);
+					any = true;
+				}
+				if (any)
+				{
+					s->addWithLabel(Utils::String::toUpper(fieldName), list);
+					s->addSaveFunc([values, fieldName, list]
 					{
-						(*values)[fieldName] = newVal;
+						if (!list->getSelected().empty())
+							(*values)[fieldName] = list->getSelected();
 					});
+					continue;
+				}
+			}
+
+			s->addInputTextRow(Utils::String::toUpper(fieldName), current, mask,
+				cloudRemoteEditor(values, fieldName),
+				[values, fieldName](const std::string& newVal)
+				{
+					(*values)[fieldName] = newVal;
+				});
 		}
 	}
 
@@ -5052,7 +5112,11 @@ s->addInputTextRow(Utils::String::toUpper(fieldName), current, mask,
 			return;
 		}
 
-		std::string cmd = "create " + cloudShellQuote(name) + " " + backend.name;
+		std::string cmd = "create " + cloudShellQuote(name) + " "
+			+ cloudShellQuote(backend.name);
+		// The sub-provider is a real config value, not just a filter.
+		if (!backend.subprovider.empty())
+			cmd += " " + cloudShellQuote("provider=" + backend.subprovider);
 		for (auto& kv : *values)
 		{
 			if (kv.first == "__name__" || Utils::String::trim(kv.second).empty())
@@ -5091,6 +5155,44 @@ s->addInputTextRow(Utils::String::toUpper(fieldName), current, mask,
 	cloudSetupPresent(window, s, prev);
 }
 
+// Several backends ask which vendor you are using before their other
+// options mean anything: koofr carries three separate options all named
+// `password` (Koofr, Digi Storage, other) and s3 has 51 vendors with
+// options like ibm_api_key that are noise unless you picked IBMCOS.
+// Asking first keeps the form to the questions that apply.
+static void cloudRemoteChooseBackend(Window* window, const CloudBackend& backend)
+{
+	std::vector<std::pair<std::string, std::string>> subs;
+	for (auto& line : cloudRemoteLines("subproviders " + cloudShellQuote(backend.name)))
+	{
+		auto cols = Utils::String::splitAny(line, "\t", false);
+		if (cols.size() < 1 || cols[0].empty())
+			continue;
+		subs.push_back({ cols[0], cloudTsvField(cols, 1).empty() ? cols[0] : cols[1] });
+	}
+
+	if (subs.empty())
+	{
+		auto values = std::make_shared<std::map<std::string, std::string>>();
+		cloudRemoteShowForm(window, backend, values, nullptr);
+		return;
+	}
+
+	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
+	s->setSubTitle(_("WHICH SERVICE?"));
+	for (auto& sub : subs)
+	{
+		CloudBackend chosen = backend;
+		chosen.subprovider = sub.first;
+		s->addEntry(Utils::String::toUpper(sub.second), true, [window, chosen]
+		{
+			auto values = std::make_shared<std::map<std::string, std::string>>();
+			cloudRemoteShowForm(window, chosen, values, nullptr);
+		});
+	}
+	cloudSetupPresent(window, s, nullptr);
+}
+
 // A filtered list of backends. `tier` empty means every tier.
 static void cloudRemoteShowList(Window* window, const std::string& title,
 	const std::string& tier, const std::string& textFilter)
@@ -5101,6 +5203,8 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 	int shown = 0;
 	for (auto& b : backends)
 	{
+		if (b.tier == "plumbing")
+			continue;
 		if (!tier.empty() && b.tier != tier)
 			continue;
 		if (!textFilter.empty()
@@ -5121,8 +5225,7 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 		{
 			s->addEntry(Utils::String::toUpper(b.label), true, [window, backend]
 			{
-				auto values = std::make_shared<std::map<std::string, std::string>>();
-				cloudRemoteShowForm(window, backend, values, nullptr);
+				cloudRemoteChooseBackend(window, backend);
 			});
 		}
 	}
@@ -5164,8 +5267,7 @@ void GuiMenu::openCloudAddRemote(Window* window)
 			CloudBackend backend = b;
 			s->addEntry(_(want.second.c_str()), true, [window, backend]
 			{
-				auto values = std::make_shared<std::map<std::string, std::string>>();
-				cloudRemoteShowForm(window, backend, values, nullptr);
+				cloudRemoteChooseBackend(window, backend);
 			});
 			break;
 		}
