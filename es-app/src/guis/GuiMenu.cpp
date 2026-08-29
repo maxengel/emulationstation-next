@@ -5345,12 +5345,15 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// Wait for the listener to say it is *waiting*, not merely for an address
 	// to appear. A URL on its own proves nothing about whose session it
 	// belongs to, which is how a previous attempt's PIN reached the screen.
-	std::string url, address, pin;
+	// One value is read now: the address, which carries its own PIN in the
+	// path. ADDRESS and PIN are still reported by `info` for anything driving
+	// this from a shell, but the page has nothing to do with them separately.
+	std::string url;
 	bool understood = true;
 	for (int attempt = 0; attempt < 24 && understood; attempt++)
 	{
 		std::string status;
-		url.clear(); address.clear(); pin.clear();
+		url.clear();
 
 		auto reported = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth info");
 		// An older script answers `info` with its usage on stderr and nothing
@@ -5363,10 +5366,6 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			const std::string trimmed = Utils::String::trim(line);
 			if (Utils::String::startsWith(trimmed, "URL="))
 				url = trimmed.substr(4);
-			else if (Utils::String::startsWith(trimmed, "ADDRESS="))
-				address = trimmed.substr(8);
-			else if (Utils::String::startsWith(trimmed, "PIN="))
-				pin = trimmed.substr(4);
 			else if (Utils::String::startsWith(trimmed, "STATUS="))
 				status = trimmed.substr(7);
 		}
@@ -5378,16 +5377,13 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
 	}
 
-	// An image whose cloud_oauth predates `info` still answers `url`, and the
-	// joined address remains typeable -- worse, but not broken.
+	// An image whose cloud_oauth predates `info` still answers `url`.
 	if (url.empty())
 	{
 		auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth url");
 		if (!lines.empty())
 			url = Utils::String::trim(lines.front());
 	}
-	if (address.empty())
-		address = url;
 
 	if (url.empty())
 	{
@@ -5416,14 +5412,15 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		"rm -f " + qrPath + "; /usr/bin/qrencode -o " + qrPath
 		+ " -s 6 -m 2 " + cloudShellQuote(url), "", nullptr);
 
+	// One thing on the screen, because there is one thing to do with it.
+	// The PIN used to sit on its own line, and it is only ever needed by
+	// somebody typing the address rather than scanning the code -- so for
+	// almost everyone it was a second number to read and wonder about, next
+	// to a page that also asks for something it calls a code. It is now the
+	// tail of the address itself, which is what both paths use.
 	std::vector<std::pair<std::string, bool>> lines;
 	lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
-	lines.push_back(std::make_pair(address, true));
-	// "PIN", not "CODE": the OAuth address the player pastes on the phone is
-	// also a code, and having two of them cost a sign-in -- the tester could
-	// not tell which one the page was asking for.
-	if (!pin.empty())
-		lines.push_back(std::make_pair(_("PIN") + std::string("  ") + pin, true));
+	lines.push_back(std::make_pair(url, true));
 
 	if (Utils::FileSystem::exists(qrPath))
 		cloudSetupAddQrRow(s, window, qrPath, lines);
@@ -5611,6 +5608,14 @@ void GuiMenu::openCloudAddRemote(Window* window)
 			nullptr, [window] { cloudRemoteShowList(window, _("SIGN IN WITH A PHONE"), "needs-browser", ""); },
 			"", false, true);
 	}
+
+	// The old SSH wizard, one level down. It is still the only way to reach
+	// rclone's own config for the things a form cannot express -- crypt and
+	// union remotes, or reconnecting one whose sign-in has lapsed -- but it
+	// is no longer a second front door offering the same job as the first.
+	s->addWithDescription(_("USE A COMPUTER INSTEAD"),
+		_("RUN RCLONE'S OWN SETUP OVER SSH. FOR REMOTES THIS PAGE CANNOT BUILD."),
+		nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
 
 	cloudSetupPresent(window, s, nullptr);
 }
@@ -5897,7 +5902,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 					if (rc == 0)
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE SET UP CLOUD REMOTE IN NETWORK SETTINGS > RCLONE SERVICES.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT CLOUD STORAGE IN NETWORK SETTINGS > RCLONE SERVICES.")));
 				}));
 		});
 	}
@@ -7473,11 +7478,13 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		Window* window = mWindow;
 
+		// One entry, not two. "SET UP CLOUD REMOTE" (the SSH wizard) and
+		// "CONNECT CLOUD STORAGE" (this) described the same job in different
+		// words, and the older one led to a terminal on another computer --
+		// which is exactly what this replaced. The SSH route survives one
+		// level down, under MORE, for the cases the form cannot express.
 		s->addWithDescription(_("CONNECT CLOUD STORAGE"), _("SET UP A PROVIDER FROM THE HANDHELD. NO COMPUTER NEEDED."), nullptr,
 			[window] { GuiMenu::openCloudAddRemote(window); }, "", false, true);
-
-		s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONFIGURE RCLONE TO CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE, AND OTHERS."), nullptr,
-			[window] { GuiMenu::openCloudSetup(window); }, "", false, true);
 
 		cloudAddGatedEntry(s, window, cloudConfigured, _("BACKUP/RESTORE SYSTEM DATA"),
 			_("STORE SAVE DATA, SETTINGS, AND MORE. BIOS FILES AND ROMS ARE HANDLED SEPARATELY."),
