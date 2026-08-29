@@ -5223,7 +5223,14 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 	{
 		if (b.tier == "plumbing")
 			continue;
-		if (!tier.empty() && b.tier != tier)
+		// "needs-browser" spans both tiers that cannot be finished on the
+		// handheld today.
+		if (tier == "needs-browser")
+		{
+			if (b.tier != "fallback" && b.tier != "oauth")
+				continue;
+		}
+		else if (!tier.empty() && b.tier != tier)
 			continue;
 		if (!textFilter.empty()
 			&& !Utils::String::containsIgnoreCase(b.label, textFilter)
@@ -5232,7 +5239,12 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 
 		CloudBackend backend = b;
 		shown++;
-		if (b.tier == "fallback")
+		// "oauth" means a backend we could drive natively once the
+		// device-flow work lands (#51 P2). Until then it needs a browser
+		// exactly like "fallback" does, and the form would ask a player for
+		// a client_id and a token they have no way to produce. Group it with
+		// what is honest today rather than with what is planned.
+		if (b.tier == "fallback" || b.tier == "oauth")
 		{
 			// Say so before they start, not three screens in.
 			s->addWithDescription(Utils::String::toUpper(b.label),
@@ -5270,7 +5282,7 @@ void GuiMenu::openCloudAddRemote(Window* window)
 
 	int fallbackCount = 0;
 	for (auto& b : backends)
-		if (b.tier == "fallback")
+		if (b.tier == "fallback" || b.tier == "oauth")
 			fallbackCount++;
 
 	s->addGroup(_("RECOMMENDED"));
@@ -5315,7 +5327,7 @@ void GuiMenu::openCloudAddRemote(Window* window)
 	{
 		s->addWithDescription(_("PROVIDERS THAT NEED A COMPUTER"),
 			_("DROPBOX, GOOGLE DRIVE AND OTHERS SIGN IN THROUGH A BROWSER."),
-			nullptr, [window] { cloudRemoteShowList(window, _("NEEDS A COMPUTER"), "fallback", ""); },
+			nullptr, [window] { cloudRemoteShowList(window, _("NEEDS A COMPUTER"), "needs-browser", ""); },
 			"", false, true);
 	}
 
