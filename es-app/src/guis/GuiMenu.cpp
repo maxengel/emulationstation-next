@@ -4844,6 +4844,333 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 // Wizard entry point: network is a hard precondition; then branch on the
 // scenario - no remotes yet goes straight into the first-remote wizard,
 // otherwise offer check / add / repair-or-modify for the existing ones.
+// ---------------------------------------------------------------------------
+// Add a cloud remote without rclone's interactive configuration.
+//
+// `rclone config` asks its questions in a terminal, which on a handheld means
+// an SSH session from another computer -- a flow that fails in ways the player
+// cannot act on, and that needs a machine able to reach the device over the
+// LAN. `cloud_remote` asks rclone what a backend needs, we ask the player here,
+// and it writes the remote directly. See fork issue #51.
+//
+// Only backends that need no browser are offered. The rest keep the SSH
+// wizard, listed separately so nobody discovers three screens in that they
+// need an account somewhere else first.
+// ---------------------------------------------------------------------------
+
+struct CloudBackend
+{
+	std::string tier;   // keys | oauth | fallback
+	std::string name;   // rclone's backend id, e.g. "sftp"
+	std::string label;  // human name, e.g. "SSH/SFTP Connection"
+};
+
+struct CloudBackendField
+{
+	std::string name;
+	bool required = false;
+	bool password = false;
+	bool sensitive = false;
+	std::string type;
+	std::string deflt;
+	std::string help;
+};
+
+// Backends worth putting in front of someone who has not decided yet. rclone
+// carries 69, most of which are plumbing (alias, chunker, combine, hasher,
+// memory) that is meaningless as a "cloud provider" choice.
+static const std::vector<std::string> CLOUD_RECOMMENDED = {
+	"webdav", "sftp", "smb", "s3", "b2", "storj", "mega", "koofr", "protondrive"
+};
+
+static std::vector<std::string> cloudRemoteLines(const std::string& args)
+{
+	auto out = Utils::Platform::GetShOutput("/usr/bin/cloud_remote " + args);
+	std::vector<std::string> lines;
+	for (auto& line : Utils::String::split(out, '\n'))
+		if (!Utils::String::trim(line).empty())
+			lines.push_back(line);
+	return lines;
+}
+
+static std::vector<CloudBackend> cloudRemoteBackends()
+{
+	std::vector<CloudBackend> list;
+	for (auto& line : cloudRemoteLines("providers"))
+	{
+		auto cols = Utils::String::splitAny(line, "\t", true);
+		if (cols.size() < 3)
+			continue;
+		list.push_back({ cols[0], cols[1], cols[2] });
+	}
+	return list;
+}
+
+// Shell-quote a value on its way to cloud_remote. Passwords and keys routinely
+// contain characters the shell would otherwise act on, and a mangled secret
+// fails in a way that looks like the provider rejecting the credential.
+static std::string cloudShellQuote(const std::string& value)
+{
+	std::string quoted = "'";
+	for (char c : value)
+	{
+		if (c == '\'')
+			quoted += "'\\''";
+		else
+			quoted += c;
+	}
+	return quoted + "'";
+}
+
+// Open an editor that reads the value from `values` rather than the copy
+// addInputTextRow captured when the row was built. Without this the second
+// edit of a field starts from the original value again.
+//
+// The obvious alternative -- rebuild the page after each edit -- is unsafe
+// here: GuiSettings::close() is `delete this`, and the callback doing the
+// rebuild is owned by the page being deleted.
+static std::function<void(Window*, std::string, std::string,
+	const std::function<void(std::string)>&)>
+cloudRemoteEditor(std::shared_ptr<std::map<std::string, std::string>> values,
+	const std::string& key)
+{
+	return [values, key](Window* w, std::string title, std::string /*stale*/,
+		const std::function<void(std::string)>& onsave)
+	{
+		std::string current = values->count(key) ? (*values)[key] : "";
+		if (Settings::getInstance()->getBool("UseOSK"))
+			w->pushGui(new GuiTextEditPopupKeyboard(w, title, current, onsave, false));
+		else
+			w->pushGui(new GuiTextEditPopup(w, title, current, onsave, false));
+	};
+}
+
+// One provider's questions.
+static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
+	std::shared_ptr<std::map<std::string, std::string>> values, GuiSettings* prev)
+{
+	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
+	s->setSubTitle(Utils::String::toUpper(backend.label));
+
+	std::vector<CloudBackendField> fields;
+	for (auto& line : cloudRemoteLines("fields " + backend.name))
+	{
+		auto cols = Utils::String::splitAny(line, "\t", true);
+		if (cols.size() < 7)
+			continue;
+		CloudBackendField f;
+		f.name      = cols[0];
+		f.required  = cols[1] == "1";
+		f.password  = cols[2] == "1";
+		f.sensitive = cols[3] == "1";
+		f.type      = cols[4];
+		f.deflt     = cols[5];
+		f.help      = cols[6];
+		fields.push_back(f);
+	}
+
+	if (values->find("__name__") == values->end())
+		(*values)["__name__"] = backend.name;
+
+	s->addGroup(_("NAME"));
+	s->addInputTextRow(_("REMOTE NAME"), (*values)["__name__"], false,
+		cloudRemoteEditor(values, "__name__"),
+		[values](const std::string& newVal) { (*values)["__name__"] = newVal; });
+
+	// Required first: on a small panel the fold is close, and a required field
+	// below it reads as absent rather than as further down.
+	for (int pass = 0; pass < 2; pass++)
+	{
+		bool wantRequired = (pass == 0);
+		bool headed = false;
+		for (auto& f : fields)
+		{
+			if (f.required != wantRequired)
+				continue;
+			if (!headed)
+			{
+				s->addGroup(wantRequired ? _("REQUIRED") : _("OPTIONAL"));
+				headed = true;
+			}
+			// Mask anything the backend calls a password or marks sensitive.
+			// rclone's two flags do not agree on what a credential is -- it
+			// marks sftp's host sensitive, and s3's secret_access_key
+			// sensitive but not a password -- so masking either flag is the
+			// only rule that never leaves a key on screen. Opening the row
+			// still shows the value, which is the reveal.
+			bool mask = f.password || f.sensitive;
+			if (!values->count(f.name) && !f.deflt.empty())
+					(*values)[f.name] = f.deflt;
+				std::string current = values->count(f.name) ? (*values)[f.name] : "";
+			std::string fieldName = f.name;
+s->addInputTextRow(Utils::String::toUpper(fieldName), current, mask,
+					cloudRemoteEditor(values, fieldName),
+					[values, fieldName](const std::string& newVal)
+					{
+						(*values)[fieldName] = newVal;
+					});
+		}
+	}
+
+	s->addGroup(_("FINISH"));
+	s->addEntry(_("CREATE REMOTE"), true, [window, backend, values, s]
+	{
+		std::string name = Utils::String::trim((*values)["__name__"]);
+		if (name.empty())
+		{
+			window->pushGui(new GuiMsgBox(window,
+				_("GIVE THE REMOTE A NAME FIRST."), _("OK"), nullptr));
+			return;
+		}
+
+		std::string cmd = "create " + cloudShellQuote(name) + " " + backend.name;
+		for (auto& kv : *values)
+		{
+			if (kv.first == "__name__" || Utils::String::trim(kv.second).empty())
+				continue;
+			cmd += " " + cloudShellQuote(kv.first + "=" + kv.second);
+		}
+
+		window->pushGui(new GuiMsgBox(window,
+			_("CONNECT TO THIS PROVIDER NOW?\n\nTHE REMOTE IS ONLY SAVED IF IT ANSWERS."),
+			_("YES"), [window, cmd, s]
+			{
+				// cloud_remote verifies the remote and removes it again if it
+				// cannot be reached, so a failure here leaves nothing behind.
+				std::string out = Utils::Platform::GetShOutput(
+					"/usr/bin/cloud_remote " + cmd + " 2>&1");
+				LOG(LogInfo) << "cloud_remote create: " << out;
+
+				if (out.find("OK=") != std::string::npos)
+				{
+					window->pushGui(new GuiMsgBox(window,
+						_("THE REMOTE IS CONFIGURED AND WORKING.\n\nCLOUD TOOLS ARE NOW AVAILABLE."),
+						_("OK"), [s] { s->close(); }));
+					return;
+				}
+				// Show what actually went wrong. The player can fix a typo in
+				// a key far more easily than they can act on "it failed".
+				window->pushGui(new GuiMsgBox(window,
+					_("THE REMOTE COULD NOT BE SAVED.") + std::string("\n\n") +
+						Utils::String::trim(out),
+					_("OK"), nullptr));
+			},
+			_("NO"), nullptr));
+	});
+
+	// prev->close(), never delete: the window owns it and is mid-input on it.
+	cloudSetupPresent(window, s, prev);
+}
+
+// A filtered list of backends. `tier` empty means every tier.
+static void cloudRemoteShowList(Window* window, const std::string& title,
+	const std::string& tier, const std::string& textFilter)
+{
+	auto s = new GuiSettings(window, title);
+
+	auto backends = cloudRemoteBackends();
+	int shown = 0;
+	for (auto& b : backends)
+	{
+		if (!tier.empty() && b.tier != tier)
+			continue;
+		if (!textFilter.empty()
+			&& !Utils::String::containsIgnoreCase(b.label, textFilter)
+			&& !Utils::String::containsIgnoreCase(b.name, textFilter))
+			continue;
+
+		CloudBackend backend = b;
+		shown++;
+		if (b.tier == "fallback")
+		{
+			// Say so before they start, not three screens in.
+			s->addWithDescription(Utils::String::toUpper(b.label),
+				_("NEEDS A COMPUTER - SET THIS ONE UP WITH SET UP CLOUD REMOTE."),
+				nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
+		}
+		else
+		{
+			s->addEntry(Utils::String::toUpper(b.label), true, [window, backend]
+			{
+				auto values = std::make_shared<std::map<std::string, std::string>>();
+				cloudRemoteShowForm(window, backend, values, nullptr);
+			});
+		}
+	}
+
+	if (shown == 0)
+		s->addEntry(_("NOTHING MATCHED THAT SEARCH"), false, [] {});
+
+	cloudSetupPresent(window, s, nullptr);
+}
+
+void GuiMenu::openCloudAddRemote(Window* window)
+{
+	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
+
+	auto backends = cloudRemoteBackends();
+	if (backends.empty())
+	{
+		// cloud_remote asks rclone for this list, so an empty result means
+		// rclone is missing or broken -- not that there are no providers.
+		s->addEntry(_("PROVIDER LIST UNAVAILABLE"), false, [] {});
+		cloudSetupPresent(window, s, nullptr);
+		return;
+	}
+
+	int fallbackCount = 0;
+	for (auto& b : backends)
+		if (b.tier == "fallback")
+			fallbackCount++;
+
+	s->addGroup(_("RECOMMENDED"));
+	for (auto& want : CLOUD_RECOMMENDED)
+	{
+		for (auto& b : backends)
+		{
+			if (b.name != want || b.tier == "fallback")
+				continue;
+			CloudBackend backend = b;
+			s->addEntry(Utils::String::toUpper(b.label), true, [window, backend]
+			{
+				auto values = std::make_shared<std::map<std::string, std::string>>();
+				cloudRemoteShowForm(window, backend, values, nullptr);
+			});
+			break;
+		}
+	}
+
+	s->addGroup(_("MORE"));
+	s->addEntry(_("SEARCH PROVIDERS"), true, [window]
+	{
+		auto onSearch = [window](const std::string& term)
+		{
+			if (Utils::String::trim(term).empty())
+				return;
+			cloudRemoteShowList(window, _("SEARCH RESULTS"), "", Utils::String::trim(term));
+		};
+		if (Settings::getInstance()->getBool("UseOSK"))
+			window->pushGui(new GuiTextEditPopupKeyboard(window, _("SEARCH PROVIDERS"), "", onSearch, false));
+		else
+			window->pushGui(new GuiTextEditPopup(window, _("SEARCH PROVIDERS"), "", onSearch, false));
+	});
+
+	s->addWithDescription(_("SHOW ALL PROVIDERS"),
+		_("EVERY PROVIDER THAT NEEDS NOTHING BUT AN ADDRESS AND A KEY."),
+		nullptr, [window] { cloudRemoteShowList(window, _("ALL PROVIDERS"), "keys", ""); },
+		"", false, true);
+
+	if (fallbackCount > 0)
+	{
+		s->addWithDescription(_("PROVIDERS THAT NEED A COMPUTER"),
+			_("DROPBOX, GOOGLE DRIVE AND OTHERS SIGN IN THROUGH A BROWSER."),
+			nullptr, [window] { cloudRemoteShowList(window, _("NEEDS A COMPUTER"), "fallback", ""); },
+			"", false, true);
+	}
+
+	cloudSetupPresent(window, s, nullptr);
+}
+
 void GuiMenu::openCloudSetup(Window* window)
 {
 	auto info = cloudSetupInfo();
@@ -6701,6 +7028,9 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		Window* window = mWindow;
+
+		s->addWithDescription(_("CONNECT CLOUD STORAGE"), _("SET UP A PROVIDER FROM THE HANDHELD. NO COMPUTER NEEDED."), nullptr,
+			[window] { GuiMenu::openCloudAddRemote(window); }, "", false, true);
 
 		s->addWithDescription(_("SET UP CLOUD REMOTE"), _("CONFIGURE RCLONE TO CONNECT THIS DEVICE TO DROPBOX, GOOGLE DRIVE, AND OTHERS."), nullptr,
 			[window] { GuiMenu::openCloudSetup(window); }, "", false, true);
