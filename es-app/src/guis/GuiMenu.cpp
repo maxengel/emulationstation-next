@@ -5349,6 +5349,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// path. ADDRESS and PIN are still reported by `info` for anything driving
 	// this from a shell, but the page has nothing to do with them separately.
 	std::string url;
+	bool onDevice = false;
 	bool understood = true;
 	for (int attempt = 0; attempt < 24 && understood; attempt++)
 	{
@@ -5368,6 +5369,8 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 				url = trimmed.substr(4);
 			else if (Utils::String::startsWith(trimmed, "STATUS="))
 				status = trimmed.substr(7);
+			else if (Utils::String::startsWith(trimmed, "ON_DEVICE="))
+				onDevice = trimmed.substr(10) == "yes";
 		}
 
 		if (status == "waiting" && !url.empty())
@@ -5437,13 +5440,39 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		for (auto& line : lines)
 			cloudSetupAddInfoRow(s, window, line.first, line.second);
 
-	cloudSetupAddProse(s, window, _("THEN"),
-		_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
+	// Two quite different flows, and the page has to say which one it is.
+	// Where the device can show the provider's page itself, this screen is a
+	// staging post: read the address, scan the code if you want to type from
+	// a phone, then open it deliberately. Opening it the moment the page
+	// appeared meant this screen flashed past before it could be read.
+	if (onDevice)
+		cloudSetupAddProse(s, window, _("THEN"),
+			_("SELECT 'CONTINUE' AND THE SIGN-IN PAGE OPENS HERE. USE THE D-PAD AND A, OR TYPE FROM YOUR PHONE. PRESS START TO COME BACK."));
+	else
+		cloudSetupAddProse(s, window, _("THEN"),
+			_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
 
 	// Ask cloud_oauth, which asks rclone. Nothing here decides on its own
 	// that a sign-in worked.
-	cloudSetupSetButtons(s, [window, backend, remoteName, s]
+	cloudSetupSetButtons(s, [window, backend, remoteName, s, onDevice]
 	{
+		// First CONTINUE opens the page on this screen; the player comes back
+		// here afterwards and presses it again to finish. Asking cloud_oauth
+		// rather than assuming: it knows whether the window is up.
+		if (onDevice)
+		{
+			auto info = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth status");
+			std::string now = info.empty() ? "" : Utils::String::trim(info.front());
+			if (now == "waiting")
+			{
+				Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth open", "", nullptr);
+				window->pushGui(new GuiMsgBox(window,
+					_("THE SIGN-IN PAGE IS OPENING ON THIS SCREEN.\n\nPRESS START THERE WHEN YOU ARE DONE, THEN SELECT 'CONTINUE' AGAIN."),
+					_("OK"), nullptr));
+				return;
+			}
+		}
+
 		auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth status");
 		std::string status = lines.empty() ? "" : Utils::String::trim(lines.front());
 		LOG(LogInfo) << "cloud_oauth status=" << status;
