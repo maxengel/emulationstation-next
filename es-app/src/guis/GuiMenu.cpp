@@ -5404,6 +5404,11 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// explain them -- including the redirect that fails, the one thing that
 	// looks like a fault and is not.
 	s->addGroup(_("ON YOUR PHONE"));
+	// ComponentList draws the group's rule flush against whatever follows it,
+	// which puts a hard line directly on top of the code. Everywhere else
+	// that rule is followed by a text row with its own leading, so the
+	// crowding only shows up here.
+	cloudSetupAddSpacer(s, window);
 
 	// A QR beats typing an address and a code. qrencode is already a
 	// dependency of this package, used by the console flow.
