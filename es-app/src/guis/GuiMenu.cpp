@@ -4776,7 +4776,7 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 		window->pushGui(new GuiMsgBox(window,
 			_("THERE IS NO ACTIVE SSH CONNECTION TO THE DEVICE.\n\nTRY CONNECTING FROM YOUR COMPUTER AGAIN, LEAVE THE TERMINAL OPEN, AND THEN SELECT 'CONTINUE'."),
 			_("OK"), nullptr,
-			_("EXIT SETUP"), [s] { s->close(); }));
+			_("EXIT"), [s] { s->close(); }));
 	});
 
 	cloudSetupPresent(window, s, prev);
@@ -4796,12 +4796,12 @@ static void cloudSetupGateCheck(Window* window, GuiSettings* s, const std::strin
 			window->pushGui(new GuiMsgBox(window,
 				_("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + " " + cloudSetupDisplayName(name) + "\n\n" + _("ITS SIGN-IN MAY BE INCOMPLETE OR EXPIRED. IN THE TERMINAL, RUN:") + "\n'rclone config reconnect " + name + "'",
 				_("OK"), nullptr,
-				_("EXIT SETUP"), [s] { s->close(); }));
+				_("EXIT"), [s] { s->close(); }));
 		else
 			window->pushGui(new GuiMsgBox(window,
 				_("NO CLOUD REMOTE IS CONFIGURED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
 				_("OK"), nullptr,
-				_("EXIT SETUP"), [s] { s->close(); }));
+				_("EXIT"), [s] { s->close(); }));
 	});
 }
 
@@ -4886,7 +4886,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 				window->pushGui(new GuiMsgBox(window,
 					_("NO NEW REMOTE WAS ADDED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
 					_("OK"), nullptr,
-					_("EXIT SETUP"), [s] { s->close(); }));
+					_("EXIT"), [s] { s->close(); }));
 				return;
 			}
 			cloudSetupGateCheck(window, s, newRemote);
@@ -5626,11 +5626,12 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 		// what is honest today rather than with what is planned.
 		if (b.tier == "oauth")
 		{
-			// A provider sign-in, done on a phone. No longer "needs a
-			// computer": cloud_oauth wraps rclone's own authorize flow and
-			// serves the provider's link on the LAN.
+			// Not "sign in with your phone": the provider's page opens on
+			// this screen, and the phone is only one of the two keyboards
+			// you can type on. Which one is asked after this, so the row
+			// says what kind of sign-in it is and nothing about where.
 			s->addWithDescription(Utils::String::toUpper(b.label),
-				_("SIGN IN WITH YOUR PHONE."), nullptr,
+				_("OPENS THE PROVIDER'S SIGN-IN PAGE."), nullptr,
 				[window, backend] { cloudOAuthStart(window, backend, backend.name, nullptr); },
 				"", false, true);
 		}
