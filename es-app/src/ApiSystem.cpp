@@ -515,6 +515,41 @@ bool ApiSystem::launchKodi(Window *window)
 	return exitCode == 0;
 }
 
+// The cloud sign-in page, which is a separate Wayland client that covers the
+// screen for as long as somebody is signing in.
+//
+// It is a takeover like Kodi or the file manager, and was not treated as one:
+// ES stayed up behind it, still rendering and still reading the gamepad. SDL
+// joystick events are not gated on window focus, so every d-pad press and
+// every A meant for the provider's page also drove the menu underneath.
+// Suspending ES stops that at the source and hands back the memory its
+// renderer and textures were holding, which is the difference between
+// comfortable and marginal when WebKit needs most of a gigabyte.
+//
+// `open` returns once the window is actually up, so the screen is never blank
+// between ES going down and the page appearing. `wait` blocks until the page
+// is gone *and* the gamepad has been released, which is what ES needs before
+// it re-initialises -- SDL re-opens the joystick on init and would otherwise
+// come back with no gamepad at all.
+bool ApiSystem::launchCloudSignIn(Window *window)
+{
+	LOG(LogDebug) << "ApiSystem::launchCloudSignIn";
+
+	if (system("/usr/bin/cloud_oauth open") != 0)
+	{
+		LOG(LogWarning) << "cloud sign-in window did not open; staying put";
+		return false;
+	}
+
+	ApiSystem::launchExternalWindow_before(window);
+	int exitCode = system("/usr/bin/cloud_oauth wait");
+	if (WIFEXITED(exitCode))
+		exitCode = WEXITSTATUS(exitCode);
+	ApiSystem::launchExternalWindow_after(window);
+
+	return exitCode == 0;
+}
+
 bool ApiSystem::launchFileManager(Window *window) 
 {
 	LOG(LogDebug) << "ApiSystem::launchFileManager";

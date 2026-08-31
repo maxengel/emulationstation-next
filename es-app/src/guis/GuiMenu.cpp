@@ -5495,10 +5495,9 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// scan. Open the provider's page and get out of the way. The keyboard
 	// raises itself on the first field, so there is no instruction to give
 	// that the page does not give better.
-	if (onDevice && !usePhone)
+	const bool openImmediately = onDevice && !usePhone;
+	if (openImmediately)
 	{
-		Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth open", "", nullptr);
-
 		cloudSetupAddProse(s, window, _("SIGNING IN"),
 			_("THE PROVIDER'S PAGE IS OPENING. A KEYBOARD APPEARS WHEN YOU PICK A BOX; MOVE WITH THE D-PAD AND CHOOSE WITH A."));
 		cloudSetupAddSpacer(s, window);
@@ -5556,7 +5555,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// openOnContinue is false when the page is already open: pressing
 	// CONTINUE then means "I am done", not "open it".
 	const bool openOnContinue = onDevice && usePhone;
-	cloudSetupSetButtons(s, [window, backend, remoteName, s, openOnContinue, exitHint]
+	cloudSetupSetButtons(s, [window, backend, remoteName, s, openOnContinue]
 	{
 		if (openOnContinue)
 		{
@@ -5564,11 +5563,10 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			std::string now = info.empty() ? "" : Utils::String::trim(info.front());
 			if (now == "waiting")
 			{
-				Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth open", "", nullptr);
-				window->pushGui(new GuiMsgBox(window,
-					Utils::String::format(_("THE PROVIDER'S PAGE IS OPENING ON THIS SCREEN.\n\nTYPE ON YOUR PHONE, OR ON THE KEYBOARD THAT APPEARS HERE.\n\nTO COME BACK, PRESS %s - THE SAME WAY YOU LEAVE A GAME.").c_str(), exitHint.c_str()),
-					_("OK"), nullptr));
-				return;
+				// Blocks until the player comes back out of the page, so
+				// there is no dialog to dismiss afterwards and no second
+				// CONTINUE to press -- fall through and say what happened.
+				ApiSystem::getInstance()->launchCloudSignIn(window);
 			}
 		}
 
@@ -5602,6 +5600,12 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	});
 
 	cloudSetupPresent(window, s, prev);
+
+	// After the page is on the stack, never while it is being built: this
+	// blocks for as long as somebody is signing in, and ES is suspended for
+	// the duration. The page has to already be there for ES to come back to.
+	if (openImmediately)
+		ApiSystem::getInstance()->launchCloudSignIn(window);
 }
 
 // A filtered list of backends. `tier` empty means every tier.
