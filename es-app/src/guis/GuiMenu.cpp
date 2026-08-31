@@ -4501,6 +4501,32 @@ static std::shared_ptr<ComponentGrid> cloudSetupTextStack(Window* window,
 // binding constraint, and a square code sitting alone on a wide row wastes
 // most of it. A row centres its elements vertically and gives fixed-width
 // ones their own column, so the code and its text share one row's height.
+// An image that keeps its own colour inside a menu row.
+//
+// ComponentList::render calls setColor(Text.color) on every element of every
+// row, every frame, and ImageComponent::setColor is setColorShift. So a QR
+// added to a row is tinted with the menu's muted text colour sixty times a
+// second, and setting the shift once at construction achieves nothing -- the
+// first cut of this did exactly that and the code stayed grey. The text
+// beside it kept its brightness only because it sits in a ComponentGrid,
+// whose setColor does not reach the labels inside.
+//
+// A QR is not text and must not be themed like text: a phone camera needs
+// black on white, and "dimmer than the address next to it" is the visible
+// form of that bug.
+class UntintedImageComponent : public ImageComponent
+{
+public:
+	UntintedImageComponent(Window* window) : ImageComponent(window)
+	{
+		ImageComponent::setColorShift(0xFFFFFFFF);
+	}
+	void setColor(unsigned int /*color*/) override
+	{
+		ImageComponent::setColorShift(0xFFFFFFFF);
+	}
+};
+
 static void cloudSetupAddQrRow(GuiSettings* s, Window* window, const std::string& imagePath,
 	const std::vector<std::pair<std::string, bool>>& lines)
 {
@@ -4512,10 +4538,7 @@ static void cloudSetupAddQrRow(GuiSettings* s, Window* window, const std::string
 	// and a square one, and always leaves the majority of the width to text.
 	const float qrEdge = Renderer::getScreenHeight() * 0.28f;
 
-	auto qr = std::make_shared<ImageComponent>(window);
-	// No theme tint and no inherited dimming: menu rows are drawn muted, and
-	// a muted QR is a QR that does not scan.
-	qr->setColorShift(0xFFFFFFFF);
+	auto qr = std::make_shared<UntintedImageComponent>(window);
 	qr->setOpacity(255);
 	// Padding before setMaxSize -- ImageComponent folds it into the size it
 	// reports, which is what the row measures the column by.
@@ -4958,21 +4981,23 @@ struct CloudBackendField
 // characters did not.
 // Translated at the point of use: _() at static-init time would run
 // before the locale is loaded.
-// The consumer clouds people actually have accounts with. These were behind
-// two taps and a group called MORE until the sign-in flow worked, because
-// until then choosing one led nowhere. Now that it does, burying Dropbox
-// under "PROVIDERS YOU SIGN IN TO" is just a list in the wrong order.
-static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED_OAUTH = {
-	{ "dropbox",  "DROPBOX" },
-	{ "drive",    "GOOGLE DRIVE" },
-	{ "onedrive", "MICROSOFT ONEDRIVE" },
-	{ "box",      "BOX" },
-	{ "pcloud",   "PCLOUD" },
-};
-
-// Providers that need nothing but an address and a key -- self-hosted storage
-// and the accounts whose credentials are typed rather than approved.
-static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED_KEYS = {
+// The providers we put in front of people, most-likely-to-be-owned first.
+//
+// This was split into two groups by how the sign-in works -- one you approve
+// through a provider page, one you type a key into. That is our distinction,
+// not the player's: they are choosing where their saves live, and the group
+// headers made an implementation detail look like the question being asked.
+// It also read as a hierarchy it is not, since the second group was a
+// handful of picks rather than the rest of the world.
+//
+// One list of recommendations, and a complete list behind it. Which kind of
+// sign-in a provider needs is settled after it is chosen, by its own tier.
+static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED = {
+	{ "dropbox",     "DROPBOX" },
+	{ "drive",       "GOOGLE DRIVE" },
+	{ "onedrive",    "MICROSOFT ONEDRIVE" },
+	{ "box",         "BOX" },
+	{ "pcloud",      "PCLOUD" },
 	{ "mega",        "MEGA" },
 	{ "protondrive", "PROTON DRIVE" },
 	{ "koofr",       "KOOFR" },
@@ -5303,6 +5328,8 @@ static void cloudRemoteChooseBackend(Window* window, const CloudBackend& backend
 // because a page that assumes success is how a failed setup gets reported as
 // a working one.
 static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev, bool usePhone);
+static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
 	const std::string& remoteName, GuiSettings* prev);
 
 static void cloudOAuthStart(Window* window, const CloudBackend& backend,
@@ -5330,31 +5357,18 @@ static void cloudOAuthStart(Window* window, const CloudBackend& backend,
 		+ " --timeout 900 >/dev/null 2>&1") + " </dev/null >/dev/null 2>&1 &";
 	Utils::Platform::runSystemCommand(cmd, "", nullptr);
 
-	cloudOAuthShowSignIn(window, backend, remoteName, prev);
+	cloudOAuthChooseInput(window, backend, remoteName, prev);
 }
 
-static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
-	const std::string& remoteName, GuiSettings* prev)
+// Wait for the listener to say it is *waiting*, not merely for an address to
+// appear: a URL on its own proves nothing about whose session it belongs to,
+// which is how a previous attempt's PIN once reached the screen.
+static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice)
 {
-	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
-	s->setSubTitle(Utils::String::toUpper(backend.label));
-
-	// The listener takes a moment to come up; ask for the address until it
-	// does rather than showing a blank where the instruction should be.
-	//
-	// `info` reports the address and the code apart as well as joined. The
-	// QR gets the joined form so scanning skips the code entirely; the screen
-	// shows the two apart, because they are read off a small panel and typed
-	// on a phone, and "?pin=7677" in a browser bar is where that goes wrong.
-	// Wait for the listener to say it is *waiting*, not merely for an address
-	// to appear. A URL on its own proves nothing about whose session it
-	// belongs to, which is how a previous attempt's PIN reached the screen.
-	// One value is read now: the address, which carries its own PIN in the
-	// path. ADDRESS and PIN are still reported by `info` for anything driving
-	// this from a shell, but the page has nothing to do with them separately.
-	std::string url;
-	bool onDevice = false;
+	url.clear();
+	onDevice = false;
 	bool understood = true;
+
 	for (int attempt = 0; attempt < 24 && understood; attempt++)
 	{
 		std::string status;
@@ -5378,21 +5392,81 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		}
 
 		if (status == "waiting" && !url.empty())
-			break;
+			return true;
 
 		url.clear();
 		Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
 	}
 
 	// An image whose cloud_oauth predates `info` still answers `url`.
-	if (url.empty())
+	auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth url");
+	if (!lines.empty())
+		url = Utils::String::trim(lines.front());
+	return !url.empty();
+}
+
+// How do you want to type?
+//
+// The sign-in page used to open onto the QR screen whichever way you meant to
+// work, so somebody signing in on the handheld met a page about their phone
+// and stopped there. The phone was never the place the sign-in happens -- it
+// is one of two keyboards -- and a screen that leads with a code to scan says
+// the opposite.
+//
+// Asked once, up front, because it is the only thing that differs between the
+// two routes and everything after it follows.
+static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev)
+{
+	std::string url;
+	bool onDevice = false;
+	const bool started = cloudOAuthAwaitSession(url, onDevice);
+
+	// An image that cannot host the page has only one route; asking would be
+	// a question with a single answer.
+	if (!started || !onDevice)
 	{
-		auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth url");
-		if (!lines.empty())
-			url = Utils::String::trim(lines.front());
+		cloudOAuthShowSignIn(window, backend, remoteName, prev, true);
+		return;
 	}
 
-	if (url.empty())
+	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
+	s->setSubTitle(Utils::String::toUpper(backend.label));
+
+	s->addGroup(_("HOW DO YOU WANT TO TYPE?"));
+	s->addWithDescription(_("ON THIS DEVICE"),
+		_("A KEYBOARD ON SCREEN, WORKED WITH THE D-PAD."),
+		nullptr, [window, backend, remoteName, prev]
+		{
+			cloudOAuthShowSignIn(window, backend, remoteName, prev, false);
+		}, "", false, true);
+
+	s->addWithDescription(_("WITH MY PHONE"),
+		_("SCAN A CODE AND TYPE ON YOUR PHONE. THE SIGN-IN STILL HAPPENS ON THIS SCREEN."),
+		nullptr, [window, backend, remoteName, prev]
+		{
+			cloudOAuthShowSignIn(window, backend, remoteName, prev, true);
+		}, "", false, true);
+
+	cloudSetupSetButtons(s, nullptr);
+	cloudSetupPresent(window, s, prev);
+}
+
+static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev, bool usePhone)
+{
+	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
+	s->setSubTitle(Utils::String::toUpper(backend.label));
+
+	// The address carries its own PIN in its path. ADDRESS and PIN are still
+	// reported by `info` for anything driving this from a shell, but the page
+	// has nothing to do with them separately -- two numbers on one screen is
+	// what made "code" ambiguous the first time.
+	std::string url;
+	bool onDevice = false;
+	const bool started = cloudOAuthAwaitSession(url, onDevice);
+
+	if (!started)
 	{
 		cloudSetupAddProse(s, window, _("SIGN-IN DID NOT START"),
 			_("THE DEVICE COULD NOT REACH THE PROVIDER. CHECK THE NETWORK AND TRY AGAIN."));
@@ -5401,94 +5475,73 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		return;
 	}
 
-	// This page cannot scroll -- every row is unselectable, so ComponentList
-	// never moves its camera and anything past the fold is unreachable, not
-	// merely off-screen. Everything here has to fit, on a 640x480 handheld
-	// panel as well as on a monitor.
-	//
-	// So the handheld says only where to go. The steps belong on the phone
-	// page, which is where they are carried out and which has the room to
-	// explain them -- including the redirect that fails, the one thing that
-	// looks like a fault and is not.
-	s->addGroup(_("ON YOUR PHONE"));
-	// ComponentList draws the group's rule flush against whatever follows it,
-	// which puts a hard line directly on top of the code. Everywhere else
-	// that rule is followed by a text row with its own leading, so the
-	// crowding only shows up here.
-	cloudSetupAddSpacer(s, window);
-
-	// A QR beats typing an address and a code. qrencode is already a
-	// dependency of this package, used by the console flow.
-	const std::string qrPath = "/tmp/cloud-oauth-qr.png";
-	Utils::Platform::runSystemCommand(
-		// Pure black on pure white with a generous quiet zone. qrencode's
-		// defaults render dark-on-light but not maximally, and on a handheld
-		// panel at low brightness the result is a grey square a phone camera
-		// struggles with. This is the one thing on the page that has to be
-		// legible to a camera rather than to a person.
-		"rm -f " + qrPath + "; /usr/bin/qrencode -o " + qrPath
-		+ " -s 8 -m 4 --background=FFFFFF --foreground=000000 -l M "
-		+ cloudShellQuote(url), "", nullptr);
-
-	// Where this device can show the provider's page itself, that is the
-	// flow, and the page has to lead with it. Leading with a QR under "ON
-	// YOUR PHONE" described the old design -- ferry a code back from a phone
-	// -- and left somebody looking at a screen telling them to do the thing
-	// they no longer have to do.
-	//
-	// The phone is now one way to type, not the way to sign in, so it comes
-	// second and says it is optional.
-	std::vector<std::pair<std::string, bool>> lines;
-	if (onDevice)
+	// Typing on the handheld: nothing to read off the screen, nothing to
+	// scan. Open the provider's page and get out of the way. The keyboard
+	// raises itself on the first field, so there is no instruction to give
+	// that the page does not give better.
+	if (onDevice && !usePhone)
 	{
-		s->addGroup(_("SIGN IN ON THIS SCREEN"));
-		cloudSetupAddSpacer(s, window);
-		cloudSetupAddInfoRow(s, window, _("MOVE WITH THE D-PAD, CHOOSE WITH A"));
-		cloudSetupAddInfoRow(s, window, _("A KEYBOARD OPENS WHEN YOU PICK A BOX"));
-		cloudSetupAddInfoRow(s, window, _("HOLD SELECT AND PRESS START TO COME BACK"));
+		Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth open", "", nullptr);
 
-		s->addGroup(_("OR TYPE FROM YOUR PHONE"));
+		cloudSetupAddProse(s, window, _("SIGNING IN"),
+			_("THE PROVIDER'S PAGE IS OPENING. A KEYBOARD APPEARS WHEN YOU PICK A BOX; MOVE WITH THE D-PAD AND CHOOSE WITH A."));
 		cloudSetupAddSpacer(s, window);
-		lines.push_back(std::make_pair(_("SCAN THIS, OR OPEN"), false));
-		lines.push_back(std::make_pair(url, true));
-		lines.push_back(std::make_pair(_("WHAT YOU TYPE THERE APPEARS HERE"), false));
+		cloudSetupAddInfoRow(s, window, _("TO COME BACK HERE, HOLD SELECT AND PRESS START"));
+		cloudSetupAddInfoRow(s, window, _("THEN CHOOSE 'CONTINUE' TO FINISH"));
 	}
 	else
 	{
-		// The older path, for an image that cannot host the page itself: the
-		// player signs in on their phone and brings an address back.
-		lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
-		lines.push_back(std::make_pair(url, true));
-		lines.push_back(std::make_pair(_("THE LAST 4 DIGITS ARE A PIN"), false));
-		lines.push_back(std::make_pair(_("IT KEEPS OTHERS OFF THIS PAGE"), false));
+		// The phone is a keyboard, not the place the sign-in happens. Saying
+		// "sign in on your phone" sent people looking for a provider page
+		// there; the page is on the handheld either way.
+		const std::string qrPath = "/tmp/cloud-oauth-qr.png";
+		Utils::Platform::runSystemCommand(
+			"rm -f " + qrPath + "; /usr/bin/qrencode -o " + qrPath
+			+ " -s 8 -m 4 --background=FFFFFF --foreground=000000 -l M "
+			+ cloudShellQuote(url), "", nullptr);
+
+		std::vector<std::pair<std::string, bool>> lines;
+		if (onDevice)
+		{
+			s->addGroup(_("USE YOUR PHONE AS A KEYBOARD"));
+			cloudSetupAddSpacer(s, window);
+			lines.push_back(std::make_pair(_("SCAN THIS, OR OPEN"), false));
+			lines.push_back(std::make_pair(url, true));
+			lines.push_back(std::make_pair(_("WHAT YOU TYPE THERE APPEARS HERE"), false));
+		}
+		else
+		{
+			// The older route, for an image that cannot host the page: the
+			// player signs in on their phone and brings an address back.
+			lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
+			lines.push_back(std::make_pair(url, true));
+			lines.push_back(std::make_pair(_("THE LAST 4 DIGITS ARE A PIN"), false));
+			lines.push_back(std::make_pair(_("IT KEEPS OTHERS OFF THIS PAGE"), false));
+		}
+
+		if (Utils::FileSystem::exists(qrPath))
+			cloudSetupAddQrRow(s, window, qrPath, lines);
+		else
+			for (auto& line : lines)
+				cloudSetupAddInfoRow(s, window, line.first, line.second);
+
+		if (onDevice)
+			cloudSetupAddProse(s, window, _("THEN"),
+				_("CONNECT YOUR PHONE FIRST, THEN CHOOSE 'CONTINUE' AND THE PROVIDER'S PAGE OPENS ON THIS SCREEN."));
+		else
+			cloudSetupAddProse(s, window, _("THEN"),
+				_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
 	}
-
-	if (Utils::FileSystem::exists(qrPath))
-		cloudSetupAddQrRow(s, window, qrPath, lines);
-	else
-		for (auto& line : lines)
-			cloudSetupAddInfoRow(s, window, line.first, line.second);
-
-	// Two quite different flows, and the page has to say which one it is.
-	// Where the device can show the provider's page itself, this screen is a
-	// staging post: read the address, scan the code if you want to type from
-	// a phone, then open it deliberately. Opening it the moment the page
-	// appeared meant this screen flashed past before it could be read.
-	if (onDevice)
-		cloudSetupAddProse(s, window, _("THEN"),
-			_("CHOOSE 'CONTINUE' AND THE SIGN-IN PAGE OPENS ON THIS SCREEN."));
-	else
-		cloudSetupAddProse(s, window, _("THEN"),
-			_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
 
 	// Ask cloud_oauth, which asks rclone. Nothing here decides on its own
 	// that a sign-in worked.
-	cloudSetupSetButtons(s, [window, backend, remoteName, s, onDevice]
+	//
+	// openOnContinue is false when the page is already open: pressing
+	// CONTINUE then means "I am done", not "open it".
+	const bool openOnContinue = onDevice && usePhone;
+	cloudSetupSetButtons(s, [window, backend, remoteName, s, openOnContinue]
 	{
-		// First CONTINUE opens the page on this screen; the player comes back
-		// here afterwards and presses it again to finish. Asking cloud_oauth
-		// rather than assuming: it knows whether the window is up.
-		if (onDevice)
+		if (openOnContinue)
 		{
 			auto info = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth status");
 			std::string now = info.empty() ? "" : Utils::String::trim(info.front());
@@ -5496,7 +5549,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			{
 				Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth open", "", nullptr);
 				window->pushGui(new GuiMsgBox(window,
-					_("THE SIGN-IN PAGE IS OPENING ON THIS SCREEN.\n\nTO COME BACK HERE, HOLD SELECT AND PRESS START - THE SAME WAY YOU LEAVE A GAME.\n\nTHEN CHOOSE 'CONTINUE' AGAIN."),
+					_("THE PROVIDER'S PAGE IS OPENING ON THIS SCREEN.\n\nTYPE ON YOUR PHONE, OR ON THE KEYBOARD THAT APPEARS HERE.\n\nTO COME BACK, HOLD SELECT AND PRESS START - THE SAME WAY YOU LEAVE A GAME."),
 					_("OK"), nullptr));
 				return;
 			}
@@ -5522,7 +5575,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			return;
 		}
 		window->pushGui(new GuiMsgBox(window,
-			_("STILL WAITING FOR THE SIGN-IN.\n\nFINISH IT ON YOUR PHONE, THEN SELECT 'CONTINUE' AGAIN."),
+			_("STILL WAITING FOR THE SIGN-IN.\n\nFINISH IT, THEN CHOOSE 'CONTINUE' AGAIN."),
 			_("OK"), nullptr,
 			_("CANCEL SIGN-IN"), [window, s]
 			{
@@ -5606,43 +5659,24 @@ void GuiMenu::openCloudAddRemote(Window* window)
 		return;
 	}
 
-	int fallbackCount = 0;
-	for (auto& b : backends)
-		if (b.tier == "oauth")
-			fallbackCount++;
-
-	// Grouped by what the player has to do, not by our internal tiers: one
-	// list you approve on a phone, one you type a key into. The group header
-	// carries that distinction so the rows themselves stay single-line.
-	s->addGroup(_("SIGN IN WITH YOUR PHONE"));
-	for (auto& want : CLOUD_RECOMMENDED_OAUTH)
+	s->addGroup(_("RECOMMENDED"));
+	for (auto& want : CLOUD_RECOMMENDED)
 	{
 		for (auto& b : backends)
 		{
-			if (b.name != want.first || b.tier != "oauth")
-				continue;
-			CloudBackend backend = b;
-			s->addEntry(_(want.second.c_str()), true, [window, backend]
-			{
-				cloudOAuthStart(window, backend, backend.name, nullptr);
-			});
-			break;
-		}
-	}
-
-	s->addGroup(_("SIGN IN WITH AN ADDRESS AND KEY"));
-	for (auto& want : CLOUD_RECOMMENDED_KEYS)
-	{
-		for (auto& b : backends)
-		{
-			if (b.name != want.first || b.tier == "fallback")
+			if (b.name != want.first)
 				continue;
 			// Show our short name here; the form still titles itself with
 			// rclone's description, which is useful once you have chosen.
+			// The tier decides what happens next, so the player never has to
+			// know there are two kinds of sign-in before they pick.
 			CloudBackend backend = b;
 			s->addEntry(_(want.second.c_str()), true, [window, backend]
 			{
-				cloudRemoteChooseBackend(window, backend);
+				if (backend.tier == "oauth")
+					cloudOAuthStart(window, backend, backend.name, nullptr);
+				else
+					cloudRemoteChooseBackend(window, backend);
 			});
 			break;
 		}
@@ -5663,18 +5697,14 @@ void GuiMenu::openCloudAddRemote(Window* window)
 			window->pushGui(new GuiTextEditPopup(window, _("SEARCH PROVIDERS"), "", onSearch, false));
 	});
 
-	s->addWithDescription(_("SHOW ALL PROVIDERS"),
-		_("EVERY PROVIDER THAT NEEDS NOTHING BUT AN ADDRESS AND A KEY."),
-		nullptr, [window] { cloudRemoteShowList(window, _("ALL PROVIDERS"), "keys", ""); },
+	// One complete list, not one per tier. Two entries that each showed part
+	// of the catalogue made the recommendations above look like a third
+	// category rather than a shortlist -- and left no single place to answer
+	// "is my provider supported at all?".
+	s->addWithDescription(_("COMPLETE LIST"),
+		_("EVERY PROVIDER RCLONE SUPPORTS."),
+		nullptr, [window] { cloudRemoteShowList(window, _("COMPLETE LIST"), "", ""); },
 		"", false, true);
-
-	if (fallbackCount > 0)
-	{
-		s->addWithDescription(_("PROVIDERS YOU SIGN IN TO"),
-			_("DROPBOX, GOOGLE DRIVE AND OTHERS. YOU WILL NEED A PHONE."),
-			nullptr, [window] { cloudRemoteShowList(window, _("SIGN IN WITH A PHONE"), "needs-browser", ""); },
-			"", false, true);
-	}
 
 	// The old SSH wizard, one level down. It is still the only way to reach
 	// rclone's own config for the things a form cannot express -- crypt and

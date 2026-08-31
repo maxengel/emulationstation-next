@@ -4,7 +4,14 @@
 #include "TextToSpeech.h"
 
 #define BUTTON_GRID_VERT_PADDING  (Renderer::getScreenHeight()*0.0296296)
-#define BUTTON_GRID_HORIZ_PADDING (Renderer::getScreenWidth()*0.0052083333)
+// The gap between two buttons on a menu's button bar, and the one place it is
+// defined -- every ES screen ends in this bar, so a value set here is the
+// house style rather than a per-page decision.
+//
+// It was 0.0052 of the screen width, which is 3px on a 640px handheld panel:
+// two buttons that read as one control, and a destructive choice one thumb's
+// width from a safe one. 0.022 gives 14px there and scales with the panel.
+#define BUTTON_GRID_HORIZ_PADDING (Renderer::getScreenWidth()*0.022)
 
 #define TITLE_HEIGHT (mTitle->getFont()->getLetterHeight() + (mSubtitle ? TITLE_WITHSUB_VERT_PADDING : TITLE_VERT_PADDING) + (mSubtitle ? mSubtitle->getSize().y() + SUBTITLE_VERT_PADDING : 0))
 
