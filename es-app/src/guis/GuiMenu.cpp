@@ -5447,7 +5447,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// appeared meant this screen flashed past before it could be read.
 	if (onDevice)
 		cloudSetupAddProse(s, window, _("THEN"),
-			_("SELECT 'CONTINUE' AND THE SIGN-IN PAGE OPENS HERE. USE THE D-PAD AND A, OR TYPE FROM YOUR PHONE. PRESS START TO COME BACK."));
+			_("SELECT 'CONTINUE' AND THE SIGN-IN PAGE OPENS HERE. MOVE WITH THE D-PAD, CHOOSE WITH A, OR TYPE FROM YOUR PHONE. HOLD SELECT AND PRESS START TO COME BACK."));
 	else
 		cloudSetupAddProse(s, window, _("THEN"),
 			_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
@@ -5467,7 +5467,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			{
 				Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth open", "", nullptr);
 				window->pushGui(new GuiMsgBox(window,
-					_("THE SIGN-IN PAGE IS OPENING ON THIS SCREEN.\n\nPRESS START THERE WHEN YOU ARE DONE, THEN SELECT 'CONTINUE' AGAIN."),
+					_("THE SIGN-IN PAGE IS OPENING ON THIS SCREEN.\n\nTO COME BACK HERE, HOLD SELECT AND PRESS START - THE SAME WAY YOU LEAVE A GAME.\n\nTHEN CHOOSE 'CONTINUE' AGAIN."),
 					_("OK"), nullptr));
 				return;
 			}
