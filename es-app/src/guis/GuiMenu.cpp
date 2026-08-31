@@ -4513,6 +4513,10 @@ static void cloudSetupAddQrRow(GuiSettings* s, Window* window, const std::string
 	const float qrEdge = Renderer::getScreenHeight() * 0.28f;
 
 	auto qr = std::make_shared<ImageComponent>(window);
+	// No theme tint and no inherited dimming: menu rows are drawn muted, and
+	// a muted QR is a QR that does not scan.
+	qr->setColorShift(0xFFFFFFFF);
+	qr->setOpacity(255);
 	// Padding before setMaxSize -- ImageComponent folds it into the size it
 	// reports, which is what the row measures the column by.
 	qr->setPadding(CLOUD_SETUP_ROW_PADDING);
@@ -5417,22 +5421,47 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// dependency of this package, used by the console flow.
 	const std::string qrPath = "/tmp/cloud-oauth-qr.png";
 	Utils::Platform::runSystemCommand(
+		// Pure black on pure white with a generous quiet zone. qrencode's
+		// defaults render dark-on-light but not maximally, and on a handheld
+		// panel at low brightness the result is a grey square a phone camera
+		// struggles with. This is the one thing on the page that has to be
+		// legible to a camera rather than to a person.
 		"rm -f " + qrPath + "; /usr/bin/qrencode -o " + qrPath
-		+ " -s 6 -m 2 " + cloudShellQuote(url), "", nullptr);
+		+ " -s 8 -m 4 --background=FFFFFF --foreground=000000 -l M "
+		+ cloudShellQuote(url), "", nullptr);
 
-	// One thing to act on, and an answer to the question it raises.
+	// Where this device can show the provider's page itself, that is the
+	// flow, and the page has to lead with it. Leading with a QR under "ON
+	// YOUR PHONE" described the old design -- ferry a code back from a phone
+	// -- and left somebody looking at a screen telling them to do the thing
+	// they no longer have to do.
 	//
-	// The PIN used to sit on its own line, which made it a second number to
-	// read next to a page that also asks for something it calls a code. It is
-	// the tail of the address now, so both paths use one string -- but a
-	// number nobody has explained is still a number somebody has to wonder
-	// about, and nothing in the UI said what it was for. These two lines cost
-	// nothing: the code beside them is taller than the text either way.
+	// The phone is now one way to type, not the way to sign in, so it comes
+	// second and says it is optional.
 	std::vector<std::pair<std::string, bool>> lines;
-	lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
-	lines.push_back(std::make_pair(url, true));
-	lines.push_back(std::make_pair(_("THE LAST 4 DIGITS ARE A PIN"), false));
-	lines.push_back(std::make_pair(_("IT KEEPS OTHERS OFF THIS PAGE"), false));
+	if (onDevice)
+	{
+		s->addGroup(_("SIGN IN ON THIS SCREEN"));
+		cloudSetupAddSpacer(s, window);
+		cloudSetupAddInfoRow(s, window, _("MOVE WITH THE D-PAD, CHOOSE WITH A"));
+		cloudSetupAddInfoRow(s, window, _("A KEYBOARD OPENS WHEN YOU PICK A BOX"));
+		cloudSetupAddInfoRow(s, window, _("HOLD SELECT AND PRESS START TO COME BACK"));
+
+		s->addGroup(_("OR TYPE FROM YOUR PHONE"));
+		cloudSetupAddSpacer(s, window);
+		lines.push_back(std::make_pair(_("SCAN THIS, OR OPEN"), false));
+		lines.push_back(std::make_pair(url, true));
+		lines.push_back(std::make_pair(_("WHAT YOU TYPE THERE APPEARS HERE"), false));
+	}
+	else
+	{
+		// The older path, for an image that cannot host the page itself: the
+		// player signs in on their phone and brings an address back.
+		lines.push_back(std::make_pair(_("OPEN THIS IN A BROWSER"), false));
+		lines.push_back(std::make_pair(url, true));
+		lines.push_back(std::make_pair(_("THE LAST 4 DIGITS ARE A PIN"), false));
+		lines.push_back(std::make_pair(_("IT KEEPS OTHERS OFF THIS PAGE"), false));
+	}
 
 	if (Utils::FileSystem::exists(qrPath))
 		cloudSetupAddQrRow(s, window, qrPath, lines);
@@ -5447,7 +5476,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// appeared meant this screen flashed past before it could be read.
 	if (onDevice)
 		cloudSetupAddProse(s, window, _("THEN"),
-			_("SELECT 'CONTINUE' AND THE SIGN-IN PAGE OPENS HERE. MOVE WITH THE D-PAD, CHOOSE WITH A, OR TYPE FROM YOUR PHONE. HOLD SELECT AND PRESS START TO COME BACK."));
+			_("CHOOSE 'CONTINUE' AND THE SIGN-IN PAGE OPENS ON THIS SCREEN."));
 	else
 		cloudSetupAddProse(s, window, _("THEN"),
 			_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
