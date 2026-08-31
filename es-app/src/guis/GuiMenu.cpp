@@ -4598,7 +4598,11 @@ static void cloudSetupPresent(Window* window, GuiSettings* s, GuiSettings* prev)
 static void cloudSetupSetButtons(GuiSettings* s, const std::function<void()>& onContinue)
 {
 	s->getMenu().clearButtons();
-	s->getMenu().addButton(_("EXIT SETUP"), _("exit setup"), [s] { s->close(); });
+	// One word each. A button bar is read at a glance and the page title
+	// already says what is being exited, so "EXIT SETUP" spent width on a
+	// word that carried nothing -- and the wider the buttons, the more two
+	// of them read as a single control.
+	s->getMenu().addButton(_("EXIT"), _("exit setup"), [s] { s->close(); });
 	if (onContinue != nullptr)
 		s->getMenu().addButton(_("CONTINUE"), _("continue"), onContinue);
 }
