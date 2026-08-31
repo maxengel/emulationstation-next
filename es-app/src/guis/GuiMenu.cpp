@@ -5367,10 +5367,14 @@ static void cloudOAuthStart(Window* window, const CloudBackend& backend,
 // Wait for the listener to say it is *waiting*, not merely for an address to
 // appear: a URL on its own proves nothing about whose session it belongs to,
 // which is how a previous attempt's PIN once reached the screen.
-static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice)
+static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice,
+	std::string& exitHint)
 {
 	url.clear();
 	onDevice = false;
+	// A sane default for an image whose cloud_oauth predates EXIT_HINT.
+	// Select exists on every pad we ship for; Mode does not.
+	exitHint = "SELECT + START";
 	bool understood = true;
 
 	for (int attempt = 0; attempt < 24 && understood; attempt++)
@@ -5393,6 +5397,14 @@ static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice)
 				status = trimmed.substr(7);
 			else if (Utils::String::startsWith(trimmed, "ON_DEVICE="))
 				onDevice = trimmed.substr(10) == "yes";
+			// Which two buttons leave differs by handheld, so the device is
+			// asked rather than the string being written here.
+			else if (Utils::String::startsWith(trimmed, "EXIT_HINT="))
+			{
+				const std::string reported = Utils::String::trim(trimmed.substr(10));
+				if (!reported.empty())
+					exitHint = reported;
+			}
 		}
 
 		if (status == "waiting" && !url.empty())
@@ -5422,9 +5434,9 @@ static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice)
 static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
 	const std::string& remoteName, GuiSettings* prev)
 {
-	std::string url;
+	std::string url, exitHint;
 	bool onDevice = false;
-	const bool started = cloudOAuthAwaitSession(url, onDevice);
+	const bool started = cloudOAuthAwaitSession(url, onDevice, exitHint);
 
 	// An image that cannot host the page has only one route; asking would be
 	// a question with a single answer.
@@ -5466,9 +5478,9 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// reported by `info` for anything driving this from a shell, but the page
 	// has nothing to do with them separately -- two numbers on one screen is
 	// what made "code" ambiguous the first time.
-	std::string url;
+	std::string url, exitHint;
 	bool onDevice = false;
-	const bool started = cloudOAuthAwaitSession(url, onDevice);
+	const bool started = cloudOAuthAwaitSession(url, onDevice, exitHint);
 
 	if (!started)
 	{
@@ -5490,7 +5502,8 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		cloudSetupAddProse(s, window, _("SIGNING IN"),
 			_("THE PROVIDER'S PAGE IS OPENING. A KEYBOARD APPEARS WHEN YOU PICK A BOX; MOVE WITH THE D-PAD AND CHOOSE WITH A."));
 		cloudSetupAddSpacer(s, window);
-		cloudSetupAddInfoRow(s, window, _("TO COME BACK HERE, HOLD SELECT AND PRESS START"));
+		cloudSetupAddInfoRow(s, window,
+			Utils::String::format(_("TO COME BACK HERE, PRESS %s").c_str(), exitHint.c_str()));
 		cloudSetupAddInfoRow(s, window, _("THEN CHOOSE 'CONTINUE' TO FINISH"));
 	}
 	else
@@ -5543,7 +5556,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// openOnContinue is false when the page is already open: pressing
 	// CONTINUE then means "I am done", not "open it".
 	const bool openOnContinue = onDevice && usePhone;
-	cloudSetupSetButtons(s, [window, backend, remoteName, s, openOnContinue]
+	cloudSetupSetButtons(s, [window, backend, remoteName, s, openOnContinue, exitHint]
 	{
 		if (openOnContinue)
 		{
@@ -5553,7 +5566,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			{
 				Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth open", "", nullptr);
 				window->pushGui(new GuiMsgBox(window,
-					_("THE PROVIDER'S PAGE IS OPENING ON THIS SCREEN.\n\nTYPE ON YOUR PHONE, OR ON THE KEYBOARD THAT APPEARS HERE.\n\nTO COME BACK, HOLD SELECT AND PRESS START - THE SAME WAY YOU LEAVE A GAME."),
+					Utils::String::format(_("THE PROVIDER'S PAGE IS OPENING ON THIS SCREEN.\n\nTYPE ON YOUR PHONE, OR ON THE KEYBOARD THAT APPEARS HERE.\n\nTO COME BACK, PRESS %s - THE SAME WAY YOU LEAVE A GAME.").c_str(), exitHint.c_str()),
 					_("OK"), nullptr));
 				return;
 			}
