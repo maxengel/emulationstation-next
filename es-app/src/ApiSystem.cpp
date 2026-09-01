@@ -531,11 +531,16 @@ bool ApiSystem::launchKodi(Window *window)
 // is gone *and* the gamepad has been released, which is what ES needs before
 // it re-initialises -- SDL re-opens the joystick on init and would otherwise
 // come back with no gamepad at all.
-bool ApiSystem::launchCloudSignIn(Window *window)
+bool ApiSystem::launchCloudSignIn(Window *window, bool phoneKeyboard)
 {
 	LOG(LogDebug) << "ApiSystem::launchCloudSignIn";
 
-	if (system("/usr/bin/cloud_oauth open") != 0)
+	// --phone tells the window not to raise its own keyboard: somebody who
+	// chose to type on their phone does not want the screen they are reading
+	// the form on covered by a keyboard they did not ask for.
+	const char* open = phoneKeyboard
+		? "/usr/bin/cloud_oauth open --phone" : "/usr/bin/cloud_oauth open";
+	if (system(open) != 0)
 	{
 		LOG(LogWarning) << "cloud sign-in window did not open; staying put";
 		return false;

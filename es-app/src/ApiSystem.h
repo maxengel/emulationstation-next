@@ -221,7 +221,7 @@ public:
 
     virtual bool launchKodi(Window *window);
     bool launchFileManager(Window *window);
-    bool launchCloudSignIn(Window *window);
+    bool launchCloudSignIn(Window *window, bool phoneKeyboard);
 
 #ifdef BATOCERA
     virtual void launchControlcenter();
