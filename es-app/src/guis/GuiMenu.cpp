@@ -4164,7 +4164,7 @@ void GuiMenu::openGamesSettings()
 			_("TWO-WAY: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVE DATA"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVE DATA"), _("SYNCING SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
@@ -4172,7 +4172,7 @@ void GuiMenu::openGamesSettings()
 			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"), _("UPLOADING SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
@@ -4180,7 +4180,7 @@ void GuiMenu::openGamesSettings()
 			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"), _("DOWNLOADING SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
@@ -4235,14 +4235,14 @@ void GuiMenu::openGamesSettings()
 						picker->addGroup(_("COPIES FILES TO YOUR CLOUD REMOTE. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED."));
 						picker->addEntry(_("EVERYTHING"), true, [window] {
 							window->pushGui(new GuiMsgBox(window, _("UPLOAD ALL CONTENT FROM THIS DEVICE TO THE CLOUD?"), _("YES"),
-								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --all", _("UPLOAD CONTENT")); },
+								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --all", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
 								_("NO"), nullptr));
 						});
 						for (auto dir : dirs)
 						{
 							picker->addEntry(dir, true, [window, dir] {
 								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("UPLOAD \"%s\" TO THE CLOUD?").c_str(), dir.c_str()), _("YES"),
-									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup " + std::string("\"") + dir + "\"", _("UPLOAD CONTENT")); },
+									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup " + std::string("\"") + dir + "\"", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
 									_("NO"), nullptr));
 							});
 						}
@@ -4278,14 +4278,14 @@ void GuiMenu::openGamesSettings()
 						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
 						picker->addEntry(_("EVERYTHING"), true, [window] {
 							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD ALL CONTENT FROM THE CLOUD TO THIS DEVICE?"), _("YES"),
-								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --all", _("RESTORE CONTENT")); },
+								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --all", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
 								_("NO"), nullptr));
 						});
 						for (auto dir : dirs)
 						{
 							picker->addEntry(dir, true, [window, dir] {
 								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("DOWNLOAD \"%s\" FROM THE CLOUD TO THIS DEVICE?").c_str(), dir.c_str()), _("YES"),
-									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore " + std::string("\"") + dir + "\"", _("RESTORE CONTENT")); },
+									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore " + std::string("\"") + dir + "\"", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
 									_("NO"), nullptr));
 							});
 						}
@@ -5345,6 +5345,8 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
 	const std::string& remoteName, GuiSettings* prev,
 	const CloudOAuthReady& ready);
+static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
+	GuiSettings* prev);
 static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
 	const std::string& remoteName, GuiSettings* prev);
 
@@ -5614,9 +5616,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 
 		if (status == "signed-in")
 		{
-			window->pushGui(new GuiMsgBox(window,
-				_("CONNECTED. CLOUD TOOLS ARE NOW AVAILABLE."),
-				_("OK"), [s] { s->close(); }));
+			cloudOAuthShowConnected(window, backend, s);
 			return;
 		}
 		if (status == "failed")
@@ -5644,6 +5644,45 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// the duration. The page has to already be there for ES to come back to.
 	if (openImmediately)
 		ApiSystem::getInstance()->launchCloudSignIn(window, false);
+}
+
+// What it means to have connected something, said once, at the only moment
+// anybody is going to read it.
+//
+// The old ending was a one-line dialog -- "CONNECTED. CLOUD TOOLS ARE NOW
+// AVAILABLE" -- which named neither the provider just connected nor anything
+// the player could go and do. Somebody who has just finished a sign-in on a
+// handheld deserves to be told what they now have.
+static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
+	GuiSettings* prev)
+{
+	auto s = new GuiSettings(window, _("CONNECTED"));
+	s->setSubTitle(Utils::String::toUpper(backend.label));
+
+	cloudSetupAddProse(s, window,
+		Utils::String::format(_("%s IS CONNECTED").c_str(),
+		                      Utils::String::toUpper(backend.label).c_str()),
+		_("YOUR SAVES, SAVESTATES AND SCREENSHOTS CAN NOW BE KEPT IN THE CLOUD AND PICKED UP ON ANOTHER DEVICE."));
+
+	// Named menus rather than a vague "it is all available now": these are
+	// where the things this unlocks actually live.
+	s->addGroup(_("WHAT YOU CAN DO NOW"));
+	cloudSetupAddInfoRow(s, window, _("GAME SETTINGS > CLOUD SAVES"), true);
+	cloudSetupAddInfoRow(s, window, _("TURN SYNCING ON, PER SYSTEM"));
+	cloudSetupAddSpacer(s, window);
+	cloudSetupAddInfoRow(s, window, _("NETWORK SETTINGS > CLOUD SERVICES"), true);
+	cloudSetupAddInfoRow(s, window, _("CHANGE THE CLOUD FOLDER, OR BACK UP THIS DEVICE"));
+
+	cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
+		_("CONNECTING A PROVIDER ONLY GIVES THE DEVICE SOMEWHERE TO PUT THINGS. TURN ON THE SYSTEMS YOU WANT KEPT, AND ROMS AND BIOS FILES ARE NEVER UPLOADED."));
+
+	// One button, and it leaves. There is nothing left to continue to -- the
+	// sign-in is done, and the page it would return to is the provider list,
+	// which is the last place somebody who has just connected wants to be.
+	s->getMenu().clearButtons();
+	s->getMenu().addButton(_("DONE"), _("done"), [s] { s->close(); });
+
+	cloudSetupPresent(window, s, prev);
 }
 
 // A filtered list of backends. `tier` empty means every tier.
@@ -5687,7 +5726,7 @@ static void cloudRemoteShowList(Window* window, const std::string& title,
 			// says what kind of sign-in it is and nothing about where.
 			s->addWithDescription(Utils::String::toUpper(b.label),
 				_("OPENS THE PROVIDER'S SIGN-IN PAGE."), nullptr,
-				[window, backend] { cloudOAuthStart(window, backend, backend.name, nullptr); },
+				[window, backend, s] { cloudOAuthStart(window, backend, backend.name, s); },
 				"", false, true);
 		}
 		else
@@ -5731,10 +5770,13 @@ void GuiMenu::openCloudAddRemote(Window* window)
 			// The tier decides what happens next, so the player never has to
 			// know there are two kinds of sign-in before they pick.
 			CloudBackend backend = b;
-			s->addEntry(_(want.second.c_str()), true, [window, backend]
+			// The list is handed over as the page this replaces, so the flow
+			// closes back to network settings rather than depositing somebody
+			// who has just connected onto the list of things to connect.
+			s->addEntry(_(want.second.c_str()), true, [window, backend, s]
 			{
 				if (backend.tier == "oauth")
-					cloudOAuthStart(window, backend, backend.name, nullptr);
+					cloudOAuthStart(window, backend, backend.name, s);
 				else
 					cloudRemoteChooseBackend(window, backend);
 			});
@@ -5870,7 +5912,7 @@ void GuiMenu::openCloudSystemBackup(Window* window)
 	{
 		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 			[window] {
-			ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACKUP ALL SYSTEM DATA"));
+			ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACKUP ALL SYSTEM DATA"), _("BACKING UP ALL SYSTEM DATA"));
 			}, _("NO"), nullptr));
 	}, "", false, true);
 
@@ -6059,7 +6101,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 					if (rc == 0)
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT CLOUD STORAGE IN NETWORK SETTINGS > RCLONE SERVICES.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT CLOUD STORAGE IN NETWORK SETTINGS > CLOUD SERVICES.")));
 				}));
 		});
 	}
@@ -7630,7 +7672,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 
 	if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 	{
-		s->addGroup(_("RCLONE SERVICES"));
+		// Named for what it does, not for the program underneath. "RCLONE
+		// SERVICES" asked the player to know what rclone is before they could
+		// tell whether the section was for them, and every other place we
+		// mention this calls it cloud. rclone is still named on the row, for
+		// somebody who does know and is looking for it.
+		s->addGroup(_("CLOUD SERVICES"));
 
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		Window* window = mWindow;
@@ -7640,7 +7687,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		// words, and the older one led to a terminal on another computer --
 		// which is exactly what this replaced. The SSH route survives one
 		// level down, under MORE, for the cases the form cannot express.
-		s->addWithDescription(_("CONNECT CLOUD STORAGE"), _("SET UP A PROVIDER FROM THE HANDHELD. NO COMPUTER NEEDED."), nullptr,
+		s->addWithDescription(_("CONNECT CLOUD STORAGE"), _("SET UP A PROVIDER WITH RCLONE, FROM THE HANDHELD. NO COMPUTER NEEDED."), nullptr,
 			[window] { GuiMenu::openCloudAddRemote(window); }, "", false, true);
 
 		cloudAddGatedEntry(s, window, cloudConfigured, _("BACKUP/RESTORE SYSTEM DATA"),
