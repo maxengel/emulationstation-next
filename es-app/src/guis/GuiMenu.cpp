@@ -7735,7 +7735,16 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		{
 			// Live value read at menu build; the editor writes it back
 			// through cloud_setup --set-syncpath.
-			std::string syncpath = Utils::String::trim(Utils::Platform::GetShOutput(". /storage/.config/cloud_sync.conf 2>/dev/null; echo -n \"${SYNCPATH}\""));
+			//
+			// Through cloudSetupInfo, not GetShOutput. GetShOutput drops the
+			// last character of what it reads -- with `echo -n` and no
+			// trailing newline to lose instead, "/GAMES" reached the screen
+			// as "/GAME". A player checking which folder their saves are in
+			// was being shown a path that does not exist. It is the same
+			// defect that garbled the connect page (blindspot 3); the fix
+			// there was executeScriptLegacy, which is what cloudSetupInfo
+			// already uses.
+			std::string syncpath = cloudSetupInfo()["SYNCPATH"];
 			s->addWithDescription(_("CLOUD FOLDER"), _("THE FOLDER ON YOUR CLOUD REMOTE WHERE EVERYTHING IS STORED. CURRENT:") + " " + syncpath, nullptr,
 				[window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); }, "", false, true);
 		}
