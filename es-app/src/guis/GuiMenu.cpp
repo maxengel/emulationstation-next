@@ -5331,8 +5331,20 @@ static void cloudRemoteChooseBackend(Window* window, const CloudBackend& backend
 // it worked -- the same shape as the SSH wizard's CONTINUE gate, which exists
 // because a page that assumes success is how a failed setup gets reported as
 // a working one.
+struct CloudOAuthReady
+{
+	bool started = false;
+	bool onDevice = false;
+	std::string url;
+	std::string exitHint = "SELECT + START";
+};
+
 static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
-	const std::string& remoteName, GuiSettings* prev, bool usePhone);
+	const std::string& remoteName, GuiSettings* prev, bool usePhone,
+	const CloudOAuthReady& ready);
+static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev,
+	const CloudOAuthReady& ready);
 static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
 	const std::string& remoteName, GuiSettings* prev);
 
@@ -5377,7 +5389,10 @@ static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice,
 	exitHint = "SELECT + START";
 	bool understood = true;
 
-	for (int attempt = 0; attempt < 24 && understood; attempt++)
+	// Sixty rather than twenty-four: this runs on a worker thread now, so
+	// patience costs a spinner rather than a frozen screen, and a second
+	// attempt after a cancel was timing out at the old limit.
+	for (int attempt = 0; attempt < 60 && understood; attempt++)
 	{
 		std::string status;
 		url.clear();
@@ -5434,15 +5449,34 @@ static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice,
 static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
 	const std::string& remoteName, GuiSettings* prev)
 {
-	std::string url, exitHint;
-	bool onDevice = false;
-	const bool started = cloudOAuthAwaitSession(url, onDevice, exitHint);
+	// Off the UI thread. This waits on a provider round trip and used to run
+	// inline, spawning a subprocess per poll, so ES painted nothing for the
+	// fifteen-odd seconds it took -- indistinguishable from a freeze, and
+	// reported as one. It is also why the wait could not afford to be
+	// patient; now it can.
+	window->pushGui(new GuiLoading<CloudOAuthReady>(window, _("STARTING SIGN-IN"),
+		[](IGuiLoadingHandler*)
+		{
+			CloudOAuthReady ready;
+			ready.started = cloudOAuthAwaitSession(ready.url, ready.onDevice,
+			                                       ready.exitHint);
+			return ready;
+		},
+		[window, backend, remoteName, prev](CloudOAuthReady ready)
+		{
+			cloudOAuthPresentChoice(window, backend, remoteName, prev, ready);
+		}));
+}
 
+static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
+	const std::string& remoteName, GuiSettings* prev,
+	const CloudOAuthReady& ready)
+{
 	// An image that cannot host the page has only one route; asking would be
 	// a question with a single answer.
-	if (!started || !onDevice)
+	if (!ready.started || !ready.onDevice)
 	{
-		cloudOAuthShowSignIn(window, backend, remoteName, prev, true);
+		cloudOAuthShowSignIn(window, backend, remoteName, prev, true, ready);
 		return;
 	}
 
@@ -5450,18 +5484,18 @@ static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
 	s->setSubTitle(Utils::String::toUpper(backend.label));
 
 	s->addGroup(_("HOW DO YOU WANT TO TYPE?"));
-	s->addWithDescription(_("ON THIS DEVICE"),
-		_("A KEYBOARD ON SCREEN, WORKED WITH THE D-PAD."),
-		nullptr, [window, backend, remoteName, prev]
+	s->addWithDescription(_("WITH THE ON-SCREEN KEYBOARD"),
+		_("WORKED WITH THE D-PAD, ON THIS SCREEN."),
+		nullptr, [window, backend, remoteName, prev, ready]
 		{
-			cloudOAuthShowSignIn(window, backend, remoteName, prev, false);
+			cloudOAuthShowSignIn(window, backend, remoteName, prev, false, ready);
 		}, "", false, true);
 
 	s->addWithDescription(_("WITH MY PHONE"),
-		_("SCAN A CODE AND TYPE ON YOUR PHONE. THE SIGN-IN STILL HAPPENS ON THIS SCREEN."),
-		nullptr, [window, backend, remoteName, prev]
+		_("SCAN THE CODE, THEN CHOOSE CONTINUE. YOUR PHONE BECOMES A KEYBOARD FOR THIS SCREEN."),
+		nullptr, [window, backend, remoteName, prev, ready]
 		{
-			cloudOAuthShowSignIn(window, backend, remoteName, prev, true);
+			cloudOAuthShowSignIn(window, backend, remoteName, prev, true, ready);
 		}, "", false, true);
 
 	cloudSetupSetButtons(s, nullptr);
@@ -5469,7 +5503,8 @@ static void cloudOAuthChooseInput(Window* window, const CloudBackend& backend,
 }
 
 static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
-	const std::string& remoteName, GuiSettings* prev, bool usePhone)
+	const std::string& remoteName, GuiSettings* prev, bool usePhone,
+	const CloudOAuthReady& ready)
 {
 	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
 	s->setSubTitle(Utils::String::toUpper(backend.label));
@@ -5478,15 +5513,18 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// reported by `info` for anything driving this from a shell, but the page
 	// has nothing to do with them separately -- two numbers on one screen is
 	// what made "code" ambiguous the first time.
-	std::string url, exitHint;
-	bool onDevice = false;
-	const bool started = cloudOAuthAwaitSession(url, onDevice, exitHint);
+	const std::string url = ready.url;
+	const bool onDevice = ready.onDevice;
+	const std::string exitHint = ready.exitHint;
 
-	if (!started)
+	if (!ready.started)
 	{
 		cloudSetupAddProse(s, window, _("SIGN-IN DID NOT START"),
 			_("THE DEVICE COULD NOT REACH THE PROVIDER. CHECK THE NETWORK AND TRY AGAIN."));
-		cloudSetupSetButtons(s, [s] { s->close(); });
+		// One button, and it goes back. This page used to carry CONTINUE as
+		// well, which offered to continue with a sign-in that had not begun.
+		s->getMenu().clearButtons();
+		s->getMenu().addButton(_("GO BACK"), _("go back"), [s] { s->close(); });
 		cloudSetupPresent(window, s, prev);
 		return;
 	}
@@ -5566,7 +5604,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 				// Blocks until the player comes back out of the page, so
 				// there is no dialog to dismiss afterwards and no second
 				// CONTINUE to press -- fall through and say what happened.
-				ApiSystem::getInstance()->launchCloudSignIn(window);
+				ApiSystem::getInstance()->launchCloudSignIn(window, true);
 			}
 		}
 
@@ -5605,7 +5643,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	// blocks for as long as somebody is signing in, and ES is suspended for
 	// the duration. The page has to already be there for ES to come back to.
 	if (openImmediately)
-		ApiSystem::getInstance()->launchCloudSignIn(window);
+		ApiSystem::getInstance()->launchCloudSignIn(window, false);
 }
 
 // A filtered list of backends. `tier` empty means every tier.
