@@ -7690,6 +7690,43 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		s->addWithDescription(_("CONNECT CLOUD STORAGE"), _("SET UP A PROVIDER WITH RCLONE, FROM THE HANDHELD. NO COMPUTER NEEDED."), nullptr,
 			[window] { GuiMenu::openCloudAddRemote(window); }, "", false, true);
 
+		// Offered, never automatic. The first layout put everything under
+		// /GAMES with the backups nested inside the saves folder; the current
+		// one is /ROCKNIX/Saves and /ROCKNIX/Backups. cloud_sync_helper only
+		// ever adds keys it cannot find, so a device configured before that
+		// stays on the old layout for ever unless somebody says otherwise --
+		// and where a player's saves live is theirs to decide, which is why
+		// this asks rather than acts.
+		//
+		// The row only appears when there is something to move: the script
+		// answers 3 when the device is already on the current layout.
+		if (cloudConfigured
+			&& Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout")
+			&& Utils::Platform::runSystemCommand(
+				"/usr/bin/cloud_migrate_layout --check >/dev/null 2>&1", "", nullptr) == 0)
+		{
+			s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
+				_("MOVE SAVES AND BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
+				nullptr, [window]
+				{
+					auto lines = Utils::Platform::GetShOutputLines(
+						"/usr/bin/cloud_migrate_layout --check");
+					std::string detail;
+					for (auto& line : lines)
+						detail += line + "\n";
+
+					window->pushGui(new GuiMsgBox(window,
+						detail + "\n" + _("MOVE THEM?"),
+						_("MOVE"), [window]
+						{
+							ThreadedCloudSync::start(window,
+								"/usr/bin/cloud_migrate_layout --apply",
+								_("TIDY CLOUD FOLDERS"), _("TIDYING CLOUD FOLDERS"));
+						},
+						_("LEAVE THEM"), nullptr));
+				}, "", false, true);
+		}
+
 		cloudAddGatedEntry(s, window, cloudConfigured, _("BACKUP/RESTORE SYSTEM DATA"),
 			_("STORE SAVE DATA, SETTINGS, AND MORE. BIOS FILES AND ROMS ARE HANDLED SEPARATELY."),
 			[window] { GuiMenu::openCloudSystemBackup(window); });
