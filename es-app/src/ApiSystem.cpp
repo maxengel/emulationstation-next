@@ -552,6 +552,12 @@ bool ApiSystem::launchCloudSignIn(Window *window, bool phoneKeyboard)
 		exitCode = WEXITSTATUS(exitCode);
 	ApiSystem::launchExternalWindow_after(window);
 
+	// `wait` returns as soon as the sign-in lands, with the page still up
+	// saying "Finishing up" -- so this rebuild happens behind something
+	// rather than in front of a black screen. Now that we are drawing again,
+	// the page can go.
+	system("/usr/bin/cloud_oauth close");
+
 	return exitCode == 0;
 }
 

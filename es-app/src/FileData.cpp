@@ -31,6 +31,7 @@
 #include "TextToSpeech.h"
 #include "LocaleES.h"
 #include "guis/GuiMsgBox.h"
+#include "ThreadedCloudSync.h"
 #include "Paths.h"
 #include "resources/TextureData.h"
 #include "views/gamelist/GameNameFormatter.h"
@@ -698,6 +699,19 @@ std::string FileData::getMessageFromExitCode(int exitCode)
 bool FileData::launchGame(Window* window, LaunchGameOptions options)
 {
 	LOG(LogInfo) << "Attempting to launch game...";
+
+	// Not while saves are moving. A cloud sync reads and writes the same save
+	// files the emulator is about to open, and the archive step tars up
+	// /storage while it runs -- starting a game in the middle of that can
+	// upload a half-written save or restore over one the game has already
+	// loaded. ThreadedCloudSync has always known whether it was running;
+	// nothing ever asked.
+	if (ThreadedCloudSync::isRunning())
+	{
+		window->pushGui(new GuiMsgBox(window,
+			_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE STARTING A GAME - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));
+		return false;
+	}
 
 	FileData* gameToUpdate = getSourceFileData();
 	if (gameToUpdate == nullptr)

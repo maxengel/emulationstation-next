@@ -12,12 +12,13 @@
 
 ThreadedCloudSync* ThreadedCloudSync::mInstance = nullptr;
 
-ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command, const std::string& title)
-	: mWindow(window), mCommand(command), mTitle(title)
+ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
+	const std::string& title, const std::string& running)
+	: mWindow(window), mCommand(command), mTitle(title), mRunning(running)
 {
 	mWndNotification = mWindow->createAsyncNotificationComponent();
-	mWndNotification->updateTitle(ICONINDEX + mTitle);
-	mWndNotification->updateText(_("Syncing with the cloud..."));
+	mWndNotification->updateTitle(ICONINDEX + (mRunning.empty() ? mTitle : mRunning));
+	mWndNotification->updateText(_("Working..."));
 	mWndNotification->updatePercent(-1);
 
 	mHandle = new std::thread(&ThreadedCloudSync::run, this);
@@ -69,7 +70,8 @@ void ThreadedCloudSync::run()
 	ThreadedCloudSync::mInstance = nullptr;
 }
 
-void ThreadedCloudSync::start(Window* window, const std::string& command, const std::string& title)
+void ThreadedCloudSync::start(Window* window, const std::string& command,
+	const std::string& title, const std::string& running)
 {
 	if (ThreadedCloudSync::mInstance != nullptr)
 	{
@@ -77,5 +79,5 @@ void ThreadedCloudSync::start(Window* window, const std::string& command, const 
 		return;
 	}
 
-	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title);
+	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running);
 }
