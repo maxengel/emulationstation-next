@@ -257,14 +257,14 @@ void GuiMenu::openResetOptions()
 
 	s->addGroup(_("DATA MANAGEMENT"));
 	s->addEntry(_("BACK UP CONFIGURATIONS TO DEVICE"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWIFI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWI-FI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESTORE CONFIGURATION FROM DEVICE"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WIFI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool restore\"", "", nullptr);
 		}, _("NO"), nullptr));
@@ -4169,16 +4169,16 @@ void GuiMenu::openGamesSettings()
 		});
 
 		cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD SAVE DATA TO THE CLOUD"),
-			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
+			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"), _("UPLOADING SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
 		cloudAddGatedEntry(s, window, cloudConfigured, _("DOWNLOAD SAVE DATA FROM THE CLOUD"),
-			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
+			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"), _("DOWNLOADING SAVE DATA"));
 				}, _("NO"), nullptr));
@@ -4211,7 +4211,7 @@ void GuiMenu::openGamesSettings()
 		if (hasContentUp)
 		{
 			cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD CONTENT TO THE CLOUD"),
-				_("ROMS, BIOS AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
+				_("ROMS, BIOS, AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
@@ -4254,7 +4254,7 @@ void GuiMenu::openGamesSettings()
 		if (hasContentDown)
 		{
 			cloudAddGatedEntry(s, window, cloudConfigured, _("RESTORE CONTENT FROM THE CLOUD"),
-				_("ROMS, BIOS AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
+				_("ROMS, BIOS, AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
@@ -4923,7 +4923,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	});
 	s->addEntry(_("BACK UP EVERYTHING NOW"), true, [window, s]
 	{
-		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 			[window, s]
 			{
 				s->close();
@@ -5583,7 +5583,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 
 		if (onDevice)
 			cloudSetupAddProse(s, window, _("THEN"),
-				_("CONNECT YOUR PHONE FIRST, THEN CHOOSE 'CONTINUE' AND THE PROVIDER'S PAGE OPENS ON THIS SCREEN."));
+				_("CONNECT YOUR PHONE FIRST, THEN CHOOSE 'CONTINUE', AND THE PROVIDER'S PAGE OPENS ON THIS SCREEN."));
 		else
 			cloudSetupAddProse(s, window, _("THEN"),
 				_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
@@ -5662,7 +5662,7 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	cloudSetupAddProse(s, window,
 		Utils::String::format(_("%s IS CONNECTED").c_str(),
 		                      Utils::String::toUpper(backend.label).c_str()),
-		_("YOUR SAVES, SAVESTATES AND SCREENSHOTS CAN NOW BE KEPT IN THE CLOUD AND PICKED UP ON ANOTHER DEVICE."));
+		_("YOUR GAME SAVES, SAVE STATES, AND SCREENSHOTS CAN NOW BE KEPT IN THE CLOUD AND PICKED UP ON ANOTHER DEVICE."));
 
 	// Named menus rather than a vague "it is all available now": these are
 	// where the things this unlocks actually live.
@@ -5910,7 +5910,7 @@ void GuiMenu::openCloudSystemBackup(Window* window)
 
 	s->addWithDescription(_("BACKUP ALL SYSTEM DATA"), _("UPLOAD WHAT'S ON THIS DEVICE TO A NEW SNAPSHOT ON YOUR CLOUD."), nullptr, [window]
 	{
-		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 			[window] {
 			ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACKUP ALL SYSTEM DATA"), _("BACKING UP ALL SYSTEM DATA"));
 			}, _("NO"), nullptr));
@@ -5986,12 +5986,12 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	s->addGroup(_("NETWORK"));
 	const bool online = !ApiSystem::getInstance()->getIpAddress().empty()
 		&& ApiSystem::getInstance()->getIpAddress() != "NOT CONNECTED";
-	addCredentialRow(_("WIFI PASSWORD"),
-		_("BACKUPS NEVER INCLUDE YOUR WIFI KEY. RE-ENTER IT TO GET BACK ONLINE."),
+	addCredentialRow(_("WI-FI PASSWORD"),
+		_("BACKUPS NEVER INCLUDE YOUR WI-FI KEY. RE-ENTER IT TO GET BACK ONLINE."),
 		online, [window, s, reopen]
 	{
-		auto wifi = new GuiSettings(window, _("WIFI PASSWORD"));
-		wifi->addInputTextConfigRow(_("WIFI PASSWORD"), "wifi.key", true);
+		auto wifi = new GuiSettings(window, _("WI-FI PASSWORD"));
+		wifi->addInputTextConfigRow(_("WI-FI PASSWORD"), "wifi.key", true);
 		wifi->addSaveFunc([]
 		{
 			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
