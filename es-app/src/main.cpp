@@ -666,7 +666,7 @@ int main(int argc, char* argv[])
 	if (Utils::FileSystem::exists(journeyMarker))
 	{
 		std::remove(journeyMarker.c_str());
-		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES AND SAVES FROM THE CLOUD NOW?"), _("YES"),
+		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES, AND SAVES FROM THE CLOUD NOW?"), _("YES"),
 			[&window] {
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_content_restore --all && /usr/bin/cloud_restore --yes\"", "", &window);
 			}, _("LATER"), nullptr));

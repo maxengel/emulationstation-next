@@ -10,6 +10,22 @@
 
 #define PADDING_PX  (Renderer::getScreenWidth()*0.01)
 
+// How solid the card is over whatever it covers.
+//
+// It was 200 of 255, and at that weight the themed panel -- 0x111111 in the
+// shipped theme -- washes out to roughly a fifth of the game art behind it, so
+// a progress line sat on a mid-grey smear that changed with the artwork. Every
+// other themed surface in the app (menus, dialogs, and GuiInfoPopup once its
+// fade-in completes) draws its background at full opacity and lets the theme
+// decide how solid to be; this was the one that did not, and it is the one
+// that is hard to read.
+//
+// Full opacity is therefore the standard, not a new choice. The card still
+// reads as an overlay rather than a page: frame.png's corners fade to nothing,
+// so the panel keeps its soft rounded edge, and the fade in and out below
+// still animates through this value.
+#define NOTIFICATION_OPACITY  255
+
 AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool actionLine)
 	: GuiComponent(window)
 {
@@ -75,7 +91,7 @@ AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool acti
 	posY = Renderer::getScreenHeight() * 0.02f;
 
 	setPosition(posX, posY, 0);
-	setOpacity(200);
+	setOpacity(NOTIFICATION_OPACITY);
 }
 
 void AsyncNotificationComponent::close()
@@ -174,7 +190,7 @@ void AsyncNotificationComponent::update(int deltaTime)
 	else if (mFadeTime < 500000)
 		mFadeTime += deltaTime;
 
-	int alpha = 200;
+	int alpha = NOTIFICATION_OPACITY;
 	int duration = 500;
 
 	if (mClosing)

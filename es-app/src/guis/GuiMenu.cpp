@@ -35,6 +35,8 @@
 #include <algorithm>
 #include "utils/Platform.h"
 #include "utils/FileSystemUtil.h"
+#include "utils/StringUtil.h"
+#include "utils/TimeUtil.h"
 
 #include "SystemConf.h"
 #include "ApiSystem.h"
@@ -257,14 +259,14 @@ void GuiMenu::openResetOptions()
 
 	s->addGroup(_("DATA MANAGEMENT"));
 	s->addEntry(_("BACK UP CONFIGURATIONS TO DEVICE"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWIFI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWI-FI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESTORE CONFIGURATION FROM DEVICE"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WIFI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool restore\"", "", nullptr);
 		}, _("NO"), nullptr));
@@ -3800,6 +3802,7 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
+static void cloudAddLastRunRow(GuiSettings* s, Window* window, const std::string& label, const std::string& name);
 
 void GuiMenu::openGamesSettings()
 {
@@ -4169,20 +4172,27 @@ void GuiMenu::openGamesSettings()
 		});
 
 		cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD SAVE DATA TO THE CLOUD"),
-			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
+			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"), _("UPLOADING SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
 
 		cloudAddGatedEntry(s, window, cloudConfigured, _("DOWNLOAD SAVE DATA FROM THE CLOUD"),
-			_("GAME SAVES, SAVESTATES AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, STATES AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
+			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"), _("DOWNLOADING SAVE DATA"));
 				}, _("NO"), nullptr));
 		});
+
+		// Both of an operation's own reports -- the progress card and the
+		// toast that follows it -- are gone within seconds of it ending.
+		// These stay, so starting a backup and walking away still leaves a
+		// way to find out how it went.
+		cloudAddLastRunRow(s, window, _("LAST UPLOAD"), "backup");
+		cloudAddLastRunRow(s, window, _("LAST DOWNLOAD"), "restore");
 
 		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
 		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
@@ -4211,7 +4221,7 @@ void GuiMenu::openGamesSettings()
 		if (hasContentUp)
 		{
 			cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD CONTENT TO THE CLOUD"),
-				_("ROMS, BIOS AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
+				_("ROMS, BIOS, AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
@@ -4254,7 +4264,7 @@ void GuiMenu::openGamesSettings()
 		if (hasContentDown)
 		{
 			cloudAddGatedEntry(s, window, cloudConfigured, _("RESTORE CONTENT FROM THE CLOUD"),
-				_("ROMS, BIOS AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
+				_("ROMS, BIOS, AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
 				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
 					[](auto gui)
 					{
@@ -4293,6 +4303,9 @@ void GuiMenu::openGamesSettings()
 					}));
 			});
 		}
+
+		cloudAddLastRunRow(s, window, _("LAST CONTENT UPLOAD"), "content-backup");
+		cloudAddLastRunRow(s, window, _("LAST CONTENT RESTORE"), "content-restore");
 	}
 
 	s->addGroup(_("SYSTEM SETTINGS"));
@@ -4412,6 +4425,55 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 	auto tc = std::make_shared<TextComponent>(window, text, theme->Text.font, accent ? theme->Text.selectedColor : theme->Text.color);
 	tc->setPadding(CLOUD_SETUP_ROW_PADDING);
 	row.addElement(tc, true);
+	s->addRow(row);
+}
+
+// What happened the last time this ran.
+//
+// A cloud operation reports itself twice, and both are gone in seconds: the
+// progress card while it works, and a toast when it ends. Somebody who starts
+// a backup and walks away comes back to a screen that has never heard of it,
+// and the only remaining record was a log file at a path they would have to be
+// told about. The backends stamp the outcome on their way out; read it back so
+// the answer to "did that work?" is still on the page that offered the action.
+//
+// Absent stamp, absent row: a device that has never run the operation should
+// not be told about a status it does not have.
+static void cloudAddLastRunRow(GuiSettings* s, Window* window, const std::string& label, const std::string& name)
+{
+	std::string path = "/storage/.cache/cloud_sync/last-" + name;
+	if (!Utils::FileSystem::exists(path))
+		return;
+
+	auto parts = Utils::String::split(Utils::String::trim(Utils::FileSystem::readAllText(path)), ' ', true);
+	if (parts.size() < 2)
+		return;
+
+	time_t when = (time_t) atoll(parts[0].c_str());
+	if (when <= 0)
+		return;
+
+	// 130 is the interrupt the backends' own trap exits with. Calling that a
+	// failure would be wrong twice over: nothing broke, and the person who
+	// stopped it does not need to be told it went badly.
+	const int code = atoi(parts[1].c_str());
+	const std::string outcome =
+		code == 0 ? _("COMPLETED SUCCESSFULLY") :
+		code == 130 ? _("STOPPED BEFORE IT FINISHED") :
+		_("FAILED - SEE /var/log/cloud_sync.log");
+
+	// Utils::Time::timeToString is a hand-rolled formatter, not strftime: it
+	// knows Y y m d H I p M S and nothing else, so no month name is available
+	// here. Numeric and big-endian is the better answer anyway -- it reads the
+	// same in every locale, and it matches the dates the archives are named
+	// with, so a row here and a file in the cloud folder are recognisably the
+	// same run.
+	std::string detail = Utils::Time::timeToString(when, "%Y-%m-%d %H:%M") + "  -  " + outcome;
+
+	ComponentListRow row;
+	row.selectable = false;
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), detail, true);
+	row.addElement(entry, true);
 	s->addRow(row);
 }
 
@@ -4923,7 +4985,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	});
 	s->addEntry(_("BACK UP EVERYTHING NOW"), true, [window, s]
 	{
-		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 			[window, s]
 			{
 				s->close();
@@ -5583,7 +5645,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 
 		if (onDevice)
 			cloudSetupAddProse(s, window, _("THEN"),
-				_("CONNECT YOUR PHONE FIRST, THEN CHOOSE 'CONTINUE' AND THE PROVIDER'S PAGE OPENS ON THIS SCREEN."));
+				_("CONNECT YOUR PHONE FIRST, THEN CHOOSE 'CONTINUE', AND THE PROVIDER'S PAGE OPENS ON THIS SCREEN."));
 		else
 			cloudSetupAddProse(s, window, _("THEN"),
 				_("THAT PAGE WALKS YOU THROUGH SIGNING IN. COME BACK HERE AND SELECT 'CONTINUE' WHEN IT SAYS YOU ARE CONNECTED."));
@@ -5662,7 +5724,7 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	cloudSetupAddProse(s, window,
 		Utils::String::format(_("%s IS CONNECTED").c_str(),
 		                      Utils::String::toUpper(backend.label).c_str()),
-		_("YOUR SAVES, SAVESTATES AND SCREENSHOTS CAN NOW BE KEPT IN THE CLOUD AND PICKED UP ON ANOTHER DEVICE."));
+		_("YOUR GAME SAVES, SAVE STATES, AND SCREENSHOTS CAN NOW BE KEPT IN THE CLOUD AND PICKED UP ON ANOTHER DEVICE."));
 
 	// Named menus rather than a vague "it is all available now": these are
 	// where the things this unlocks actually live.
@@ -5910,7 +5972,7 @@ void GuiMenu::openCloudSystemBackup(Window* window)
 
 	s->addWithDescription(_("BACKUP ALL SYSTEM DATA"), _("UPLOAD WHAT'S ON THIS DEVICE TO A NEW SNAPSHOT ON YOUR CLOUD."), nullptr, [window]
 	{
-		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, STATES AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 			[window] {
 			ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACKUP ALL SYSTEM DATA"), _("BACKING UP ALL SYSTEM DATA"));
 			}, _("NO"), nullptr));
@@ -5924,6 +5986,9 @@ void GuiMenu::openCloudSystemBackup(Window* window)
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
 			}, _("NO"), nullptr));
 	}, "", false, true);
+
+	cloudAddLastRunRow(s, window, _("LAST BACKUP"), "system-backup");
+	cloudAddLastRunRow(s, window, _("LAST RESTORE"), "system-restore");
 
 	// Only while there is a restore to finish. This used to be permanent so
 	// that somebody who pressed LATER could get back to it, but NETWORK
@@ -5986,12 +6051,12 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	s->addGroup(_("NETWORK"));
 	const bool online = !ApiSystem::getInstance()->getIpAddress().empty()
 		&& ApiSystem::getInstance()->getIpAddress() != "NOT CONNECTED";
-	addCredentialRow(_("WIFI PASSWORD"),
-		_("BACKUPS NEVER INCLUDE YOUR WIFI KEY. RE-ENTER IT TO GET BACK ONLINE."),
+	addCredentialRow(_("WI-FI PASSWORD"),
+		_("BACKUPS NEVER INCLUDE YOUR WI-FI KEY. RE-ENTER IT TO GET BACK ONLINE."),
 		online, [window, s, reopen]
 	{
-		auto wifi = new GuiSettings(window, _("WIFI PASSWORD"));
-		wifi->addInputTextConfigRow(_("WIFI PASSWORD"), "wifi.key", true);
+		auto wifi = new GuiSettings(window, _("WI-FI PASSWORD"));
+		wifi->addInputTextConfigRow(_("WI-FI PASSWORD"), "wifi.key", true);
 		wifi->addSaveFunc([]
 		{
 			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
