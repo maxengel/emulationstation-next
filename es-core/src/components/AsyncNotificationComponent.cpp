@@ -33,7 +33,7 @@ AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool acti
 	// measured width stays as the floor so nothing gets narrower than it was.
 	float width = Math::max(
 		theme->TextSmall.font->sizeText("TEXT FOR SIZE CALCULATION TEST").x(),
-		Renderer::getScreenWidth() * 0.45f);
+		Renderer::getScreenWidth() * 0.62f);
 
 	mTitle = std::make_shared<TextComponent>(mWindow, "", theme->TextSmall.font, theme->TextSmall.color, ALIGN_LEFT);
 	mGameName = std::make_shared<TextComponent>(mWindow, "", theme->TextSmall.font, theme->Text.color, ALIGN_LEFT);
