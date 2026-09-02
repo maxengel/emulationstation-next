@@ -35,6 +35,8 @@
 #include <algorithm>
 #include "utils/Platform.h"
 #include "utils/FileSystemUtil.h"
+#include "utils/StringUtil.h"
+#include "utils/TimeUtil.h"
 
 #include "SystemConf.h"
 #include "ApiSystem.h"
@@ -3800,6 +3802,7 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
+static void cloudAddLastRunRow(GuiSettings* s, Window* window, const std::string& label, const std::string& name);
 
 void GuiMenu::openGamesSettings()
 {
@@ -4184,6 +4187,13 @@ void GuiMenu::openGamesSettings()
 				}, _("NO"), nullptr));
 		});
 
+		// Both of an operation's own reports -- the progress card and the
+		// toast that follows it -- are gone within seconds of it ending.
+		// These stay, so starting a backup and walking away still leaves a
+		// way to find out how it went.
+		cloudAddLastRunRow(s, window, _("LAST UPLOAD"), "backup");
+		cloudAddLastRunRow(s, window, _("LAST DOWNLOAD"), "restore");
+
 		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
 		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
 		s->addWithDescription(_("SYNC DURING STARTUP"), _("REQUIRES NETWORK ACCESS"), cloud_startup);
@@ -4293,6 +4303,9 @@ void GuiMenu::openGamesSettings()
 					}));
 			});
 		}
+
+		cloudAddLastRunRow(s, window, _("LAST CONTENT UPLOAD"), "content-backup");
+		cloudAddLastRunRow(s, window, _("LAST CONTENT RESTORE"), "content-restore");
 	}
 
 	s->addGroup(_("SYSTEM SETTINGS"));
@@ -4412,6 +4425,55 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 	auto tc = std::make_shared<TextComponent>(window, text, theme->Text.font, accent ? theme->Text.selectedColor : theme->Text.color);
 	tc->setPadding(CLOUD_SETUP_ROW_PADDING);
 	row.addElement(tc, true);
+	s->addRow(row);
+}
+
+// What happened the last time this ran.
+//
+// A cloud operation reports itself twice, and both are gone in seconds: the
+// progress card while it works, and a toast when it ends. Somebody who starts
+// a backup and walks away comes back to a screen that has never heard of it,
+// and the only remaining record was a log file at a path they would have to be
+// told about. The backends stamp the outcome on their way out; read it back so
+// the answer to "did that work?" is still on the page that offered the action.
+//
+// Absent stamp, absent row: a device that has never run the operation should
+// not be told about a status it does not have.
+static void cloudAddLastRunRow(GuiSettings* s, Window* window, const std::string& label, const std::string& name)
+{
+	std::string path = "/storage/.cache/cloud_sync/last-" + name;
+	if (!Utils::FileSystem::exists(path))
+		return;
+
+	auto parts = Utils::String::split(Utils::String::trim(Utils::FileSystem::readAllText(path)), ' ', true);
+	if (parts.size() < 2)
+		return;
+
+	time_t when = (time_t) atoll(parts[0].c_str());
+	if (when <= 0)
+		return;
+
+	// 130 is the interrupt the backends' own trap exits with. Calling that a
+	// failure would be wrong twice over: nothing broke, and the person who
+	// stopped it does not need to be told it went badly.
+	const int code = atoi(parts[1].c_str());
+	const std::string outcome =
+		code == 0 ? _("COMPLETED SUCCESSFULLY") :
+		code == 130 ? _("STOPPED BEFORE IT FINISHED") :
+		_("FAILED - SEE /var/log/cloud_sync.log");
+
+	// Utils::Time::timeToString is a hand-rolled formatter, not strftime: it
+	// knows Y y m d H I p M S and nothing else, so no month name is available
+	// here. Numeric and big-endian is the better answer anyway -- it reads the
+	// same in every locale, and it matches the dates the archives are named
+	// with, so a row here and a file in the cloud folder are recognisably the
+	// same run.
+	std::string detail = Utils::Time::timeToString(when, "%Y-%m-%d %H:%M") + "  -  " + outcome;
+
+	ComponentListRow row;
+	row.selectable = false;
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), detail, true);
+	row.addElement(entry, true);
 	s->addRow(row);
 }
 
@@ -5924,6 +5986,9 @@ void GuiMenu::openCloudSystemBackup(Window* window)
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
 			}, _("NO"), nullptr));
 	}, "", false, true);
+
+	cloudAddLastRunRow(s, window, _("LAST BACKUP"), "system-backup");
+	cloudAddLastRunRow(s, window, _("LAST RESTORE"), "system-restore");
 
 	// Only while there is a restore to finish. This used to be permanent so
 	// that somebody who pressed LATER could get back to it, but NETWORK
