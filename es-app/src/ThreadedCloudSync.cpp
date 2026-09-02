@@ -52,7 +52,38 @@ void ThreadedCloudSync::run()
 					clean += c;
 
 			clean = Utils::String::trim(clean);
-			if (!clean.empty() && mWndNotification != nullptr)
+
+			// The card shows progress; the title above it already says what
+			// is happening. Everything the backends print used to land here,
+			// which meant rules of "====================================" for
+			// seconds at a time, and -- during a sync, which runs a restore
+			// and then a backup -- banners announcing "CLOUD RESTORE UTILITY"
+			// and "CLOUD BACKUP UTILITY" underneath a title reading SYNCING
+			// SAVE DATA. Those are written for a log read afterwards, not for
+			// somebody watching a handheld.
+			//
+			// So: transfer progress, and anything that went wrong. A line
+			// carries progress if it has a percentage or a "x / y" count.
+			const bool hasPercent = clean.find('%') != std::string::npos;
+			const bool hasCount   = clean.find(" / ") != std::string::npos;
+			const std::string upper = Utils::String::toUpper(clean);
+			const bool isProblem =
+				upper.find("ERROR") != std::string::npos ||
+				upper.find("FAILED") != std::string::npos ||
+				upper.find("WARN") != std::string::npos;
+			const bool informative = hasPercent || hasCount || isProblem;
+
+			// rclone's own line is written for a terminal:
+			// "Transferred: 12.345 MiB / 45.678 MiB, 27%, 1.234 MiB/s, ETA 27s".
+			// On a handheld card the useful part is the front of it, and the
+			// speed and ETA push everything else off the end.
+			auto eta = clean.find(", ETA ");
+			if (eta != std::string::npos)
+				clean = clean.substr(0, eta);
+			if (clean.rfind("Transferred:", 0) == 0)
+				clean = Utils::String::trim(clean.substr(12));
+
+			if (informative && !clean.empty() && mWndNotification != nullptr)
 			{
 				mWndNotification->updateText(clean);
 
