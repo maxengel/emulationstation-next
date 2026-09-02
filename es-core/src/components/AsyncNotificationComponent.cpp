@@ -47,9 +47,17 @@ AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool acti
 	// than a character count, because these panels run from 640x480 to
 	// 1920x1080 and a fixed width is right on exactly one of them; the
 	// measured width stays as the floor so nothing gets narrower than it was.
+	//
+	// 0.9 is GuiInfoPopup's cap -- the widest this app lets a non-blocking
+	// overlay get -- and taking it settles a question the in-between sizes
+	// kept asking. Past half the screen a card pinned to one corner stops
+	// reading as a deliberate placement and starts reading as a panel that
+	// failed to fit; at the same width centred (see renderAsyncNotifications)
+	// it reads as one. It also puts this card where the message that follows
+	// it already appears, so nothing jumps.
 	float width = Math::max(
 		theme->TextSmall.font->sizeText("TEXT FOR SIZE CALCULATION TEST").x(),
-		Renderer::getScreenWidth() * 0.62f);
+		Renderer::getScreenWidth() * 0.9f);
 
 	mTitle = std::make_shared<TextComponent>(mWindow, "", theme->TextSmall.font, theme->TextSmall.color, ALIGN_LEFT);
 	mGameName = std::make_shared<TextComponent>(mWindow, "", theme->TextSmall.font, theme->Text.color, ALIGN_LEFT);
@@ -83,14 +91,12 @@ AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool acti
 
 	addChild(mGrid);
 
-	float posX = Renderer::getScreenWidth()*0.5f - mSize.x()*0.5f;
-	float posY = Renderer::getScreenHeight() * 0.02f;
-
-	// FCA TopRight
-	posX = Renderer::getScreenWidth()*0.99f - mSize.x();
-	posY = Renderer::getScreenHeight() * 0.02f;
-
-	setPosition(posX, posY, 0);
+	// Centred at the top, like GuiInfoPopup. Window::renderAsyncNotifications
+	// re-applies this every frame (it has to, to stack several of them), so
+	// this is only the position the card holds before its first render --
+	// but the two must agree, or the card lands in one place and moves.
+	setPosition(Renderer::getScreenWidth() * 0.5f - mSize.x() * 0.5f,
+		Renderer::getScreenHeight() * 0.02f, 0);
 	setOpacity(NOTIFICATION_OPACITY);
 }
 

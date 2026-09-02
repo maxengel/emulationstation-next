@@ -1150,7 +1150,11 @@ void Window::renderAsyncNotifications(const Transform4x4f& trans)
 	bool first = true;
 	for (auto child : mAsyncNotificationComponent)
 	{		
-		float posX = Renderer::getScreenWidth()*0.99f - child->getSize().x();
+		// Centred, matching GuiInfoPopup -- which is what the app shows
+		// immediately after one of these finishes. At 0.9 of the screen a
+		// card hugging the right edge leaves a sliver of margin on one side
+		// and none of the balance that made a corner placement look chosen.
+		float posX = Renderer::getScreenWidth() * 0.5f - child->getSize().x() * 0.5f;
 
 		float offset = child->getSize().y() + PADDING_H;
 
@@ -1174,8 +1178,12 @@ void Window::renderAsyncNotifications(const Transform4x4f& trans)
 					(int)sz.x() + 2 * PADDING_H, 
 					(int)sz.y() + (first ? posY : 0)));
 			}
-			else 
-				child->setPosition(posX + (child->getSize().x() * (1.0 - fadingOut)), posY, 0);
+			else
+				// Appearing: fade in place. The slide this used to do came
+				// in off the right edge, which only reads as motion for a
+				// card anchored there; from the centre it is a lurch.
+				// AsyncNotificationComponent::update already ramps opacity.
+				child->setPosition(posX, posY, 0);
 		}
 		else 
 			child->setPosition(posX, posY, 0);
