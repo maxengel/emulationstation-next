@@ -4,7 +4,9 @@
 #include "guis/GuiMsgBox.h"
 #include "utils/Platform.h"
 #include "utils/StringUtil.h"
+#include <chrono>
 #include <cstdio>
+#include <thread>
 #include <sys/wait.h>
 #include "LocaleES.h"
 
@@ -29,7 +31,11 @@ ThreadedCloudSync::~ThreadedCloudSync()
 	mWndNotification->close();
 	mWndNotification = nullptr;
 
-	ThreadedCloudSync::mInstance = nullptr;
+	// Only if it is still us. run() clears this as soon as the work ends so
+	// another sync can start during the few seconds the card holds its
+	// result -- and if one has, the static belongs to that one now.
+	if (ThreadedCloudSync::mInstance == this)
+		ThreadedCloudSync::mInstance = nullptr;
 }
 
 void ThreadedCloudSync::run()
@@ -114,15 +120,39 @@ void ThreadedCloudSync::run()
 			ret = WEXITSTATUS(status);
 	}
 
-	if (ret == 0)
-		// "FINISHED" says it stopped, not that it worked. Somebody who has
-		// just sent their saves somewhere wants to be told it went well.
-		mWindow->displayNotificationMessage(ICONINDEX + mTitle + " : " + _("COMPLETED SUCCESSFULLY"));
-	else
-		mWindow->displayNotificationMessage(ICONINDEX + mTitle + " : " + _("FAILED. SEE /var/log/cloud_sync.log"));
+	// One surface for the whole event.
+	//
+	// The card used to vanish the instant the work ended, and the outcome
+	// arrived as a GuiInfoPopup: a different shape, in a different place,
+	// at exactly the moment somebody is looking for the answer. Two things
+	// appeared where one thing happened. Say it in the card that has been
+	// reporting all along, hold it long enough to read, and let that same
+	// card fade.
+	//
+	// "FINISHED" would say it stopped, not that it worked. Somebody who has
+	// just sent their saves somewhere wants to be told it went well.
+	if (mWndNotification != nullptr)
+	{
+		mWndNotification->updateTitle(ICONINDEX + mTitle);
+		mWndNotification->updateText(ret == 0
+			? _("COMPLETED SUCCESSFULLY")
+			: _("FAILED - SEE /var/log/cloud_sync.log"));
+
+		// A full bar on success; on failure the bar goes, because a
+		// progress bar left standing under the word FAILED reads as a
+		// measure of how much of the failure has completed.
+		mWndNotification->updatePercent(ret == 0 ? 100 : -1);
+
+		// Nothing is running any more, so stop claiming otherwise: this is
+		// long enough to read, and somebody who wants to start another sync
+		// in the meantime should not be told one is already going.
+		if (ThreadedCloudSync::mInstance == this)
+			ThreadedCloudSync::mInstance = nullptr;
+
+		std::this_thread::sleep_for(std::chrono::seconds(5));
+	}
 
 	delete this;
-	ThreadedCloudSync::mInstance = nullptr;
 }
 
 void ThreadedCloudSync::start(Window* window, const std::string& command,
