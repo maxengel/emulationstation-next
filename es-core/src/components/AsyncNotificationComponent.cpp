@@ -1,4 +1,5 @@
 #include "AsyncNotificationComponent.h"
+#include "math/Misc.h"
 #include "ThemeData.h"
 #include "components/ComponentGrid.h"
 #include "components/NinePatchComponent.h"
@@ -21,7 +22,18 @@ AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool acti
 	auto theme = ThemeData::getMenuTheme();
 
 	// Note : Don't localize this text -> It is only used to guess width calculation for the component.
-	float width = theme->TextSmall.font->sizeText("TEXT FOR SIZE CALCULATION TEST").x(); // Renderer::getScreenWidth() * 0.14f;											
+	//
+	// Wide enough for what actually goes in it. The card was sized to fit
+	// thirty characters, which suits "Scraping: <short name>" and truncates
+	// everything else -- an rclone stats line ("Transferred: 12.3 MiB / 45.6
+	// MiB, 27%, 1.2 MiB/s, ETA 27s") is twice that, so the one number
+	// somebody wants was always off the end. A share of the screen rather
+	// than a character count, because these panels run from 640x480 to
+	// 1920x1080 and a fixed width is right on exactly one of them; the
+	// measured width stays as the floor so nothing gets narrower than it was.
+	float width = Math::max(
+		theme->TextSmall.font->sizeText("TEXT FOR SIZE CALCULATION TEST").x(),
+		Renderer::getScreenWidth() * 0.45f);
 
 	mTitle = std::make_shared<TextComponent>(mWindow, "", theme->TextSmall.font, theme->TextSmall.color, ALIGN_LEFT);
 	mGameName = std::make_shared<TextComponent>(mWindow, "", theme->TextSmall.font, theme->Text.color, ALIGN_LEFT);
