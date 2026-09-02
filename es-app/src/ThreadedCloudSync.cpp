@@ -53,7 +53,29 @@ void ThreadedCloudSync::run()
 
 			clean = Utils::String::trim(clean);
 			if (!clean.empty() && mWndNotification != nullptr)
+			{
 				mWndNotification->updateText(clean);
+
+				// rclone's --stats-one-line already carries the percentage --
+				// "Transferred: 12.3 MiB / 45.6 MiB, 27%, 1.2 MiB/s, ETA 27s"
+				// -- and it was being thrown away: the bar sat at -1, which
+				// means indeterminate, for the whole transfer. Take it from
+				// the line already passing through rather than asking rclone
+				// for it a second way.
+				auto pct = clean.find('%');
+				if (pct != std::string::npos && pct > 0)
+				{
+					size_t start = pct;
+					while (start > 0 && isdigit((unsigned char)clean[start - 1]))
+						start--;
+					if (start < pct)
+					{
+						int value = atoi(clean.substr(start, pct - start).c_str());
+						if (value >= 0 && value <= 100)
+							mWndNotification->updatePercent(value);
+					}
+				}
+			}
 		}
 
 		int status = pclose(pipe);
