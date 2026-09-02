@@ -5925,11 +5925,18 @@ void GuiMenu::openCloudSystemBackup(Window* window)
 			}, _("NO"), nullptr));
 	}, "", false, true);
 
-	// Reachable at any time, not only on the post-restore boot: a player
-	// who chose LATER, or restored long ago, can still find the credentials
-	// a backup cannot carry.
-	s->addWithDescription(_("FINALIZE RESTORE"), _("RE-ENTER PASSWORD INFO THAT'S NOT BACKED UP TO THE CLOUD (WI-FI, ACCOUNTS, ETC.)"), nullptr,
-		[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
+	// Only while there is a restore to finish. This used to be permanent so
+	// that somebody who pressed LATER could get back to it, but NETWORK
+	// SETTINGS carries the same page gated on the same marker and without
+	// needing a remote, so that route is already covered -- and the marker
+	// survives until the page is completed. Standing here for ever, it was a
+	// step in a process most people are not in, offered next to the backup
+	// they actually came for.
+	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
+	{
+		s->addWithDescription(_("FINALIZE RESTORE"), _("RE-ENTER PASSWORD INFO THAT'S NOT BACKED UP TO THE CLOUD (WI-FI, ACCOUNTS, ETC.)"), nullptr,
+			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
+	}
 
 	window->pushGui(s);
 }
@@ -7745,7 +7752,11 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 			// there was executeScriptLegacy, which is what cloudSetupInfo
 			// already uses.
 			std::string syncpath = cloudSetupInfo()["SYNCPATH"];
-			s->addWithDescription(_("CLOUD FOLDER"), _("THE FOLDER ON YOUR CLOUD REMOTE WHERE EVERYTHING IS STORED. CURRENT:") + " " + syncpath, nullptr,
+			// A verb, like everything else in this group. "CLOUD FOLDER" read
+			// as a heading rather than something you could act on. Not
+			// "choose" or "select", which promise a list to pick from -- this
+			// opens a keyboard and you type a path.
+			s->addWithDescription(_("CHANGE CLOUD FOLDER"), _("WHERE EVERYTHING IS STORED ON YOUR CLOUD REMOTE. CURRENT:") + " " + syncpath, nullptr,
 				[window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); }, "", false, true);
 		}
 	}

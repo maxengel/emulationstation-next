@@ -84,7 +84,9 @@ void ThreadedCloudSync::run()
 	}
 
 	if (ret == 0)
-		mWindow->displayNotificationMessage(ICONINDEX + mTitle + " : " + _("FINISHED"));
+		// "FINISHED" says it stopped, not that it worked. Somebody who has
+		// just sent their saves somewhere wants to be told it went well.
+		mWindow->displayNotificationMessage(ICONINDEX + mTitle + " : " + _("COMPLETED SUCCESSFULLY"));
 	else
 		mWindow->displayNotificationMessage(ICONINDEX + mTitle + " : " + _("FAILED. SEE /var/log/cloud_sync.log"));
 
