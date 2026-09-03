@@ -4329,6 +4329,16 @@ void GuiMenu::openGamesSettings()
 						auto picker = new GuiSettings(window, _("UPLOAD CONTENT TO THE CLOUD"));
 						picker->addGroup(_("COPIES FILES TO YOUR CLOUD REMOTE. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED."));
 						picker->addEntry(_("MY SELECTED SYSTEMS"), true, [window] {
+							// Before a selection exists this command exits 1 with a
+							// message nobody sees, so the row was a dead end on the
+							// one run where it is most likely to be pressed. Send
+							// them to the picker instead of to an error.
+							if (ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems").empty())
+							{
+								window->pushGui(new GuiMsgBox(window, _("YOU HAVE NOT CHOSEN ANY SYSTEMS YET.\n\nPICK THEM NOW?"), _("YES"),
+									[window] { cloudContentSystemPicker(window, nullptr); }, _("NO"), nullptr));
+								return;
+							}
 							window->pushGui(new GuiMsgBox(window, _("UPLOAD THE SYSTEMS YOU CHOSE FOR THIS DEVICE?"), _("YES"),
 								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --selected", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
 								_("NO"), nullptr));
@@ -4377,6 +4387,16 @@ void GuiMenu::openGamesSettings()
 						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM THE CLOUD"));
 						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
 						picker->addEntry(_("MY SELECTED SYSTEMS"), true, [window] {
+							// Before a selection exists this command exits 1 with a
+							// message nobody sees, so the row was a dead end on the
+							// one run where it is most likely to be pressed. Send
+							// them to the picker instead of to an error.
+							if (ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems").empty())
+							{
+								window->pushGui(new GuiMsgBox(window, _("YOU HAVE NOT CHOSEN ANY SYSTEMS YET.\n\nPICK THEM NOW?"), _("YES"),
+									[window] { cloudContentSystemPicker(window, nullptr); }, _("NO"), nullptr));
+								return;
+							}
 							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD THE SYSTEMS YOU CHOSE FOR THIS DEVICE?"), _("YES"),
 								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --selected", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
 								_("NO"), nullptr));
@@ -5094,6 +5114,11 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	// that it ran: on a bucket-based remote an mkdir can succeed and leave
 	// nothing behind.
 	s->addGroup(_("YOUR CLOUD FOLDERS"));
+	// Said before the list, because the list is the result. Writing into
+	// somebody's cloud account without saying so is the half of this that
+	// should never be silent -- the choice is ours to make, the fact is
+	// theirs to know.
+	cloudSetupAddInfoRow(s, window, _("SET UP FOR YOU IN YOUR CLOUD ACCOUNT, IF NOT ALREADY THERE:"));
 	for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --seed-folders"))
 	{
 		auto text = Utils::String::trim(line);
