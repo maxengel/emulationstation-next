@@ -4100,7 +4100,7 @@ void GuiMenu::openCloud(Window* window)
 	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 	auto s = new GuiSettings(window, _("CLOUD"));
 
-	s->addGroup(_("WHAT WOULD YOU LIKE TO DO?"));
+	s->addGroup(_("BACKUP AND RESTORE"));
 	cloudAddGatedEntry(s, window, configured, _("BACK UP TO THE CLOUD"),
 		_("SEND THIS DEVICE'S DATA TO YOUR CLOUD."),
 		[window] { cloudOpenTransfer(window, true); });
@@ -4108,7 +4108,7 @@ void GuiMenu::openCloud(Window* window)
 		_("BRING DATA BACK ONTO THIS DEVICE."),
 		[window] { cloudOpenTransfer(window, false); });
 
-	s->addGroup(_("AUTOMATIC"));
+	s->addGroup(_("SAVE MANAGEMENT"));
 	auto cloud_startup = std::make_shared<SwitchComponent>(window);
 	cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
 	s->addWithDescription(_("SYNC SAVES DURING STARTUP"), _("REQUIRES NETWORK ACCESS"), cloud_startup);
@@ -4124,13 +4124,45 @@ void GuiMenu::openCloud(Window* window)
 		SystemConf::getInstance()->saveSystemConf();
 	});
 
-	s->addGroup(_("SETUP"));
+	s->addGroup(_("CLOUD STORAGE SETUP"));
 	if (configured)
 	{
 		cloudAddGatedEntry(s, window, true, _("CHOOSE SYSTEMS TO SYNC"),
 			_("PICK WHAT THIS DEVICE TAKES FROM YOUR CLOUD LIBRARY, WITH SIZES."),
 			[window] { cloudContentSystemPicker(window, nullptr); });
 	}
+	// Moved here from NETWORK SETTINGS. Offered, never automatic: the first
+	// layout put everything under /GAMES with backups nested inside saves, and
+	// where a player's saves live is theirs to decide. The row only appears
+	// when there is something to move -- the script answers 3 when the device
+	// is already current.
+	if (configured
+		&& Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout")
+		&& Utils::Platform::runSystemCommand(
+			"/usr/bin/cloud_migrate_layout --check >/dev/null 2>&1", "", nullptr) == 0)
+	{
+		s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
+			_("MOVE SAVES AND BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
+			nullptr, [window]
+			{
+				auto lines = Utils::Platform::GetShOutputLines(
+					"/usr/bin/cloud_migrate_layout --check");
+				std::string detail;
+				for (auto& line : lines)
+					detail += line + "\n";
+
+				window->pushGui(new GuiMsgBox(window,
+					detail + "\n" + _("MOVE THEM?"),
+					_("MOVE"), [window]
+					{
+						ThreadedCloudSync::start(window,
+							"/usr/bin/cloud_migrate_layout --apply",
+							_("TIDY CLOUD FOLDERS"), _("TIDYING CLOUD FOLDERS"));
+					},
+					_("LEAVE THEM"), nullptr));
+			}, "", false, true);
+	}
+
 	s->addWithDescription(_("CONNECT OR REPAIR CLOUD STORAGE"),
 		configured ? _("CHANGE THE FOLDER, ADD A PROVIDER, OR RENEW A SIGN-IN.")
 		           : _("SET UP A PROVIDER WITH RCLONE, FROM THE HANDHELD. NO COMPUTER NEEDED."),
@@ -4500,9 +4532,35 @@ void GuiMenu::openGamesSettings()
 	// Cloud lives on one page now: see openCloud().
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		s->addGroup(_("CLOUD"));
-		s->addWithDescription(_("BACK UP AND RESTORE"),
-			_("GAME SAVES, GAMES AND BIOS, OR SYSTEM SETTINGS - TO AND FROM YOUR CLOUD."), nullptr,
+		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+		s->addGroup(_("CLOUD SETTINGS"));
+
+		// The three save actions live here as well as in the full flow. That is
+		// not the duplication worth avoiding -- they are the same operation at
+		// the same scope, promoted to where somebody reaches for them. Moving
+		// saves is the thing people do often; the rest of the flow is occasional.
+		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVE DATA WITH THE CLOUD"),
+			_("TWO-WAY: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), [window] {
+			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
+				[window] {
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVE DATA"), _("SYNCING SAVE DATA"));
+				}, _("NO"), nullptr));
+		});
+		cloudAddClassRow(s, window, cloudConfigured, _("UPLOAD SAVE DATA TO THE CLOUD"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: DEVICE TO CLOUD"), "backup", [window] {
+			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"), _("UPLOADING SAVE DATA")); },
+				_("NO"), nullptr));
+		});
+		cloudAddClassRow(s, window, cloudConfigured, _("DOWNLOAD SAVE DATA FROM THE CLOUD"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: CLOUD TO DEVICE"), "restore", [window] {
+			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"), _("DOWNLOADING SAVE DATA")); },
+				_("NO"), nullptr));
+		});
+
+		s->addWithDescription(_("ALL CLOUD SETTINGS"),
+			_("GAMES AND BIOS, SYSTEM SETTINGS, AND HOW THIS DEVICE IS SET UP."), nullptr,
 			[window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
 
@@ -7878,88 +7936,17 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 			nullptr, [restoreWindow] { GuiMenu::openRestoreRelink(restoreWindow, true); }, "", false, true);
 	}
 
+	// Cloud lives on its own page now (openCloud), reached from GAME SETTINGS.
+	// A pointer rather than a copy: cloud is a network service and somebody
+	// configuring networking may well look for it here, but there is one
+	// destination, so the two entry points cannot drift apart.
 	if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
 	{
-		// Named for what it does, not for the program underneath. "RCLONE
-		// SERVICES" asked the player to know what rclone is before they could
-		// tell whether the section was for them, and every other place we
-		// mention this calls it cloud. rclone is still named on the row, for
-		// somebody who does know and is looking for it.
-		s->addGroup(_("CLOUD SERVICES"));
-
-		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		Window* window = mWindow;
-
-		// One entry, not two. "SET UP CLOUD REMOTE" (the SSH wizard) and
-		// "CONNECT CLOUD STORAGE" (this) described the same job in different
-		// words, and the older one led to a terminal on another computer --
-		// which is exactly what this replaced. The SSH route survives one
-		// level down, under MORE, for the cases the form cannot express.
-		s->addWithDescription(_("CONNECT CLOUD STORAGE"), _("SET UP A PROVIDER WITH RCLONE, FROM THE HANDHELD. NO COMPUTER NEEDED."), nullptr,
-			[window] { GuiMenu::openCloudAddRemote(window); }, "", false, true);
-
-		// Offered, never automatic. The first layout put everything under
-		// /GAMES with the backups nested inside the saves folder; the current
-		// one is /ROCKNIX/Saves and /ROCKNIX/Backups. cloud_sync_helper only
-		// ever adds keys it cannot find, so a device configured before that
-		// stays on the old layout for ever unless somebody says otherwise --
-		// and where a player's saves live is theirs to decide, which is why
-		// this asks rather than acts.
-		//
-		// The row only appears when there is something to move: the script
-		// answers 3 when the device is already on the current layout.
-		if (cloudConfigured
-			&& Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout")
-			&& Utils::Platform::runSystemCommand(
-				"/usr/bin/cloud_migrate_layout --check >/dev/null 2>&1", "", nullptr) == 0)
-		{
-			s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
-				_("MOVE SAVES AND BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
-				nullptr, [window]
-				{
-					auto lines = Utils::Platform::GetShOutputLines(
-						"/usr/bin/cloud_migrate_layout --check");
-					std::string detail;
-					for (auto& line : lines)
-						detail += line + "\n";
-
-					window->pushGui(new GuiMsgBox(window,
-						detail + "\n" + _("MOVE THEM?"),
-						_("MOVE"), [window]
-						{
-							ThreadedCloudSync::start(window,
-								"/usr/bin/cloud_migrate_layout --apply",
-								_("TIDY CLOUD FOLDERS"), _("TIDYING CLOUD FOLDERS"));
-						},
-						_("LEAVE THEM"), nullptr));
-				}, "", false, true);
-		}
-
-		// BACKUP/RESTORE SYSTEM DATA moved into the cloud hub (openCloud):
-		// it is one of three data classes, and it lived in a different menu
-		// from the other two.
-
-		if (cloudConfigured)
-		{
-			// Live value read at menu build; the editor writes it back
-			// through cloud_setup --set-syncpath.
-			//
-			// Through cloudSetupInfo, not GetShOutput. GetShOutput drops the
-			// last character of what it reads -- with `echo -n` and no
-			// trailing newline to lose instead, "/GAMES" reached the screen
-			// as "/GAME". A player checking which folder their saves are in
-			// was being shown a path that does not exist. It is the same
-			// defect that garbled the connect page (blindspot 3); the fix
-			// there was executeScriptLegacy, which is what cloudSetupInfo
-			// already uses.
-			std::string syncpath = cloudSetupInfo()["SYNCPATH"];
-			// A verb, like everything else in this group. "CLOUD FOLDER" read
-			// as a heading rather than something you could act on. Not
-			// "choose" or "select", which promise a list to pick from -- this
-			// opens a keyboard and you type a path.
-			s->addWithDescription(_("CHANGE CLOUD FOLDER"), _("WHERE EVERYTHING IS STORED ON YOUR CLOUD REMOTE. CURRENT:") + " " + syncpath, nullptr,
-				[window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); }, "", false, true);
-		}
+		s->addGroup(_("CLOUD SERVICES"));
+		s->addWithDescription(_("CLOUD SETTINGS"),
+			_("CONNECT STORAGE, BACK UP, AND RESTORE - ALL IN ONE PLACE."), nullptr,
+			[window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
 
 	// SYNCTHING SERVICES
