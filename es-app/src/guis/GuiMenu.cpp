@@ -3821,17 +3821,30 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 		window, _("SCANNING YOUR CLOUD LIBRARY"),
 		[](auto gui)
 		{
-			return std::make_pair(
-				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan"),
-				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems"));
+			// Three answers, one wait: what the cloud holds, what is selected,
+			// and what this device already has. The third is what turns "should
+			// I take PSX?" into "PSX is 4 GB and you do not have it yet".
+			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan");
+			auto sel  = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
+			for (auto& l : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_backup --list"))
+			{
+				auto d = Utils::String::trim(l);
+				if (!d.empty())
+					sel.push_back("\x01" + d);   // marked: already on this device
+			}
+			return std::make_pair(scan, sel);
 		},
 		[window, onDone](std::pair<std::vector<std::string>, std::vector<std::string>> result)
 		{
-			std::set<std::string> chosen;
+			std::set<std::string> chosen, present;
 			for (auto& line : result.second)
 			{
 				auto name = Utils::String::trim(line);
-				if (!name.empty())
+				if (name.empty())
+					continue;
+				if (name[0] == '\x01')
+					present.insert(name.substr(1));
+				else
 					chosen.insert(name);
 			}
 
@@ -3856,6 +3869,12 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			s->addGroup(_("FOUND IN YOUR CLOUD LIBRARY"));
 
 			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
+			s->addEntry(_("SELECT ALL"), false, [switches] {
+				for (auto& e : *switches) e.second->setState(true);
+			});
+			s->addEntry(_("SELECT NONE"), false, [switches] {
+				for (auto& e : *switches) e.second->setState(false);
+			});
 			for (auto& f : found)
 			{
 				auto sw = std::make_shared<SwitchComponent>(window);
@@ -3868,6 +3887,8 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				// selectable -- somebody may be staging a library for another
 				// handheld - but nobody should spend a card on it unknowingly.
 				std::string note = Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
+				if (present.find(f.name) != present.end())
+					note = _U("\uF058  ") + note + "  -  " + _("ALREADY ON THIS DEVICE");
 				if (!f.supported)
 					note += "  -  " + _("THIS DEVICE CANNOT RUN THIS SYSTEM");
 				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
@@ -3953,6 +3974,17 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		s->addWithDescription(_("ROMS AND BIOS"),
 			_("THE SYSTEMS YOU CHOSE FOR THIS DEVICE") + std::string("  -  ")
 				+ cloudLastRunDetail(backup ? "content-backup" : "content-restore"), content);
+	}
+
+	if (hasContent)
+	{
+		// Reachable from inside the flow, not only from setup: "which systems"
+		// is the question that decides what ROMS AND BIOS actually means, and
+		// having to back out to a settings page to answer it is how somebody
+		// ends up transferring the wrong set.
+		cloudAddGatedEntry(s, window, configured, _("CHOOSE SYSTEMS"),
+			_("WHICH SYSTEMS THIS DEVICE SYNCS, WITH SIZES AND WHAT YOU ALREADY HAVE."),
+			[window] { cloudContentSystemPicker(window, nullptr); });
 	}
 
 	auto settings = std::make_shared<SwitchComponent>(window);
