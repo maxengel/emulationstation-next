@@ -3858,6 +3858,9 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					continue;
 				found.push_back({ parts[0], (unsigned long) atol(parts[1].c_str()), parts[2] == "1" });
 			}
+			// bios last, so its heading does not interrupt the systems.
+			std::stable_sort(found.begin(), found.end(),
+				[](const Found& a, const Found& b) { return (a.name == "bios") < (b.name == "bios"); });
 
 			if (found.empty())
 			{
@@ -3867,7 +3870,6 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			}
 
 			auto s = new GuiSettings(window, _("SYSTEMS TO SYNC"));
-			s->addGroup(_("FOUND IN YOUR CLOUD LIBRARY"));
 
 			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
 			s->addEntry(_("SELECT ALL"), false, [switches] {
@@ -3876,8 +3878,24 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			s->addEntry(_("SELECT NONE"), false, [switches] {
 				for (auto& e : *switches) e.second->setState(false);
 			});
+			// BIOS is not a game system. It rides in the same transfer because
+			// it is bulk static content, but listing it among snes and psx asks
+			// the reader to work out why "bios" is a console -- so it gets its
+			// own heading and keeps the systems list honest.
+			bool headedSystems = false, headedOther = false;
 			for (auto& f : found)
 			{
+				const bool isBios = (f.name == "bios");
+				if (!isBios && !headedSystems)
+				{
+					s->addGroup(_("GAME SYSTEMS IN YOUR CLOUD LIBRARY"));
+					headedSystems = true;
+				}
+				if (isBios && !headedOther)
+				{
+					s->addGroup(_("BIOS AND FIRMWARE"));
+					headedOther = true;
+				}
 				auto sw = std::make_shared<SwitchComponent>(window);
 				sw->setState(chosen.find(f.name) != chosen.end());
 				switches->push_back({ f.name, sw });
@@ -3983,27 +4001,16 @@ static void cloudOpenTransfer(Window* window, bool backup)
 				+ cloudLastRunDetail(backup ? "content-backup" : "content-restore"), content);
 	}
 
-	if (hasContent)
-	{
-		// Reachable from inside the flow, not only from setup: "which systems"
-		// is the question that decides what ROMS AND BIOS actually means, and
-		// having to back out to a settings page to answer it is how somebody
-		// ends up transferring the wrong set.
-		cloudAddGatedEntry(s, window, configured, _("CHOOSE SYSTEMS"),
-			_("WHICH SYSTEMS THIS DEVICE SYNCS, WITH SIZES AND WHAT YOU ALREADY HAVE."),
-			[window] { cloudContentSystemPicker(window, nullptr); });
-	}
-
 	auto settings = std::make_shared<SwitchComponent>(window);
 	s->addWithDescription(_("SYSTEM SETTINGS"),
 		_("CONFIGURATION, CONTROLS, AND THEMES") + std::string("  -  ")
 			+ cloudLastRunDetail(backup ? "system-backup" : "system-restore"), settings);
 
-	s->getMenu().clearButtons();
-	s->getMenu().addButton(_("BACK"), _("back"), [s] { s->close(); });
-	s->getMenu().addButton(backup ? _("BACK UP") : _("RESTORE"),
-		backup ? _("back up") : _("restore"),
-		[window, s, backup, configured, saves, content, settings, hasContent]
+	// The run itself, shared by the button and by the system chooser that can
+	// precede it. A shared_ptr because the two lambdas have to reach the same
+	// function and one of them is built before the other exists.
+	auto run = std::make_shared<std::function<void()>>();
+	*run = [window, s, backup, configured, saves, content, settings, hasContent]
 	{
 		if (!configured)
 		{
@@ -4018,16 +4025,6 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		if (!wantSaves && !wantContent && !wantSettings)
 		{
 			window->pushGui(new GuiMsgBox(window, _("NOTHING IS TICKED.\n\nCHOOSE AT LEAST ONE THING TO MOVE.")));
-			return;
-		}
-
-		// ROMs and BIOS move by the per-device system selection, so ticking it
-		// without having chosen any means the backend exits 1 with a message
-		// nobody sees. Send them to the chooser instead of to a failed run.
-		if (wantContent && ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems").empty())
-		{
-			window->pushGui(new GuiMsgBox(window, _("YOU HAVE NOT CHOSEN WHICH SYSTEMS THIS DEVICE SYNCS.\n\nPICK THEM NOW?"), _("YES"),
-				[window] { cloudContentSystemPicker(window, nullptr); }, _("NO"), nullptr));
 			return;
 		}
 
@@ -4067,7 +4064,31 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		ThreadedCloudSync::start(window, cmd,
 			backup ? _("BACK UP TO THE CLOUD") : _("RESTORE FROM THE CLOUD"),
 			backup ? _("BACKING UP") : _("RESTORING"));
-	});
+	};
+
+	// Which systems is a question only ROMS AND BIOS raises, so it is a second
+	// step rather than a row sitting there whether or not it applies -- and the
+	// button says CONTINUE when there is a step after it, which is the only
+	// honest label for a control that does not yet perform the action.
+	auto rebuildButtons = [s, window, backup, content, hasContent, run]()
+	{
+		const bool staged = hasContent && content->getState();
+		s->getMenu().clearButtons();
+		s->getMenu().addButton(_("BACK"), _("back"), [s] { s->close(); });
+		s->getMenu().addButton(
+			staged ? _("CONTINUE") : (backup ? _("BACK UP") : _("RESTORE")),
+			staged ? _("choose systems") : (backup ? _("back up") : _("restore")),
+			[window, staged, run]
+			{
+				if (staged)
+					cloudContentSystemPicker(window, [run] { (*run)(); });
+				else
+					(*run)();
+			});
+	};
+	rebuildButtons();
+	if (hasContent)
+		content->setOnChangedCallback([rebuildButtons] { rebuildButtons(); });
 
 	window->pushGui(s);
 }
@@ -4544,7 +4565,7 @@ void GuiMenu::openGamesSettings()
 				_("NO"), nullptr));
 		});
 
-		s->addWithDescription(_("ALL CLOUD SETTINGS"),
+		s->addWithDescription(_("ALL CLOUD SETTINGS AND SERVICES"),
 			_("GAMES AND BIOS, SYSTEM SETTINGS, AND HOW THIS DEVICE IS SET UP."), nullptr,
 			[window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
