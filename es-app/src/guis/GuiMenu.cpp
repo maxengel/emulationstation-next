@@ -3802,7 +3802,6 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
-static void cloudAddLastRunRow(GuiSettings* s, Window* window, const std::string& label, const std::string& name);
 
 // Which systems this device syncs.
 //
@@ -3887,6 +3886,265 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				s->onFinalize(onDone);
 			window->pushGui(s);
 		}));
+}
+
+// What happened the last time this ran, phrased for a row's description.
+//
+// This used to be its own menu row -- LAST CONTENT UPLOAD sitting in a list
+// next to the actions, which is where you put a fact you have nowhere better
+// for. It belongs on the row it describes: the answer to "should I back this
+// up?" is "you last did, and it worked", read in the moment of deciding.
+static std::string cloudLastRunDetail(const std::string& name)
+{
+	const std::string path = "/storage/.cache/cloud_sync/last-" + name;
+	const std::string never = _("NOT DONE ON THIS DEVICE YET");
+	if (!Utils::FileSystem::exists(path))
+		return never;
+	auto parts = Utils::String::split(Utils::String::trim(Utils::FileSystem::readAllText(path)), ' ', true);
+	if (parts.size() < 2)
+		return never;
+	time_t when = (time_t) atoll(parts[0].c_str());
+	if (when <= 0)
+		return never;
+	// 130 is the interrupt the backends' trap exits with: somebody stopped it,
+	// which is not a failure and should not be reported as one.
+	const int code = atoi(parts[1].c_str());
+	const std::string outcome = code == 0 ? _("SUCCEEDED")
+		: code == 130 ? _("STOPPED") : _("FAILED");
+	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, "%Y-%m-%d %H:%M")
+		+ "  -  " + outcome;
+}
+
+// One data class, with what it carries and how it last went.
+static void cloudAddClassRow(GuiSettings* s, Window* window, bool configured,
+	const std::string& label, const std::string& carries, const std::string& stamp,
+	const std::function<void()>& action)
+{
+	cloudAddGatedEntry(s, window, configured, label,
+		carries + "  -  " + cloudLastRunDetail(stamp), action);
+}
+
+// The games-and-BIOS picker, shared by both directions. One function rather
+// than two near-identical blocks, which is what they were.
+static void cloudContentPicker(Window* window, bool upload)
+{
+	const std::string listCmd = upload ? "/usr/bin/cloud_content_backup --list"
+	                                   : "/usr/bin/cloud_content_restore --list";
+	window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
+		[listCmd](auto gui)
+		{
+			std::vector<std::string> dirs;
+			for (auto& line : ApiSystem::executeScriptLegacy(listCmd))
+			{
+				auto d = Utils::String::trim(line);
+				if (!d.empty())
+					dirs.push_back(d);
+			}
+			return dirs;
+		},
+		[window, upload](std::vector<std::string> dirs)
+		{
+			if (dirs.empty())
+			{
+				window->pushGui(new GuiMsgBox(window, upload
+					? _("NO GAMES OR BIOS FILES FOUND ON THIS DEVICE.")
+					: _("NOTHING FOUND IN YOUR CLOUD LIBRARY YET.\n\nPUT ROMS IN THE ROMS FOLDER FROM A COMPUTER, THEN TRY AGAIN.")));
+				return;
+			}
+			auto picker = new GuiSettings(window, upload ? _("BACK UP GAMES AND BIOS")
+			                                             : _("RESTORE GAMES AND BIOS"));
+			picker->addGroup(upload
+				? _("COPIES TO YOUR CLOUD. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED.")
+				: _("COPIES TO /storage/roms. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED."));
+
+			const std::string base = upload ? "/usr/bin/cloud_content_backup"
+			                               : "/usr/bin/cloud_content_restore";
+			const std::string title = upload ? _("BACK UP GAMES AND BIOS") : _("RESTORE GAMES AND BIOS");
+			const std::string running = upload ? _("BACKING UP GAMES AND BIOS") : _("RESTORING GAMES AND BIOS");
+
+			picker->addEntry(_("MY SELECTED SYSTEMS"), true, [window, base, title, running]
+			{
+				// Before a selection exists this exits 1 with a message nobody
+				// sees, so send them to the picker rather than to an error.
+				if (ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems").empty())
+				{
+					window->pushGui(new GuiMsgBox(window, _("YOU HAVE NOT CHOSEN ANY SYSTEMS YET.\n\nPICK THEM NOW?"), _("YES"),
+						[window] { cloudContentSystemPicker(window, nullptr); }, _("NO"), nullptr));
+					return;
+				}
+				ThreadedCloudSync::start(window, base + " --selected", title, running);
+			});
+			picker->addEntry(_("EVERYTHING"), true, [window, base, title, running]
+			{
+				ThreadedCloudSync::start(window, base + " --all", title, running);
+			});
+			for (auto dir : dirs)
+			{
+				picker->addEntry(dir, true, [window, dir, base, title, running]
+				{
+					ThreadedCloudSync::start(window, base + " \"" + dir + "\"", title, running);
+				});
+			}
+			window->pushGui(picker);
+		}));
+}
+
+// Step two of the flow: having chosen a direction, choose what moves.
+//
+// The three classes are the ones the system actually keeps apart -- saves are
+// frequent and small, games and BIOS are large and static, system settings are
+// an occasional archive. Naming them here is what makes the split visible
+// instead of an internal detail somebody has to infer from two menus.
+static void cloudOpenTransfer(Window* window, bool backup)
+{
+	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+	auto s = new GuiSettings(window, backup ? _("BACK UP TO THE CLOUD") : _("RESTORE FROM THE CLOUD"));
+	s->addGroup(backup ? _("WHAT WOULD YOU LIKE TO BACK UP?") : _("WHAT WOULD YOU LIKE TO RESTORE?"));
+
+	cloudAddClassRow(s, window, configured, _("GAME SAVES"),
+		_("GAME SAVES, SAVE STATES, AND SCREENSHOTS"),
+		backup ? "backup" : "restore",
+		[window, backup]
+		{
+			window->pushGui(new GuiMsgBox(window, backup
+				? _("BACK UP GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?")
+				: _("RESTORE GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+				[window, backup]
+				{
+					ThreadedCloudSync::start(window,
+						backup ? "/usr/bin/cloud_backup --yes" : "/usr/bin/cloud_restore --yes",
+						backup ? _("BACK UP GAME SAVES") : _("RESTORE GAME SAVES"),
+						backup ? _("BACKING UP GAME SAVES") : _("RESTORING GAME SAVES"));
+				}, _("NO"), nullptr));
+		});
+
+	if (Utils::FileSystem::exists(backup ? "/usr/bin/cloud_content_backup" : "/usr/bin/cloud_content_restore"))
+	{
+		cloudAddClassRow(s, window, configured, _("GAMES AND BIOS"),
+			_("ROMS AND BIOS FILES"),
+			backup ? "content-backup" : "content-restore",
+			[window, backup] { cloudContentPicker(window, backup); });
+	}
+
+	cloudAddClassRow(s, window, configured, _("SYSTEM SETTINGS"),
+		_("CONFIGURATION, CONTROLS, AND THEMES"),
+		backup ? "system-backup" : "system-restore",
+		[window, backup]
+		{
+			if (backup)
+			{
+				window->pushGui(new GuiMsgBox(window, _("BACK UP THIS DEVICE'S SETTINGS TO THE CLOUD?"), _("YES"),
+					[window]
+					{
+						ThreadedCloudSync::start(window,
+							"/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only",
+							_("BACK UP SYSTEM SETTINGS"), _("BACKING UP SYSTEM SETTINGS"));
+					}, _("NO"), nullptr));
+			}
+			else
+			{
+				window->pushGui(new GuiMsgBox(window, _("RESTORE THIS DEVICE'S SETTINGS FROM THE CLOUD?\n\nYOUR EXISTING CONFIGURATION IS REPLACED AND THE DEVICE REBOOTS. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
+					[]
+					{
+						Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
+						Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
+					}, _("NO"), nullptr));
+			}
+		});
+
+	// Everything, in the order that makes sense: settings first on a restore
+	// (so the device knows what it is before the data lands), data first on a
+	// backup (so the archive the settings step uploads is the current one).
+	s->addGroup(_("OR ALL OF IT"));
+	cloudAddGatedEntry(s, window, configured,
+		backup ? _("BACK UP EVERYTHING") : _("RESTORE EVERYTHING"),
+		backup ? _("ALL THREE, IN ONE GO.")
+		       : _("SETTINGS FIRST, THEN A REBOOT, THEN YOUR GAMES AND SAVES."),
+		[window, backup]
+		{
+			if (backup)
+			{
+				window->pushGui(new GuiMsgBox(window, _("BACK UP SAVES, GAMES AND BIOS, AND SYSTEM SETTINGS?"), _("YES"),
+					[window]
+					{
+						ThreadedCloudSync::start(window,
+							"/usr/bin/cloud_backup --yes && /usr/bin/cloud_content_backup --selected; "
+							"/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only",
+							_("BACK UP EVERYTHING"), _("BACKING UP EVERYTHING"));
+					}, _("NO"), nullptr));
+			}
+			else
+			{
+				window->pushGui(new GuiMsgBox(window, _("SET UP THIS DEVICE FROM YOUR CLOUD?\n\nSETTINGS ARE RESTORED FIRST AND THE DEVICE REBOOTS; GAMES AND SAVES FOLLOW AFTER THE RESTART."), _("YES"),
+					[]
+					{
+						Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
+						Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
+					}, _("NO"), nullptr));
+			}
+		});
+
+	window->pushGui(s);
+}
+
+// The cloud hub. One page, reachable from one place.
+//
+// Cloud used to live in two menus: saves and content under GAME SETTINGS,
+// connection and system settings under NETWORK SETTINGS. Two of the three data
+// classes were in a different menu from the third, so "back up my handheld"
+// meant knowing which half of the split you wanted before you could start.
+// Direction first, then what moves -- the split the system actually keeps is
+// the one the player is shown.
+void GuiMenu::openCloud(Window* window)
+{
+	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+	auto s = new GuiSettings(window, _("CLOUD"));
+
+	s->addGroup(_("WHAT WOULD YOU LIKE TO DO?"));
+	cloudAddGatedEntry(s, window, configured, _("BACK UP TO THE CLOUD"),
+		_("SEND THIS DEVICE'S DATA TO YOUR CLOUD."),
+		[window] { cloudOpenTransfer(window, true); });
+	cloudAddGatedEntry(s, window, configured, _("RESTORE FROM THE CLOUD"),
+		_("BRING DATA BACK ONTO THIS DEVICE."),
+		[window] { cloudOpenTransfer(window, false); });
+
+	s->addGroup(_("AUTOMATIC"));
+	auto cloud_startup = std::make_shared<SwitchComponent>(window);
+	cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
+	s->addWithDescription(_("SYNC SAVES DURING STARTUP"), _("REQUIRES NETWORK ACCESS"), cloud_startup);
+	cloud_startup->setOnChangedCallback([cloud_startup] {
+		SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
+		SystemConf::getInstance()->saveSystemConf();
+	});
+	auto cloud_gameexit = std::make_shared<SwitchComponent>(window);
+	cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
+	s->addWithLabel(_("SYNC SAVES WHEN EXITING A GAME"), cloud_gameexit);
+	cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
+		SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
+		SystemConf::getInstance()->saveSystemConf();
+	});
+
+	s->addGroup(_("SETUP"));
+	if (configured)
+	{
+		cloudAddGatedEntry(s, window, true, _("CHOOSE SYSTEMS TO SYNC"),
+			_("PICK WHAT THIS DEVICE TAKES FROM YOUR CLOUD LIBRARY, WITH SIZES."),
+			[window] { cloudContentSystemPicker(window, nullptr); });
+	}
+	s->addWithDescription(_("CONNECT OR REPAIR CLOUD STORAGE"),
+		configured ? _("CHANGE THE FOLDER, ADD A PROVIDER, OR RENEW A SIGN-IN.")
+		           : _("SET UP A PROVIDER WITH RCLONE, FROM THE HANDHELD. NO COMPUTER NEEDED."),
+		nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
+
+	// Only while there is a restore to finish.
+	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
+	{
+		s->addWithDescription(_("FINALIZE RESTORE"),
+			_("RE-ENTER PASSWORD INFO THAT'S NOT BACKED UP TO THE CLOUD (WI-FI, ACCOUNTS, ETC.)"), nullptr,
+			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
+	}
+
+	window->pushGui(s);
 }
 
 void GuiMenu::openGamesSettings()
@@ -4239,199 +4497,15 @@ void GuiMenu::openGamesSettings()
 		s->addSaveFunc([autoControllers] { SystemConf::getInstance()->set("global.disableautocontrollers", autoControllers->getState() ? "" : "1"); });
 	}
 
+	// Cloud lives on one page now: see openCloud().
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
-
-		// Save data lives with the games it belongs to. Setting the remote up
-		// and backing up the system as a whole are network-level concerns and
-		// live under NETWORK SETTINGS > RCLONE SERVICES.
-		s->addGroup(_("CLOUD SAVES"));
-
-		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVE DATA WITH THE CLOUD"),
-			_("TWO-WAY: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVE DATA"), _("SYNCING SAVE DATA"));
-				}, _("NO"), nullptr));
-		});
-
-		cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD SAVE DATA TO THE CLOUD"),
-			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: DEVICE TO CLOUD."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"), _("UPLOADING SAVE DATA"));
-				}, _("NO"), nullptr));
-		});
-
-		cloudAddGatedEntry(s, window, cloudConfigured, _("DOWNLOAD SAVE DATA FROM THE CLOUD"),
-			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: CLOUD TO DEVICE."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"), _("DOWNLOADING SAVE DATA"));
-				}, _("NO"), nullptr));
-		});
-
-		// Both of an operation's own reports -- the progress card and the
-		// toast that follows it -- are gone within seconds of it ending.
-		// These stay, so starting a backup and walking away still leaves a
-		// way to find out how it went.
-		cloudAddLastRunRow(s, window, _("LAST UPLOAD"), "backup");
-		cloudAddLastRunRow(s, window, _("LAST DOWNLOAD"), "restore");
-
-		auto cloud_startup = std::make_shared<SwitchComponent>(mWindow);
-		cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
-		s->addWithDescription(_("SYNC DURING STARTUP"), _("REQUIRES NETWORK ACCESS"), cloud_startup);
-		cloud_startup->setOnChangedCallback([cloud_startup] {
-			SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
-			SystemConf::getInstance()->saveSystemConf();
-		});
-
-		auto cloud_gameexit = std::make_shared<SwitchComponent>(mWindow);
-		cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
-		s->addWithLabel(_("SYNC WHEN EXITING A GAME"), cloud_gameexit);
-		cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
-			SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
-			SystemConf::getInstance()->saveSystemConf();
-		});
-
-		// ROMs and BIOS are bulk content, deliberately separate from save data:
-		// they are large, they rarely change, and they are never touched by the
-		// save-sync allowlist.
-		const bool hasContentUp = Utils::FileSystem::exists("/usr/bin/cloud_content_backup");
-		const bool hasContentDown = Utils::FileSystem::exists("/usr/bin/cloud_content_restore");
-		if (hasContentUp || hasContentDown)
-			s->addGroup(_("CLOUD TOOLS"));
-
-		if (hasContentUp)
-		{
-			cloudAddGatedEntry(s, window, cloudConfigured, _("UPLOAD CONTENT TO THE CLOUD"),
-				_("ROMS, BIOS, AND OTHER GAME FILES: DEVICE TO CLOUD."), [window] {
-				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
-					[](auto gui)
-					{
-						std::vector<std::string> dirs;
-						for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_backup --list"))
-						{
-							auto dir = Utils::String::trim(line);
-							if (!dir.empty())
-								dirs.push_back(dir);
-						}
-						return dirs;
-					},
-					[window](std::vector<std::string> dirs)
-					{
-						if (dirs.empty())
-						{
-							window->pushGui(new GuiMsgBox(window, _("NO CONTENT FOUND ON THIS DEVICE.")));
-							return;
-						}
-						auto picker = new GuiSettings(window, _("UPLOAD CONTENT TO THE CLOUD"));
-						picker->addGroup(_("COPIES FILES TO YOUR CLOUD REMOTE. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED."));
-						picker->addEntry(_("MY SELECTED SYSTEMS"), true, [window] {
-							// Before a selection exists this command exits 1 with a
-							// message nobody sees, so the row was a dead end on the
-							// one run where it is most likely to be pressed. Send
-							// them to the picker instead of to an error.
-							if (ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems").empty())
-							{
-								window->pushGui(new GuiMsgBox(window, _("YOU HAVE NOT CHOSEN ANY SYSTEMS YET.\n\nPICK THEM NOW?"), _("YES"),
-									[window] { cloudContentSystemPicker(window, nullptr); }, _("NO"), nullptr));
-								return;
-							}
-							window->pushGui(new GuiMsgBox(window, _("UPLOAD THE SYSTEMS YOU CHOSE FOR THIS DEVICE?"), _("YES"),
-								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --selected", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
-								_("NO"), nullptr));
-						});
-						picker->addEntry(_("EVERYTHING"), true, [window] {
-							window->pushGui(new GuiMsgBox(window, _("UPLOAD ALL CONTENT FROM THIS DEVICE TO THE CLOUD?"), _("YES"),
-								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --all", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
-								_("NO"), nullptr));
-						});
-						for (auto dir : dirs)
-						{
-							picker->addEntry(dir, true, [window, dir] {
-								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("UPLOAD \"%s\" TO THE CLOUD?").c_str(), dir.c_str()), _("YES"),
-									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup " + std::string("\"") + dir + "\"", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
-									_("NO"), nullptr));
-							});
-						}
-						window->pushGui(picker);
-					}));
-			});
-		}
-
-		if (hasContentDown)
-		{
-			cloudAddGatedEntry(s, window, cloudConfigured, _("RESTORE CONTENT FROM THE CLOUD"),
-				_("ROMS, BIOS, AND OTHER GAME FILES: CLOUD TO DEVICE."), [window] {
-				window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("PLEASE WAIT"),
-					[](auto gui)
-					{
-						std::vector<std::string> dirs;
-						for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --list"))
-						{
-							auto dir = Utils::String::trim(line);
-							if (!dir.empty())
-								dirs.push_back(dir);
-						}
-						return dirs;
-					},
-					[window](std::vector<std::string> dirs)
-					{
-						if (dirs.empty())
-						{
-							window->pushGui(new GuiMsgBox(window, _("NO DIRECTORIES FOUND ON THE CLOUD REMOTE.")));
-							return;
-						}
-						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM THE CLOUD"));
-						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
-						picker->addEntry(_("MY SELECTED SYSTEMS"), true, [window] {
-							// Before a selection exists this command exits 1 with a
-							// message nobody sees, so the row was a dead end on the
-							// one run where it is most likely to be pressed. Send
-							// them to the picker instead of to an error.
-							if (ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems").empty())
-							{
-								window->pushGui(new GuiMsgBox(window, _("YOU HAVE NOT CHOSEN ANY SYSTEMS YET.\n\nPICK THEM NOW?"), _("YES"),
-									[window] { cloudContentSystemPicker(window, nullptr); }, _("NO"), nullptr));
-								return;
-							}
-							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD THE SYSTEMS YOU CHOSE FOR THIS DEVICE?"), _("YES"),
-								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --selected", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
-								_("NO"), nullptr));
-						});
-						picker->addEntry(_("EVERYTHING"), true, [window] {
-							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD ALL CONTENT FROM THE CLOUD TO THIS DEVICE?"), _("YES"),
-								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --all", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
-								_("NO"), nullptr));
-						});
-						for (auto dir : dirs)
-						{
-							picker->addEntry(dir, true, [window, dir] {
-								window->pushGui(new GuiMsgBox(window, Utils::String::format(_("DOWNLOAD \"%s\" FROM THE CLOUD TO THIS DEVICE?").c_str(), dir.c_str()), _("YES"),
-									[window, dir] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore " + std::string("\"") + dir + "\"", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
-									_("NO"), nullptr));
-							});
-						}
-						window->pushGui(picker);
-					}));
-			});
-		}
-
-		// Choosing systems is the step before either transfer means anything,
-		// so it sits above the results rather than buried in a submenu.
-		if (hasContentDown)
-		{
-			cloudAddGatedEntry(s, window, cloudConfigured, _("CHOOSE SYSTEMS TO SYNC"),
-				_("PICK WHAT THIS DEVICE TAKES FROM YOUR CLOUD LIBRARY, WITH SIZES."), [window] {
-				cloudContentSystemPicker(window, nullptr);
-			});
-		}
-
-		cloudAddLastRunRow(s, window, _("LAST CONTENT UPLOAD"), "content-backup");
-		cloudAddLastRunRow(s, window, _("LAST CONTENT RESTORE"), "content-restore");
+		s->addGroup(_("CLOUD"));
+		s->addWithDescription(_("BACK UP AND RESTORE"),
+			_("GAME SAVES, GAMES AND BIOS, OR SYSTEM SETTINGS - TO AND FROM YOUR CLOUD."), nullptr,
+			[window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
+
 
 	s->addGroup(_("SYSTEM SETTINGS"));
 
@@ -4553,54 +4627,6 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 	s->addRow(row);
 }
 
-// What happened the last time this ran.
-//
-// A cloud operation reports itself twice, and both are gone in seconds: the
-// progress card while it works, and a toast when it ends. Somebody who starts
-// a backup and walks away comes back to a screen that has never heard of it,
-// and the only remaining record was a log file at a path they would have to be
-// told about. The backends stamp the outcome on their way out; read it back so
-// the answer to "did that work?" is still on the page that offered the action.
-//
-// Absent stamp, absent row: a device that has never run the operation should
-// not be told about a status it does not have.
-static void cloudAddLastRunRow(GuiSettings* s, Window* window, const std::string& label, const std::string& name)
-{
-	std::string path = "/storage/.cache/cloud_sync/last-" + name;
-	if (!Utils::FileSystem::exists(path))
-		return;
-
-	auto parts = Utils::String::split(Utils::String::trim(Utils::FileSystem::readAllText(path)), ' ', true);
-	if (parts.size() < 2)
-		return;
-
-	time_t when = (time_t) atoll(parts[0].c_str());
-	if (when <= 0)
-		return;
-
-	// 130 is the interrupt the backends' own trap exits with. Calling that a
-	// failure would be wrong twice over: nothing broke, and the person who
-	// stopped it does not need to be told it went badly.
-	const int code = atoi(parts[1].c_str());
-	const std::string outcome =
-		code == 0 ? _("COMPLETED SUCCESSFULLY") :
-		code == 130 ? _("STOPPED BEFORE IT FINISHED") :
-		_("FAILED - SEE /var/log/cloud_sync.log");
-
-	// Utils::Time::timeToString is a hand-rolled formatter, not strftime: it
-	// knows Y y m d H I p M S and nothing else, so no month name is available
-	// here. Numeric and big-endian is the better answer anyway -- it reads the
-	// same in every locale, and it matches the dates the archives are named
-	// with, so a row here and a file in the cloud folder are recognisably the
-	// same run.
-	std::string detail = Utils::Time::timeToString(when, "%Y-%m-%d %H:%M") + "  -  " + outcome;
-
-	ComponentListRow row;
-	row.selectable = false;
-	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), detail, true);
-	row.addElement(entry, true);
-	s->addRow(row);
-}
 
 // A cloud action row. Before a remote exists the row stays visible but
 // dimmed and offers the setup flow instead of its action - hiding it
@@ -6112,49 +6138,6 @@ void GuiMenu::openCloudSetup(Window* window)
 		}
 		window->pushGui(picker);
 	});
-
-	window->pushGui(s);
-}
-// Whole-device snapshot: everything a backup can carry (save data and
-// system settings) in one action each way, plus the credential re-entry
-// that a restore leaves outstanding. ROMs and BIOS are deliberately not
-// here - they are bulk content and live under GAME SETTINGS > CLOUD TOOLS.
-void GuiMenu::openCloudSystemBackup(Window* window)
-{
-	auto s = new GuiSettings(window, _("BACKUP/RESTORE SYSTEM DATA"));
-
-	s->addWithDescription(_("BACKUP ALL SYSTEM DATA"), _("UPLOAD WHAT'S ON THIS DEVICE TO A NEW SNAPSHOT ON YOUR CLOUD."), nullptr, [window]
-	{
-		window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS, GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-			[window] {
-			ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACKUP ALL SYSTEM DATA"), _("BACKING UP ALL SYSTEM DATA"));
-			}, _("NO"), nullptr));
-	}, "", false, true);
-
-	s->addWithDescription(_("RESTORE ALL SYSTEM DATA"), _("REPLACE WHAT'S ON THIS DEVICE FROM THE LATEST SNAPSHOT ON YOUR CLOUD."), nullptr, [window]
-	{
-		window->pushGui(new GuiMsgBox(window, _("SET UP THIS DEVICE FROM YOUR CLOUD BACKUP?\n\nSETTINGS ARE RESTORED FIRST AND THE DEVICE REBOOTS; GAMES AND SAVES ARE RESTORED AFTER THE RESTART."), _("YES"),
-			[] {
-			Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
-			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
-			}, _("NO"), nullptr));
-	}, "", false, true);
-
-	cloudAddLastRunRow(s, window, _("LAST BACKUP"), "system-backup");
-	cloudAddLastRunRow(s, window, _("LAST RESTORE"), "system-restore");
-
-	// Only while there is a restore to finish. This used to be permanent so
-	// that somebody who pressed LATER could get back to it, but NETWORK
-	// SETTINGS carries the same page gated on the same marker and without
-	// needing a remote, so that route is already covered -- and the marker
-	// survives until the page is completed. Standing here for ever, it was a
-	// step in a process most people are not in, offered next to the backup
-	// they actually came for.
-	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
-	{
-		s->addWithDescription(_("FINALIZE RESTORE"), _("RE-ENTER PASSWORD INFO THAT'S NOT BACKED UP TO THE CLOUD (WI-FI, ACCOUNTS, ETC.)"), nullptr,
-			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
-	}
 
 	window->pushGui(s);
 }
@@ -7952,9 +7935,9 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 				}, "", false, true);
 		}
 
-		cloudAddGatedEntry(s, window, cloudConfigured, _("BACKUP/RESTORE SYSTEM DATA"),
-			_("STORE SAVE DATA, SETTINGS, AND MORE. BIOS FILES AND ROMS ARE HANDLED SEPARATELY."),
-			[window] { GuiMenu::openCloudSystemBackup(window); });
+		// BACKUP/RESTORE SYSTEM DATA moved into the cloud hub (openCloud):
+		// it is one of three data classes, and it lived in a different menu
+		// from the other two.
 
 		if (cloudConfigured)
 		{
