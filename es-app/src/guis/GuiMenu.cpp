@@ -259,14 +259,14 @@ void GuiMenu::openResetOptions()
 
 	s->addGroup(_("DATA MANAGEMENT"));
 	s->addEntry(_("BACK UP CONFIGURATIONS TO DEVICE"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nWI-FI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/?\n\nWI-FI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR ENABLE THE SYSTEM BACKUP OPTION IN CLOUD SYNC."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESTORE CONFIGURATION FROM DEVICE"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM /storage/roms/backup/ROCKNIX_BACKUP.zip?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM THE NEWEST BACKUP IN /storage/roms/backup/?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
 		[] {
 		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool restore\"", "", nullptr);
 		}, _("NO"), nullptr));
@@ -4973,6 +4973,29 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("REMOTE '") + cloudSetupDisplayName(remote) + _("' IS CONFIGURED AND WORKING."));
 	cloudSetupAddInfoRow(s, window, _("CLOUD SAVES AND CLOUD TOOLS ARE NOW AVAILABLE IN GAME SETTINGS."));
 	cloudSetupAddInfoRow(s, window, _("YOU CAN CLOSE THE TERMINAL ON YOUR COMPUTER."));
+
+	// A new remote is an empty folder, and nothing on it says where anything
+	// goes. Somebody setting up a first handheld wants to seed their library
+	// from a computer before restoring it here -- and until the first upload
+	// there is nothing to seed into, so they would have to guess our folder
+	// names and the per-system convention underneath them.
+	//
+	// The wizard creates them and says so. Not offered as a choice: asking
+	// whether to make four folders makes the player form an opinion about our
+	// internals. Not silent either, because this writes to somebody's cloud
+	// account, and that is exactly the kind of thing to say out loud.
+	//
+	// Reported from what the seeding found afterwards rather than from the fact
+	// that it ran: on a bucket-based remote an mkdir can succeed and leave
+	// nothing behind.
+	s->addGroup(_("YOUR CLOUD FOLDERS"));
+	for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --seed-folders"))
+	{
+		auto text = Utils::String::trim(line);
+		if (text.rfind("OK ", 0) == 0)
+			cloudSetupAddInfoRow(s, window, _U("\uF07B  ") + text.substr(3));
+	}
+	cloudSetupAddInfoRow(s, window, _("PUT ROMS AND BIOS FILES IN THESE FROM A COMPUTER, THEN RESTORE THEM HERE."));
 
 	s->addGroup(_("OPTIONAL NEXT STEPS"));
 	const std::string syncpath = info["SYNCPATH"];
