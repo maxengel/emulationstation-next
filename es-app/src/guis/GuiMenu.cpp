@@ -3802,6 +3802,7 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
+static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::string& text, bool accent);
 
 // Which systems this device syncs.
 //
@@ -3867,6 +3868,9 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 
 			auto s = new GuiSettings(window, _("SYSTEMS TO SYNC"));
 			s->addGroup(_("FOUND IN YOUR CLOUD LIBRARY"));
+			// Two glyphs need saying once rather than being guessed at every row.
+			cloudSetupAddInfoRow(s, window,
+				_U("\uF0C2 ") + _("SYNCED TO THIS DEVICE") + "     " + _U("\uF058 ") + _("ALREADY ON THE CARD"), false);
 
 			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
 			s->addEntry(_("SELECT ALL"), false, [switches] {
@@ -3886,11 +3890,19 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				// absence there means the games cannot launch here. Still
 				// selectable -- somebody may be staging a library for another
 				// handheld - but nobody should spend a card on it unknowingly.
-				std::string note = Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
-				if (present.find(f.name) != present.end())
-					note = _U("\uF058  ") + note + "  -  " + _("ALREADY ON THIS DEVICE");
+				// Two glyphs for two facts the checkbox cannot carry. The cloud
+				// is the *saved* sync set and the tick is what is already on the
+				// card; the switch beside them is what you are about to choose,
+				// so after a toggle the glyph is still what you had before it --
+				// which is how you see what you have changed.
+				const bool inSet = chosen.find(f.name) != chosen.end();
+				const bool onCard = present.find(f.name) != present.end();
+				std::string marks;
+				marks += inSet  ? _U("\uF0C2 ") : std::string("   ");
+				marks += onCard ? _U("\uF058 ") : std::string("   ");
+				std::string note = marks + " " + Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
 				if (!f.supported)
-					note += "  -  " + _("THIS DEVICE CANNOT RUN THIS SYSTEM");
+					note += "  -  " + _("THIS DEVICE CANNOT RUN IT");
 				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
 			}
 
