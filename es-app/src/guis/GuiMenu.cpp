@@ -3868,9 +3868,6 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 
 			auto s = new GuiSettings(window, _("SYSTEMS TO SYNC"));
 			s->addGroup(_("FOUND IN YOUR CLOUD LIBRARY"));
-			// Two glyphs need saying once rather than being guessed at every row.
-			cloudSetupAddInfoRow(s, window,
-				_U("\uF0C2 ") + _("SYNCED TO THIS DEVICE") + "     " + _U("\uF058 ") + _("ALREADY ON THE CARD"), false);
 
 			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
 			s->addEntry(_("SELECT ALL"), false, [switches] {
@@ -3890,17 +3887,15 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				// absence there means the games cannot launch here. Still
 				// selectable -- somebody may be staging a library for another
 				// handheld - but nobody should spend a card on it unknowingly.
-				// Two glyphs for two facts the checkbox cannot carry. The cloud
-				// is the *saved* sync set and the tick is what is already on the
-				// card; the switch beside them is what you are about to choose,
-				// so after a toggle the glyph is still what you had before it --
-				// which is how you see what you have changed.
-				const bool inSet = chosen.find(f.name) != chosen.end();
+				// One badge, two states, the way a sync client does it: you have
+				// this, or it is only in the cloud. An earlier cut carried two
+				// glyphs -- sync set and on-card -- plus a legend to decode them,
+				// which is three things to read before a size. The switch already
+				// says what is selected; the badge says what selecting it would
+				// actually change.
 				const bool onCard = present.find(f.name) != present.end();
-				std::string marks;
-				marks += inSet  ? _U("\uF0C2 ") : std::string("   ");
-				marks += onCard ? _U("\uF058 ") : std::string("   ");
-				std::string note = marks + " " + Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
+				std::string note = (onCard ? _U("\uF058  ") : _U("\uF0C2  "))
+					+ Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
 				if (!f.supported)
 					note += "  -  " + _("THIS DEVICE CANNOT RUN IT");
 				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
