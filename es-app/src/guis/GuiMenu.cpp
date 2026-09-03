@@ -3804,6 +3804,91 @@ static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& curr
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
 static void cloudAddLastRunRow(GuiSettings* s, Window* window, const std::string& label, const std::string& name);
 
+// Which systems this device syncs.
+//
+// One cloud library, many handhelds, and they are not interchangeable. An
+// H700 cannot run GameCube, so downloading it spends card space on games that
+// will never launch -- and capability is not the only axis: a 3:2 panel makes
+// a device a Game Boy Advance machine by preference. So the set is chosen per
+// device, from what the cloud actually holds rather than from what happens to
+// be here already, which on a fresh handheld is nothing.
+//
+// The scan reads sizes because without them "should I take PSX?" cannot be
+// answered. It is one recursive listing rather than a size call per system,
+// but it is still a network round trip, so it runs behind GuiLoading.
+static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone)
+{
+	window->pushGui(new GuiLoading<std::pair<std::vector<std::string>, std::vector<std::string>>>(
+		window, _("SCANNING YOUR CLOUD LIBRARY"),
+		[](auto gui)
+		{
+			return std::make_pair(
+				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan"),
+				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems"));
+		},
+		[window, onDone](std::pair<std::vector<std::string>, std::vector<std::string>> result)
+		{
+			std::set<std::string> chosen;
+			for (auto& line : result.second)
+			{
+				auto name = Utils::String::trim(line);
+				if (!name.empty())
+					chosen.insert(name);
+			}
+
+			struct Found { std::string name; unsigned long bytes; bool supported; };
+			std::vector<Found> found;
+			for (auto& line : result.first)
+			{
+				auto parts = Utils::String::split(Utils::String::trim(line), '|', true);
+				if (parts.size() < 3)
+					continue;
+				found.push_back({ parts[0], (unsigned long) atol(parts[1].c_str()), parts[2] == "1" });
+			}
+
+			if (found.empty())
+			{
+				window->pushGui(new GuiMsgBox(window,
+					_("NOTHING FOUND IN YOUR CLOUD LIBRARY YET.\n\nPUT ROMS INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
+				return;
+			}
+
+			auto s = new GuiSettings(window, _("SYSTEMS TO SYNC"));
+			s->addGroup(_("FOUND IN YOUR CLOUD LIBRARY"));
+
+			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
+			for (auto& f : found)
+			{
+				auto sw = std::make_shared<SwitchComponent>(window);
+				sw->setState(chosen.find(f.name) != chosen.end());
+				switches->push_back({ f.name, sw });
+
+				// A system this image cannot run is stated as fact, not guessed:
+				// es_systems.cfg declares every system the device supports, so its
+				// absence there means the games cannot launch here. Still
+				// selectable -- somebody may be staging a library for another
+				// handheld - but nobody should spend a card on it unknowingly.
+				std::string note = Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
+				if (!f.supported)
+					note += "  -  " + _("THIS DEVICE CANNOT RUN THIS SYSTEM");
+				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
+			}
+
+			s->addSaveFunc([switches]
+			{
+				std::string picked;
+				for (auto& entry : *switches)
+					if (entry.second->getState())
+						picked += (picked.empty() ? "" : " ") + entry.first;
+				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --set-systems \"" + picked + "\"");
+			});
+
+			if (onDone)
+				s->onFinalize(onDone);
+			window->pushGui(s);
+		}));
+}
+
 void GuiMenu::openGamesSettings()
 {
 	Window* window = mWindow;
@@ -4243,6 +4328,11 @@ void GuiMenu::openGamesSettings()
 						}
 						auto picker = new GuiSettings(window, _("UPLOAD CONTENT TO THE CLOUD"));
 						picker->addGroup(_("COPIES FILES TO YOUR CLOUD REMOTE. NOTHING IS DELETED; IDENTICAL FILES ARE SKIPPED."));
+						picker->addEntry(_("MY SELECTED SYSTEMS"), true, [window] {
+							window->pushGui(new GuiMsgBox(window, _("UPLOAD THE SYSTEMS YOU CHOSE FOR THIS DEVICE?"), _("YES"),
+								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --selected", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
+								_("NO"), nullptr));
+						});
 						picker->addEntry(_("EVERYTHING"), true, [window] {
 							window->pushGui(new GuiMsgBox(window, _("UPLOAD ALL CONTENT FROM THIS DEVICE TO THE CLOUD?"), _("YES"),
 								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_backup --all", _("UPLOAD CONTENT"), _("UPLOADING CONTENT")); },
@@ -4286,6 +4376,11 @@ void GuiMenu::openGamesSettings()
 						}
 						auto picker = new GuiSettings(window, _("RESTORE CONTENT FROM THE CLOUD"));
 						picker->addGroup(_("COPIES FILES TO /storage/roms. NOTHING IS DELETED; EXISTING IDENTICAL FILES ARE SKIPPED."));
+						picker->addEntry(_("MY SELECTED SYSTEMS"), true, [window] {
+							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD THE SYSTEMS YOU CHOSE FOR THIS DEVICE?"), _("YES"),
+								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --selected", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
+								_("NO"), nullptr));
+						});
 						picker->addEntry(_("EVERYTHING"), true, [window] {
 							window->pushGui(new GuiMsgBox(window, _("DOWNLOAD ALL CONTENT FROM THE CLOUD TO THIS DEVICE?"), _("YES"),
 								[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_content_restore --all", _("RESTORE CONTENT"), _("RESTORING CONTENT")); },
@@ -4301,6 +4396,16 @@ void GuiMenu::openGamesSettings()
 						}
 						window->pushGui(picker);
 					}));
+			});
+		}
+
+		// Choosing systems is the step before either transfer means anything,
+		// so it sits above the results rather than buried in a submenu.
+		if (hasContentDown)
+		{
+			cloudAddGatedEntry(s, window, cloudConfigured, _("CHOOSE SYSTEMS TO SYNC"),
+				_("PICK WHAT THIS DEVICE TAKES FROM YOUR CLOUD LIBRARY, WITH SIZES."), [window] {
+				cloudContentSystemPicker(window, nullptr);
 			});
 		}
 
