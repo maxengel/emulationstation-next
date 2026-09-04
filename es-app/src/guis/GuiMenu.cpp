@@ -3802,6 +3802,7 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // these for the CLOUD FOLDER row and for rows that must stay visible
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
+static std::map<std::string, std::string> cloudSetupInfo();
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
 static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::string& text, bool accent);
 
@@ -4235,6 +4236,21 @@ void GuiMenu::openCloud(Window* window)
 		cloudAddGatedEntry(s, window, true, _("CHOOSE SYSTEMS TO SYNC"),
 			_("PICK WHAT THIS DEVICE TAKES FROM YOUR CLOUD LIBRARY, WITH SIZES."),
 			[window] { cloudContentSystemPicker(window, nullptr); });
+
+		// Came here with the rest of NETWORK SETTINGS' cloud group, and was
+		// missed when that group was deleted -- which left the folder editable
+		// only by walking the setup wizard to its final page again, for
+		// somebody whose remote is already configured and working.
+		//
+		// A verb, like everything else in this group. "CLOUD FOLDER" reads as a
+		// heading rather than something you can act on; not "choose" or
+		// "select", which promise a list to pick from, when this opens a
+		// keyboard and you type a path.
+		const std::string syncpath = cloudSetupInfo()["SYNCPATH"];
+		s->addWithDescription(_("CHANGE CLOUD FOLDER"),
+			_("WHERE EVERYTHING IS STORED ON YOUR CLOUD REMOTE. CURRENT:") + " " + syncpath,
+			nullptr, [window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); },
+			"", false, true);
 	}
 	// Moved here from NETWORK SETTINGS. Offered, never automatic: the first
 	// layout put everything under /GAMES with backups nested inside saves, and
