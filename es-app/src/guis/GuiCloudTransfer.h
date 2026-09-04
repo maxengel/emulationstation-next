@@ -32,19 +32,30 @@ public:
 
 private:
 	void threadRun();
+	void handleLine(const std::string& line);
+	static std::string cleanLine(const std::string& raw);
 
 	BusyComponent mBusyAnim;
 	NinePatchComponent mBackground;
 
 	std::shared_ptr<TextComponent> mTitle;
-	std::shared_ptr<TextComponent> mStatus;
+	std::shared_ptr<TextComponent> mStatus;   // the file being moved right now
+	std::shared_ptr<TextComponent> mDetail;   // bytes, rate, ETA
 	std::shared_ptr<TextComponent> mFooter;
 
 	std::string mCommand;
 	std::string mTitleText;
 
+	// Panel geometry, computed once in the constructor: render() draws a
+	// border around exactly the rectangle fitTo() was given, so the two
+	// cannot drift apart.
+	Vector2f mPanelPos;
+	Vector2f mPanelSize;
+
 	std::mutex mMutex;
-	std::string mLine;
+	std::string mCurrent;   // " * name.zip: 45% /2.5Mi, 300Ki/s, 5s"
+	std::string mTotals;    // "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"
+	int mFilesThisBlock;
 	int mPercent;
 	bool mFinished;
 	int mExit;
