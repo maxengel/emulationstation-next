@@ -3816,7 +3816,7 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 // The scan reads sizes because without them "should I take PSX?" cannot be
 // answered. It is one recursive listing rather than a size call per system,
 // but it is still a network round trip, so it runs behind GuiLoading.
-static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone)
+static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel = "")
 {
 	window->pushGui(new GuiLoading<std::pair<std::vector<std::string>, std::vector<std::string>>>(
 		window, _("SCANNING YOUR CLOUD LIBRARY"),
@@ -3835,7 +3835,7 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			}
 			return std::make_pair(scan, sel);
 		},
-		[window, onDone](std::pair<std::vector<std::string>, std::vector<std::string>> result)
+		[window, onDone, proceedLabel](std::pair<std::vector<std::string>, std::vector<std::string>> result)
 		{
 			std::set<std::string> chosen, present;
 			for (auto& line : result.second)
@@ -3882,19 +3882,14 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			// it is bulk static content, but listing it among snes and psx asks
 			// the reader to work out why "bios" is a console -- so it gets its
 			// own heading and keeps the systems list honest.
-			bool headedSystems = false, headedOther = false;
+			bool headedSystems = false;
 			for (auto& f : found)
 			{
 				const bool isBios = (f.name == "bios");
 				if (!isBios && !headedSystems)
 				{
-					s->addGroup(_("GAME SYSTEMS IN YOUR CLOUD LIBRARY"));
+					s->addGroup(_("IN YOUR CLOUD LIBRARY"));
 					headedSystems = true;
-				}
-				if (isBios && !headedOther)
-				{
-					s->addGroup(_("BIOS AND FIRMWARE"));
-					headedOther = true;
 				}
 				auto sw = std::make_shared<SwitchComponent>(window);
 				sw->setState(chosen.find(f.name) != chosen.end());
@@ -3916,7 +3911,11 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					+ Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
 				if (!f.supported)
 					note += "  -  " + _("THIS DEVICE CANNOT RUN IT");
-				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
+				// "bios" is the folder name, not a thing anybody calls a system.
+				// It gets a label rather than a heading of its own: a group that
+				// can only ever hold one row tells the reader nothing the row does
+				// not already say.
+				s->addWithDescription(isBios ? _("BIOS AND FIRMWARE") : Utils::String::toUpper(f.name), note, sw);
 			}
 
 			s->addSaveFunc([switches]
@@ -3929,7 +3928,23 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			});
 
 			if (onDone)
-				s->onFinalize(onDone);
+			{
+				// A page used as a wizard step needs a way forward that is not
+				// "leave". onFinalize alone could not be it: GuiSettings::close()
+				// runs save() and then the finalize hook, so BACK fired the
+				// transfer -- a cancel that performed the action.
+				//
+				// The flag is what makes the two paths different, and it is read
+				// inside finalize rather than after close() because close()
+				// deletes the page and with it the button closure currently
+				// executing (blindspot 4). Finalize runs before that delete.
+				auto proceed = std::make_shared<bool>(false);
+				s->onFinalize([proceed, onDone] { if (*proceed) onDone(); });
+				s->getMenu().clearButtons();
+				s->getMenu().addButton(_("BACK"), _("back"), [s] { s->close(); });
+				s->getMenu().addButton(proceedLabel.empty() ? _("CONTINUE") : proceedLabel,
+					_("continue"), [s, proceed] { *proceed = true; s->close(); });
+			}
 			window->pushGui(s);
 		}));
 }
@@ -4078,10 +4093,11 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		s->getMenu().addButton(
 			staged ? _("CONTINUE") : (backup ? _("BACK UP") : _("RESTORE")),
 			staged ? _("choose systems") : (backup ? _("back up") : _("restore")),
-			[window, staged, run]
+			[window, staged, run, backup]
 			{
 				if (staged)
-					cloudContentSystemPicker(window, [run] { (*run)(); });
+					cloudContentSystemPicker(window, [run] { (*run)(); },
+						backup ? _("BACK UP") : _("RESTORE"));
 				else
 					(*run)();
 			});
