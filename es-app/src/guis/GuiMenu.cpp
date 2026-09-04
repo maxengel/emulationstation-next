@@ -4114,11 +4114,20 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// Order matters on a backup: the settings archive is written last so
 		// the copy that goes up is the current one.
 		std::string cmd;
+		// Each tier runs whatever the one before it did, and the whole run
+		// fails if any part did.
+		//
+		// "A ; B ; C" reports C's exit status, so a saves restore that failed
+		// followed by a settings restore that worked reported success -- the
+		// exact failure this subsystem is prone to, announced by the page
+		// built to stop it. Independent tiers must not be chained with && (a
+		// failed saves restore would silently skip the ROMs), so the status is
+		// accumulated instead.
 		auto add = [&cmd](const std::string& part)
 		{
-			if (!cmd.empty())
-				cmd += " ; ";
-			cmd += part;
+			if (cmd.empty())
+				cmd = "rc=0";
+			cmd += " ; { " + part + " ; } || rc=$?";
 		};
 		if (wantSaves)
 			add(backup ? "/usr/bin/cloud_backup --yes" : "/usr/bin/cloud_restore --yes");
@@ -4132,6 +4141,9 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// card closes itself the moment the job ends -- so a restore somebody
 		// walked away from left no trace but a log file. The quick save actions
 		// in GAME SETTINGS keep the card, because those finish while you watch.
+		if (!cmd.empty())
+			cmd += " ; exit $rc";
+
 		s->close();
 		window->pushGui(new GuiCloudTransfer(window, cmd,
 			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD")));
