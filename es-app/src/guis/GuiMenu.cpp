@@ -18,6 +18,7 @@
 #include "guis/GuiImageViewer.h"
 #include "guis/GuiMoonlight.h"
 #include "ThreadedCloudSync.h"
+#include "guis/GuiCloudTransfer.h"
 #include "guis/GuiLoading.h"
 #include "guis/GuiNetPlaySettings.h"
 #include "guis/GuiRetroAchievementsSettings.h"
@@ -4075,10 +4076,13 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		if (backup && wantSettings)
 			add("/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
 
+		// A screen, not a card. This is the flow that moves gigabytes, and the
+		// card closes itself the moment the job ends -- so a restore somebody
+		// walked away from left no trace but a log file. The quick save actions
+		// in GAME SETTINGS keep the card, because those finish while you watch.
 		s->close();
-		ThreadedCloudSync::start(window, cmd,
-			backup ? _("BACK UP TO THE CLOUD") : _("RESTORE FROM THE CLOUD"),
-			backup ? _("BACKING UP") : _("RESTORING"));
+		window->pushGui(new GuiCloudTransfer(window, cmd,
+			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD")));
 	};
 
 	// Which systems is a question only ROMS AND BIOS raises, so it is a second
