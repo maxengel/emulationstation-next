@@ -130,22 +130,14 @@ void GuiBios::loadList()
 	int idx = mList->getCursorIndex();
 	mList->clear();
 
-	if (mBios.size() == 0)
-	{
-		auto theme = ThemeData::getMenuTheme();
-		std::shared_ptr<Font> font = theme->Text.font;
-		unsigned int color = theme->Text.color;
-
-		ComponentListRow row;
-		auto text = std::make_shared<TextComponent>(mWindow, _("NO MISSING BIOS"), font, color);
-		if (EsLocale::isRTL())
-			text->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
-
-		row.addElement(text, true);
-
-		mList->addRow(row);
-		centerWindow();
-	}
+	// Whether anything survived the tab's filter, which is not the same
+	// question as whether the scan found anything. INSTALLED SYSTEMS hides a
+	// system EmulationStation has not loaded, and it loads a system only when
+	// that system has games -- so a device holding BIOS gaps for nds, psx and
+	// segacd, with games for none of them, showed a completely empty page.
+	// Empty is the correct answer there; a blank page is not, because it is
+	// what a broken screen looks like too.
+	bool shown = false;
 
 	for (auto systemBiosData : mBios)
 	{
@@ -166,7 +158,8 @@ void GuiBios::loadList()
 
 		if (!isKnownSystem && mTabFilter == 0)
 			continue;
-		
+
+		shown = true;
 		mList->addGroup(name, true);
 
 		for (auto biosFile : systemBiosData.bios)
@@ -193,6 +186,28 @@ void GuiBios::loadList()
 
 			mList->addRow(row);
 		}
+	}
+
+	if (!shown)
+	{
+		std::shared_ptr<Font> font = theme->Text.font;
+		unsigned int color = theme->Text.color;
+
+		// Two different answers, because they lead somewhere different. With
+		// nothing found at all there is nothing to do. With findings that this
+		// tab filtered away, the next move is the other tab -- and saying so
+		// is the whole difference between a finished check and a broken one.
+		auto text = std::make_shared<TextComponent>(mWindow,
+			mBios.size() == 0 ? _("NO MISSING BIOS")
+			: mTabFilter == 0 ? _("NO MISSING BIOS FOR THE SYSTEMS YOU HAVE GAMES FOR - SEE 'ALL'")
+			: _("NO MISSING BIOS"),
+			font, color);
+		if (EsLocale::isRTL())
+			text->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
+
+		ComponentListRow row;
+		row.addElement(text, true);
+		mList->addRow(row);
 	}
 
 	centerWindow();	
