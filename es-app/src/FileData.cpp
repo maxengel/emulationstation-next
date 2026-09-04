@@ -805,6 +805,30 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 
 	window->reactivateGui();
 
+	// Sync saves to the cloud, visibly.
+	//
+	// This was an OS event hook -- /usr/bin/scripts/game-end/, run by the
+	// fireEvent above -- which backgrounded cloud_backup with its output sent
+	// to /dev/null. It worked, and no player could ever tell: a silent
+	// background job that a reboot kills looks exactly like one that never
+	// started, and the first question after exiting a game is whether the save
+	// is safe. Running it here puts the answer on the progress card and leaves
+	// the outcome on it, which is what every other cloud operation does.
+	//
+	// It replaces the hook rather than joining it. The hook had no caller but
+	// this line, so there is nothing else to keep working -- and two paths to
+	// one operation is what the cloud menu was just collapsed to avoid.
+	//
+	// Not gated on exitCode: an emulator that crashed may still have written a
+	// save, and that is the copy most worth having.
+	if (SystemConf::getInstance()->get("cloudsaves.gameexit") == "1"
+		&& Utils::FileSystem::exists("/usr/bin/cloud_backup")
+		&& !ThreadedCloudSync::isRunning())
+	{
+		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes",
+			_("SAVE DATA SYNC"), _("SYNCING SAVE DATA TO THE CLOUD"));
+	}
+
 	if (system != nullptr && system->getTheme() != nullptr)
 		AudioManager::getInstance()->changePlaylist(system->getTheme(), true);
 	else

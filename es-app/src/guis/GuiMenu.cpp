@@ -3993,7 +3993,22 @@ static std::string cloudLastRunDetail(const std::string& name)
 	const int code = atoi(parts[1].c_str());
 	const std::string outcome = code == 0 ? _("SUCCEEDED")
 		: code == 130 ? _("STOPPED") : _("FAILED");
-	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, "%Y-%m-%d %H:%M")
+	// The player's own date format and clock, not ours.
+	//
+	// timeToString already resolves through localtime(), so the timezone comes
+	// from /etc/localtime and was never wrong; the hardcoded "%Y-%m-%d %H:%M"
+	// was. Somebody who set SHOW CLOCK IN 12-HOUR FORMAT gets 24-hour times
+	// here and nowhere else in the app, which reads as a bug in the row rather
+	// than a setting that did not reach it.
+	//
+	// The date half comes from the system locale (getSystemDateFormat caches,
+	// which is fine -- a locale does not change while the menu is open). The
+	// time half is decided live, because ClockMode12 is a switch the player can
+	// flip and come straight back to this page.
+	const std::string fmt = Utils::Time::getSystemDateFormat()
+		+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
+
+	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt)
 		+ "  -  " + outcome;
 }
 
