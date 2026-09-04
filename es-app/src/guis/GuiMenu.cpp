@@ -273,7 +273,7 @@ void GuiMenu::openResetOptions()
 		}, _("NO"), nullptr));
 	});
 
-	// The cloud copies of these live in GAME SETTINGS > CLOUD, which does the
+	// The cloud copies of these live in GAME SETTINGS > CLOUD SETTINGS, which does the
 	// same job with the save data included. The two entries that used to be
 	// here backed up settings only and were a second, quieter path to the
 	// same operation.
@@ -4634,18 +4634,43 @@ void GuiMenu::openGamesSettings()
 		s->addSaveFunc([autoControllers] { SystemConf::getInstance()->set("global.disableautocontrollers", autoControllers->getState() ? "" : "1"); });
 	}
 
-	// One door. The three save actions used to sit here as well, on the
-	// argument that moving saves is the frequent job and deserved promoting --
-	// but they are the same operations the page behind this row performs, so
-	// the same request could be made two ways, remember different ticks, and
-	// stamp two different "last run" answers for one piece of work. A shortcut
-	// that forks the state it reports is not a shortcut.
+	// The save actions live here; the rest of cloud lives one row down.
+	//
+	// These were briefly removed as duplicates of the transfer flow behind
+	// ALL CLOUD SETTINGS AND SERVICES, which left this menu with a CLOUD
+	// group containing one CLOUD row -- a header naming a single entry that
+	// named it again -- and buried the operations people actually repeat
+	// under two more presses. Moving saves is the frequent job; backing up
+	// ROMs and system settings is occasional, and belongs on the page for
+	// occasional things.
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		s->addGroup(_("CLOUD"));
-		s->addWithDescription(_("CLOUD"),
-			_("BACK UP AND RESTORE GAME SAVES, ROMS, AND SYSTEM SETTINGS - AND CONNECT YOUR CLOUD STORAGE."),
-			nullptr, [window] { GuiMenu::openCloud(window); }, "", false, true);
+		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+		s->addGroup(_("CLOUD SETTINGS"));
+
+		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVE DATA WITH THE CLOUD"),
+			_("TWO-WAY: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), [window] {
+			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
+				[window] {
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVE DATA"), _("SYNCING SAVE DATA"));
+				}, _("NO"), nullptr));
+		});
+		cloudAddClassRow(s, window, cloudConfigured, _("UPLOAD SAVE DATA TO THE CLOUD"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: DEVICE TO CLOUD"), "backup", [window] {
+			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"), _("UPLOADING SAVE DATA")); },
+				_("NO"), nullptr));
+		});
+		cloudAddClassRow(s, window, cloudConfigured, _("DOWNLOAD SAVE DATA FROM THE CLOUD"),
+			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: CLOUD TO DEVICE"), "restore", [window] {
+			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"), _("DOWNLOADING SAVE DATA")); },
+				_("NO"), nullptr));
+		});
+
+		s->addWithDescription(_("ALL CLOUD SETTINGS AND SERVICES"),
+			_("ROMS AND BIOS, SYSTEM SETTINGS, AND HOW THIS DEVICE IS SET UP."), nullptr,
+			[window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
 
 
@@ -5263,7 +5288,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	s->setSubTitle(_("YOUR CLOUD REMOTE IS READY"));
 
 	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("REMOTE '") + cloudSetupDisplayName(remote) + _("' IS CONFIGURED AND WORKING."));
-	cloudSetupAddInfoRow(s, window, _("CLOUD IS NOW AVAILABLE IN GAME SETTINGS."));
+	cloudSetupAddInfoRow(s, window, _("CLOUD SETTINGS ARE NOW AVAILABLE IN GAME SETTINGS."));
 	cloudSetupAddInfoRow(s, window, _("YOU CAN CLOSE THE TERMINAL ON YOUR COMPUTER."));
 
 	// A new remote is an empty folder, and nothing on it says where anything
@@ -5649,7 +5674,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 				if (out.find("OK=") != std::string::npos)
 				{
 					window->pushGui(new GuiMsgBox(window,
-						_("THE REMOTE IS CONFIGURED AND WORKING.\n\nGAME SETTINGS > CLOUD IS NOW AVAILABLE."),
+						_("THE REMOTE IS CONFIGURED AND WORKING.\n\nGAME SETTINGS > CLOUD SETTINGS IS NOW AVAILABLE."),
 						_("OK"), [s] { s->close(); }));
 					return;
 				}
@@ -6051,8 +6076,8 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	// cloud was split across two menus and became a way to send somebody to
 	// the wrong half of a page that no longer exists.
 	s->addGroup(_("WHAT YOU CAN DO NOW"));
-	cloudSetupAddInfoRow(s, window, _("GAME SETTINGS > CLOUD"), true);
-	cloudSetupAddInfoRow(s, window, _("BACK UP, RESTORE, CHOOSE SYSTEMS, AND CHANGE THE CLOUD FOLDER"));
+	cloudSetupAddInfoRow(s, window, _("GAME SETTINGS > CLOUD SETTINGS"), true);
+	cloudSetupAddInfoRow(s, window, _("SYNC YOUR SAVES, OR OPEN ALL CLOUD SETTINGS AND SERVICES"));
 
 	cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
 		_("CONNECTING A PROVIDER ONLY GIVES THE DEVICE SOMEWHERE TO PUT THINGS. TURN ON THE SYSTEMS YOU WANT KEPT, AND ROMS AND BIOS FILES ARE NEVER UPLOADED."));
@@ -6449,7 +6474,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 					if (rc == 0)
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD SETTINGS > ALL CLOUD SETTINGS AND SERVICES.")));
 				}));
 		});
 	}
@@ -8003,7 +8028,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	});
 
 	// Setting the remote up, and whole-device snapshots. Everything cloud
-	// lives in GAME SETTINGS > CLOUD.
+	// lives in GAME SETTINGS > CLOUD SETTINGS.
 	// Reachable without a cloud remote. The same page is offered inside
 	// BACKUP/RESTORE SYSTEM DATA, but that entry is gated on a configured
 	// remote, so a player who restored and pressed LATER had no way back to
@@ -8022,8 +8047,8 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	// what the page moves is game saves, ROMs, and this device's settings.
 	// A pointer row was tried and is still two doors onto one room -- somebody
 	// who set a device up from here and comes back through GAME SETTINGS has
-	// no way to know they are looking at the same page. GAME SETTINGS > CLOUD
-	// is the one way in.
+	// no way to know they are looking at the same page. GAME SETTINGS >
+	// CLOUD SETTINGS is the one way in.
 
 	// SYNCTHING SERVICES
 	s->addGroup(_("SYNCTHING SERVICES"));
