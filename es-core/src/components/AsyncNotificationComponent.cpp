@@ -26,6 +26,16 @@
 // still animates through this value.
 #define NOTIFICATION_OPACITY  255
 
+// Blend two ARGB/RGBA colours, keeping the first's alpha.
+static unsigned int mixColors(unsigned int base, unsigned int accent, float amount)
+{
+	auto ch = [](unsigned int c, int shift) { return (int)((c >> shift) & 0xFF); };
+	int r = (int)(ch(base, 24) + (ch(accent, 24) - ch(base, 24)) * amount);
+	int g = (int)(ch(base, 16) + (ch(accent, 16) - ch(base, 16)) * amount);
+	int b = (int)(ch(base,  8) + (ch(accent,  8) - ch(base,  8)) * amount);
+	return ((unsigned int)r << 24) | ((unsigned int)g << 16) | ((unsigned int)b << 8) | (base & 0xFF);
+}
+
 AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool actionLine)
 	: GuiComponent(window)
 {
@@ -73,7 +83,16 @@ AsyncNotificationComponent::AsyncNotificationComponent(Window* window, bool acti
 
 	mFrame = new NinePatchComponent(window);
 	mFrame->setImagePath(theme->Background.path);
-	mFrame->setEdgeColor(theme->Background.color);
+	// An edge with some contrast against the middle, so the card has a border.
+	//
+	// A menu or dialog is read against the page it covers and needs no outline
+	// of its own; this one floats over box art in whatever colours the game
+	// happens to be, and with edge and centre both at the theme's 0x111111 the
+	// panel simply faded out at its corners with no line anywhere. Blending the
+	// text colour a quarter of the way into the background gives a rim that
+	// follows the theme rather than a hardcoded grey, and stays subtle enough
+	// that the card still reads as an overlay.
+	mFrame->setEdgeColor(mixColors(theme->Background.color, theme->Text.color, 0.25f));
 	mFrame->setCenterColor(theme->Background.centerColor);
 	mFrame->setCornerSize(theme->Background.cornerSize);
 	mFrame->setPostProcessShader(theme->Background.menuShader, false);
