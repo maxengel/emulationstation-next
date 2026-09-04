@@ -273,10 +273,10 @@ void GuiMenu::openResetOptions()
 		}, _("NO"), nullptr));
 	});
 
-	// The cloud copies of these live in NETWORK SETTINGS > RCLONE SERVICES >
-	// BACKUP/RESTORE SYSTEM DATA, which does the same job with the save data
-	// included. The two entries that used to be here backed up settings only
-	// and were a second, quieter path to the same operation.
+	// The cloud copies of these live in GAME SETTINGS > CLOUD, which does the
+	// same job with the save data included. The two entries that used to be
+	// here backed up settings only and were a second, quieter path to the
+	// same operation.
 
 
 	s->addEntry(_("CLEAN GAMELISTS & REMOVE UNUSED MEDIA"), true, [window] {
@@ -3828,7 +3828,9 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			// I take PSX?" into "PSX is 4 GB and you do not have it yet".
 			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan");
 			auto sel  = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
-			for (auto& l : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_backup --list"))
+			// name|bytes, so the badge can say whether what is here matches
+			// what is stored rather than only that something is here.
+			for (auto& l : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_backup --list-sizes"))
 			{
 				auto d = Utils::String::trim(l);
 				if (!d.empty())
@@ -3838,14 +3840,19 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 		},
 		[window, onDone, proceedLabel](std::pair<std::vector<std::string>, std::vector<std::string>> result)
 		{
-			std::set<std::string> chosen, present;
+			std::set<std::string> chosen;
+			std::map<std::string, unsigned long> present;   // on this device -> bytes
 			for (auto& line : result.second)
 			{
 				auto name = Utils::String::trim(line);
 				if (name.empty())
 					continue;
 				if (name[0] == '\x01')
-					present.insert(name.substr(1));
+				{
+					auto p = Utils::String::split(name.substr(1), '|', true);
+					if (!p.empty())
+						present[p[0]] = p.size() > 1 ? (unsigned long) atol(p[1].c_str()) : 0;
+				}
 				else
 					chosen.insert(name);
 			}
@@ -3901,15 +3908,28 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				// absence there means the games cannot launch here. Still
 				// selectable -- somebody may be staging a library for another
 				// handheld - but nobody should spend a card on it unknowingly.
-				// One badge, two states, the way a sync client does it: you have
-				// this, or it is only in the cloud. An earlier cut carried two
-				// glyphs -- sync set and on-card -- plus a legend to decode them,
-				// which is three things to read before a size. The switch already
-				// says what is selected; the badge says what selecting it would
-				// actually change.
-				const bool onCard = present.find(f.name) != present.end();
-				std::string note = (onCard ? _U("\uF058  ") : _U("\uF0C2  "))
-					+ Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
+				//
+				// Three states, all on the cloud glyph, because all three are
+				// facts about the cloud copy: it is only up there; it is here
+				// and matches; it is here and does not. A bare tick answered
+				// "have I got this?" and left the more useful question --
+				// whether the copy here is the copy in the cloud -- unasked.
+				//
+				// The middle state is a size comparison, so it is worded as
+				// one. Equal totals are not proof of identical files (#53); a
+				// difference IS proof they differ, which is the state somebody
+				// needs to act on, and the words carry the claim rather than
+				// the glyph.
+				auto here = present.find(f.name);
+				const bool onCard = here != present.end();
+				const bool matches = onCard && here->second == f.bytes;
+				std::string note = onCard
+					? (matches ? _U("\uF0C2 \uF058  ") : _U("\uF0C2 \uF071  "))
+					: _U("\uF0C2  ");
+				note += Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
+				note += "  -  " + (onCard
+					? (matches ? _("ON THIS DEVICE") : _("ON THIS DEVICE, DIFFERENT SIZE"))
+					: _("IN YOUR CLOUD ONLY"));
 				if (!f.supported)
 					note += "  -  " + _("THIS DEVICE CANNOT RUN IT");
 				// "bios" is the folder name, not a thing anybody calls a system.
@@ -3982,8 +4002,12 @@ static void cloudAddClassRow(GuiSettings* s, Window* window, bool configured,
 	const std::string& label, const std::string& carries, const std::string& stamp,
 	const std::function<void()>& action)
 {
+	// Three lines: what it is, what it carries, how it last went. They were one
+	// run-on description separated by dashes, which is a sentence pretending to
+	// be a table -- the outcome is the part somebody scans for, and it was
+	// buried mid-line.
 	cloudAddGatedEntry(s, window, configured, label,
-		carries + "  -  " + cloudLastRunDetail(stamp), action);
+		carries + "\n" + cloudLastRunDetail(stamp), action);
 }
 
 // Step two: having chosen a direction, tick what moves and confirm.
@@ -3999,28 +4023,56 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	auto s = new GuiSettings(window, backup ? _("BACK UP TO THE CLOUD") : _("RESTORE FROM THE CLOUD"));
 	s->addGroup(backup ? _("WHAT WOULD YOU LIKE TO BACK UP?") : _("WHAT WOULD YOU LIKE TO RESTORE?"));
 
+	// The ticks are remembered per direction.
+	//
+	// Somebody who syncs ROMs to a handheld syncs ROMs to it every time, and
+	// re-ticking the same boxes on every visit is the page asking a question it
+	// already knows the answer to. Separate keys for backup and restore because
+	// they are separate intentions: taking a library down to a device says
+	// nothing about wanting to push it back up.
+	const std::string key = std::string("cloudsync.pick.") + (backup ? "backup." : "restore.");
+	auto remembered = [&key](const std::string& what, bool dflt)
+	{
+		const std::string v = SystemConf::getInstance()->get(key + what);
+		return v.empty() ? dflt : v == "1";
+	};
+
 	// "SAVE DATA", not "GAME SAVES": the class contains game saves, and a
 	// heading that repeats one of its own members reads as a mistake.
 	auto saves = std::make_shared<SwitchComponent>(window);
-	saves->setState(true);
+	saves->setState(remembered("saves", true));
 	s->addWithDescription(_("SAVE DATA"),
-		_("GAME SAVES, SAVE STATES, AND SCREENSHOTS") + std::string("  -  ")
+		_("GAME SAVES, SAVE STATES, AND SCREENSHOTS") + std::string("\n")
 			+ cloudLastRunDetail(backup ? "backup" : "restore"), saves);
 
 	auto content = std::make_shared<SwitchComponent>(window);
 	const bool hasContent = Utils::FileSystem::exists(
 		backup ? "/usr/bin/cloud_content_backup" : "/usr/bin/cloud_content_restore");
+	content->setState(hasContent && remembered("content", false));
 	if (hasContent)
 	{
 		s->addWithDescription(_("ROMS AND BIOS"),
-			_("THE SYSTEMS YOU CHOSE FOR THIS DEVICE") + std::string("  -  ")
+			_("THE SYSTEMS YOU CHOSE FOR THIS DEVICE") + std::string("\n")
 				+ cloudLastRunDetail(backup ? "content-backup" : "content-restore"), content);
 	}
 
 	auto settings = std::make_shared<SwitchComponent>(window);
+	settings->setState(remembered("settings", false));
 	s->addWithDescription(_("SYSTEM SETTINGS"),
-		_("CONFIGURATION, CONTROLS, AND THEMES") + std::string("  -  ")
+		_("CONFIGURATION, CONTROLS, AND THEMES") + std::string("\n")
 			+ cloudLastRunDetail(backup ? "system-backup" : "system-restore"), settings);
+
+	// Written on the way out, by whichever exit -- BACK included, because a
+	// tick somebody set and then thought better of running is still their
+	// answer to "what moves". GuiSettings::save() also returns early when a
+	// page registers no save function, so this is what flushes SystemConf.
+	s->addSaveFunc([key, saves, content, settings]
+	{
+		auto conf = SystemConf::getInstance();
+		conf->set(key + "saves",    saves->getState()    ? "1" : "0");
+		conf->set(key + "content",  content->getState()  ? "1" : "0");
+		conf->set(key + "settings", settings->getState() ? "1" : "0");
+	});
 
 	// The run itself, shared by the button and by the system chooser that can
 	// precede it. A shared_ptr because the two lambdas have to reach the same
@@ -4555,39 +4607,18 @@ void GuiMenu::openGamesSettings()
 		s->addSaveFunc([autoControllers] { SystemConf::getInstance()->set("global.disableautocontrollers", autoControllers->getState() ? "" : "1"); });
 	}
 
-	// Cloud lives on one page now: see openCloud().
+	// One door. The three save actions used to sit here as well, on the
+	// argument that moving saves is the frequent job and deserved promoting --
+	// but they are the same operations the page behind this row performs, so
+	// the same request could be made two ways, remember different ticks, and
+	// stamp two different "last run" answers for one piece of work. A shortcut
+	// that forks the state it reports is not a shortcut.
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
-		s->addGroup(_("CLOUD SETTINGS"));
-
-		// The three save actions live here as well as in the full flow. That is
-		// not the duplication worth avoiding -- they are the same operation at
-		// the same scope, promoted to where somebody reaches for them. Moving
-		// saves is the thing people do often; the rest of the flow is occasional.
-		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVE DATA WITH THE CLOUD"),
-			_("TWO-WAY: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), [window] {
-			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
-				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVE DATA"), _("SYNCING SAVE DATA"));
-				}, _("NO"), nullptr));
-		});
-		cloudAddClassRow(s, window, cloudConfigured, _("UPLOAD SAVE DATA TO THE CLOUD"),
-			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: DEVICE TO CLOUD"), "backup", [window] {
-			window->pushGui(new GuiMsgBox(window, _("UPLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("UPLOAD SAVE DATA"), _("UPLOADING SAVE DATA")); },
-				_("NO"), nullptr));
-		});
-		cloudAddClassRow(s, window, cloudConfigured, _("DOWNLOAD SAVE DATA FROM THE CLOUD"),
-			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: CLOUD TO DEVICE"), "restore", [window] {
-			window->pushGui(new GuiMsgBox(window, _("DOWNLOAD GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
-				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("DOWNLOAD SAVE DATA"), _("DOWNLOADING SAVE DATA")); },
-				_("NO"), nullptr));
-		});
-
-		s->addWithDescription(_("ALL CLOUD SETTINGS AND SERVICES"),
-			_("GAMES AND BIOS, SYSTEM SETTINGS, AND HOW THIS DEVICE IS SET UP."), nullptr,
-			[window] { GuiMenu::openCloud(window); }, "", false, true);
+		s->addGroup(_("CLOUD"));
+		s->addWithDescription(_("CLOUD"),
+			_("BACK UP AND RESTORE GAME SAVES, ROMS, AND SYSTEM SETTINGS - AND CONNECT YOUR CLOUD STORAGE."),
+			nullptr, [window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
 
 
@@ -4715,8 +4746,7 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 // A cloud action row. Before a remote exists the row stays visible but
 // dimmed and offers the setup flow instead of its action - hiding it
 // would tell the player nothing about what configuring a remote buys
-// them. Shared by the CLOUD SAVES, CLOUD TOOLS and RCLONE SERVICES
-// groups so all three behave identically.
+// them. Shared by every row on the cloud page so they behave identically.
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action)
 {
 	if (configured)
@@ -5153,7 +5183,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 		cloudSetupAddProse(s, window, _("DO NOT USE 'rclone authorize'"),
 			_("IT CANNOT BIND ITS PORT WHILE STEP 2'S CONNECTION IS OPEN."));
 		if (mode == CloudSetupMode::AddRemote)
-			cloudSetupAddInfoRow(s, window, _("NOTE: THE CLOUD TOOLS USE THE FIRST REMOTE IN ALPHABETICAL ORDER."));
+			cloudSetupAddInfoRow(s, window, _("NOTE: CLOUD SYNC USES THE FIRST REMOTE IN ALPHABETICAL ORDER."));
 	}
 
 	if (info["AUTH_PORT"] == "busy")
@@ -5206,7 +5236,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	s->setSubTitle(_("YOUR CLOUD REMOTE IS READY"));
 
 	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("REMOTE '") + cloudSetupDisplayName(remote) + _("' IS CONFIGURED AND WORKING."));
-	cloudSetupAddInfoRow(s, window, _("CLOUD SAVES AND CLOUD TOOLS ARE NOW AVAILABLE IN GAME SETTINGS."));
+	cloudSetupAddInfoRow(s, window, _("CLOUD IS NOW AVAILABLE IN GAME SETTINGS."));
 	cloudSetupAddInfoRow(s, window, _("YOU CAN CLOSE THE TERMINAL ON YOUR COMPUTER."));
 
 	// A new remote is an empty folder, and nothing on it says where anything
@@ -5592,7 +5622,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 				if (out.find("OK=") != std::string::npos)
 				{
 					window->pushGui(new GuiMsgBox(window,
-						_("THE REMOTE IS CONFIGURED AND WORKING.\n\nCLOUD TOOLS ARE NOW AVAILABLE."),
+						_("THE REMOTE IS CONFIGURED AND WORKING.\n\nGAME SETTINGS > CLOUD IS NOW AVAILABLE."),
 						_("OK"), [s] { s->close(); }));
 					return;
 				}
@@ -5989,14 +6019,13 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 		                      Utils::String::toUpper(backend.label).c_str()),
 		_("YOUR GAME SAVES, SAVE STATES, AND SCREENSHOTS CAN NOW BE KEPT IN THE CLOUD AND PICKED UP ON ANOTHER DEVICE."));
 
-	// Named menus rather than a vague "it is all available now": these are
-	// where the things this unlocks actually live.
+	// A named menu rather than a vague "it is all available now" -- and one
+	// name, because there is one page. This said two, which was accurate when
+	// cloud was split across two menus and became a way to send somebody to
+	// the wrong half of a page that no longer exists.
 	s->addGroup(_("WHAT YOU CAN DO NOW"));
-	cloudSetupAddInfoRow(s, window, _("GAME SETTINGS > CLOUD SAVES"), true);
-	cloudSetupAddInfoRow(s, window, _("TURN SYNCING ON, PER SYSTEM"));
-	cloudSetupAddSpacer(s, window);
-	cloudSetupAddInfoRow(s, window, _("NETWORK SETTINGS > CLOUD SERVICES"), true);
-	cloudSetupAddInfoRow(s, window, _("CHANGE THE CLOUD FOLDER, OR BACK UP THIS DEVICE"));
+	cloudSetupAddInfoRow(s, window, _("GAME SETTINGS > CLOUD"), true);
+	cloudSetupAddInfoRow(s, window, _("BACK UP, RESTORE, CHOOSE SYSTEMS, AND CHANGE THE CLOUD FOLDER"));
 
 	cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
 		_("CONNECTING A PROVIDER ONLY GIVES THE DEVICE SOMEWHERE TO PUT THINGS. TURN ON THE SYSTEMS YOU WANT KEPT, AND ROMS AND BIOS FILES ARE NEVER UPLOADED."));
@@ -6393,7 +6422,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 					if (rc == 0)
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT CLOUD STORAGE IN NETWORK SETTINGS > CLOUD SERVICES.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD.")));
 				}));
 		});
 	}
@@ -7946,9 +7975,8 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		}
 	});
 
-	// RCLONE SERVICES - setting the remote up, and whole-device snapshots.
-	// Per-game save syncing lives in GAME SETTINGS > CLOUD SAVES, next to
-	// the games it belongs to.
+	// Setting the remote up, and whole-device snapshots. Everything cloud
+	// lives in GAME SETTINGS > CLOUD.
 	// Reachable without a cloud remote. The same page is offered inside
 	// BACKUP/RESTORE SYSTEM DATA, but that entry is gated on a configured
 	// remote, so a player who restored and pressed LATER had no way back to
@@ -7962,18 +7990,13 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 			nullptr, [restoreWindow] { GuiMenu::openRestoreRelink(restoreWindow, true); }, "", false, true);
 	}
 
-	// Cloud lives on its own page now (openCloud), reached from GAME SETTINGS.
-	// A pointer rather than a copy: cloud is a network service and somebody
-	// configuring networking may well look for it here, but there is one
-	// destination, so the two entry points cannot drift apart.
-	if (Utils::FileSystem::exists("/usr/bin/cloud_setup"))
-	{
-		Window* window = mWindow;
-		s->addGroup(_("CLOUD SERVICES"));
-		s->addWithDescription(_("CLOUD SETTINGS"),
-			_("CONNECT STORAGE, BACK UP, AND RESTORE - ALL IN ONE PLACE."), nullptr,
-			[window] { GuiMenu::openCloud(window); }, "", false, true);
-	}
+	// No cloud entry here. It lived in this menu because cloud storage is a
+	// network service, and that is true of the plumbing and false of the job:
+	// what the page moves is game saves, ROMs, and this device's settings.
+	// A pointer row was tried and is still two doors onto one room -- somebody
+	// who set a device up from here and comes back through GAME SETTINGS has
+	// no way to know they are looking at the same page. GAME SETTINGS > CLOUD
+	// is the one way in.
 
 	// SYNCTHING SERVICES
 	s->addGroup(_("SYNCTHING SERVICES"));
