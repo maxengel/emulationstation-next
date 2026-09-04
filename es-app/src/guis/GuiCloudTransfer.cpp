@@ -242,7 +242,11 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 void GuiCloudTransfer::threadRun()
 {
 	int ret = -1;
-	FILE* pipe = popen((mCommand + " 2>&1").c_str(), "r");
+	// Braces around the whole command, not just " 2>&1" after it. The command
+	// is a sequence, and a trailing redirection binds to its last element only
+	// -- so everything the earlier tiers wrote to stderr went to the ES
+	// process's own stderr and never reached this page.
+	FILE* pipe = popen(("{ " + mCommand + " ; } 2>&1").c_str(), "r");
 	if (pipe != nullptr)
 	{
 		// Read a character at a time, and treat three things as ending a line:
