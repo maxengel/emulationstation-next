@@ -134,8 +134,12 @@ void ThreadedCloudSync::run()
 	if (mWndNotification != nullptr)
 	{
 		mWndNotification->updateTitle(ICONINDEX + mTitle);
+		// 3 is the scripts' "another cloud sync holds the lock". Not a
+		// failure: the boot-time sync was already doing this work, and
+		// FAILED would send somebody to a log to find out nothing went wrong.
 		mWndNotification->updateText(ret == 0
 			? _("COMPLETED SUCCESSFULLY")
+			: ret == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
 			: _("FAILED - SEE /var/log/cloud_sync.log"));
 
 		// A full bar on success; on failure the bar goes, because a

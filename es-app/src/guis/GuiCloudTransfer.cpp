@@ -167,7 +167,9 @@ void GuiCloudTransfer::update(int deltaTime)
 		// with them. Same three outcomes the menu's last-run line reports, so
 		// the two never disagree about the same run.
 		mStatus->setText(mExit == 0 ? _("COMPLETED SUCCESSFULLY")
-			: mExit == 130 ? _("STOPPED") : _("FAILED"));
+			: mExit == 130 ? _("STOPPED")
+			: mExit == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
+			: _("FAILED"));
 		mDetail->setText(mTotals.empty()
 			? std::string(_("ELAPSED")) + " " + elapsed
 			: mTotals + "     " + _("ELAPSED") + " " + elapsed);
