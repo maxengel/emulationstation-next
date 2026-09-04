@@ -4193,6 +4193,92 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	window->pushGui(s);
 }
 
+// Step three: make this device match the cloud.
+//
+// The only cloud operation that deletes, so it previews first and the
+// confirmation names what goes. The preview is a network round trip -- an
+// rclone dry run per selected system -- so it runs behind GuiLoading rather
+// than freezing the menu.
+static void cloudOpenMatch(Window* window)
+{
+	window->pushGui(new GuiLoading<std::vector<std::string>>(
+		window, _("CHECKING YOUR CLOUD LIBRARY"),
+		[](auto gui)
+		{
+			return ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --match");
+		},
+		[window](std::vector<std::string> result)
+		{
+			// The backend refuses -- unreachable remote, an empty content
+			// root, exclusions not loaded -- by printing why. Show its words
+			// rather than inventing a summary of a refusal we did not make.
+			std::string refusal;
+			for (auto& line : result)
+				if (Utils::String::startsWith(Utils::String::trim(line), "Refusing"))
+					refusal = Utils::String::trim(line);
+
+			if (!refusal.empty())
+			{
+				window->pushGui(new GuiMsgBox(window, Utils::String::toUpper(refusal)
+					+ "\n\n" + _("NOTHING WAS CHANGED."), _("OK")));
+				return;
+			}
+
+			struct Change { std::string name; long files; long bytes; };
+			std::vector<Change> changes;
+			long totalFiles = 0, totalBytes = 0;
+			for (auto& line : result)
+			{
+				auto p = Utils::String::split(Utils::String::trim(line), '|', true);
+				if (p.size() < 4)
+					continue;
+				long files = atol(p[2].c_str());
+				if (files <= 0)
+					continue;
+				long bytes = atol(p[3].c_str());
+				changes.push_back({ p[0], files, bytes });
+				totalFiles += files;
+				totalBytes += bytes;
+			}
+
+			if (changes.empty())
+			{
+				window->pushGui(new GuiMsgBox(window,
+					_("THIS DEVICE ALREADY MATCHES YOUR CLOUD.\n\nTHERE IS NOTHING TO REMOVE."), _("OK")));
+				return;
+			}
+
+			std::string detail;
+			for (auto& c : changes)
+			{
+				detail += Utils::String::toUpper(c.name) + "  -  "
+					+ std::to_string(c.files) + " " + _("FILES");
+				if (c.bytes > 0)
+					detail += "  (" + Utils::FileSystem::kiloBytesToString(c.bytes / 1024) + ")";
+				detail += "\n";
+			}
+
+			// Says what goes, what arrives, and what is never touched. The
+			// third line matters most: this is the one action that can delete
+			// a library, and somebody about to press YES needs to know their
+			// saves are not in scope.
+			std::string text = _("REMOVE") + std::string(" ") + std::to_string(totalFiles)
+				+ " " + _("FILES FROM THIS DEVICE?");
+			if (totalBytes > 0)
+				text += "  (" + Utils::FileSystem::kiloBytesToString(totalBytes / 1024) + ")";
+			text += "\n\n" + detail
+				+ "\n" + _("ANYTHING YOUR CLOUD HAS THAT THIS DEVICE DOES NOT IS DOWNLOADED AT THE SAME TIME.")
+				+ "\n" + _("GAME SAVES, SAVE STATES, AND SCREENSHOTS ARE NEVER TOUCHED.");
+
+			window->pushGui(new GuiMsgBox(window, text, _("YES"), [window]
+			{
+				window->pushGui(new GuiCloudTransfer(window,
+					"/usr/bin/cloud_content_restore --match --apply",
+					_("MATCHING THIS DEVICE TO THE CLOUD")));
+			}, _("NO"), nullptr));
+		}));
+}
+
 // The cloud hub. One page, reachable from one place.
 //
 // Cloud used to live in two menus: saves and content under GAME SETTINGS,
@@ -4213,6 +4299,16 @@ void GuiMenu::openCloud(Window* window)
 	cloudAddGatedEntry(s, window, configured, _("RESTORE FROM THE CLOUD"),
 		_("BRING DATA BACK ONTO THIS DEVICE."),
 		[window] { cloudOpenTransfer(window, false); });
+
+	// The third action, and the only one that deletes. Below the two safe ones
+	// deliberately: a destructive row above RESTORE would be the one a thumb
+	// reaches first.
+	if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
+	{
+		cloudAddClassRow(s, window, configured, _("MATCH THIS DEVICE TO THE CLOUD"),
+			_("REMOVE ROMS YOUR CLOUD NO LONGER HAS."), "content-match",
+			[window] { cloudOpenMatch(window); });
+	}
 
 	s->addGroup(_("SAVE MANAGEMENT"));
 	auto cloud_startup = std::make_shared<SwitchComponent>(window);
