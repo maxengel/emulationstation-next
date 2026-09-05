@@ -4099,7 +4099,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		if (!configured)
 		{
 			window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET ONE UP NOW?"), _("YES"),
-				[window] { GuiMenu::openCloudSetup(window); }, _("NO"), nullptr));
+				[window] { GuiMenu::openCloudAddRemote(window); }, _("NO"), nullptr));
 			return;
 		}
 
@@ -4383,7 +4383,7 @@ void GuiMenu::openCloud(Window* window)
 	s->addWithDescription(_("CONNECT OR REPAIR CLOUD STORAGE"),
 		configured ? _("CHANGE THE FOLDER, ADD A PROVIDER, OR RENEW A SIGN-IN.")
 		           : _("SET UP A PROVIDER WITH RCLONE, FROM THE HANDHELD. NO COMPUTER NEEDED."),
-		nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
+		nullptr, [window] { GuiMenu::openCloudAddRemote(window); }, "", false, true);
 
 	// Only while there is a restore to finish.
 	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
@@ -4927,7 +4927,7 @@ static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, 
 	row.makeAcceptInputHandler([window]
 	{
 		window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
-			[window] { GuiMenu::openCloudSetup(window); },
+			[window] { GuiMenu::openCloudAddRemote(window); },
 			_("NO"), nullptr));
 	});
 	s->addRow(row);
