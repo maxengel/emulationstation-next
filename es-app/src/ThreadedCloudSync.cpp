@@ -170,12 +170,13 @@ void ThreadedCloudSync::run()
 			ThreadedCloudSync::mInstance = nullptr;
 
 		// Hold the outcome long enough to read, then let the card fade.
-		// Success is two words and a full bar, so three seconds; a skip or a
-		// failure is a sentence somebody has to act on, so five. Five for
-		// everything dated from when a sync took 18 seconds -- once the exit
-		// sync came down to about five, the card spent as long saying it was
-		// done as it had spent working.
-		std::this_thread::sleep_for(std::chrono::seconds(ret == 0 ? 3 : 5));
+		// Success is two words and a full bar, and somebody who just exited
+		// a game is standing there watching it, so two seconds; a skip or a
+		// failure is a sentence to act on, so five. Five for everything dated
+		// from when a sync took 18 seconds -- once the exit sync came down to
+		// about five, the card spent as long saying it was done as it had
+		// spent working.
+		std::this_thread::sleep_for(std::chrono::seconds(ret == 0 ? 2 : 5));
 	}
 
 	delete this;
