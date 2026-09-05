@@ -270,7 +270,7 @@ public:
     std::vector<std::string> getAvailableInstallDevices();
     std::vector<std::string> getAvailableInstallArchitectures();
     std::vector<std::string> getAvailableOverclocking();
-    std::vector<BiosSystem> getBiosInformations(const std::string system = "");
+    std::vector<BiosSystem> getBiosInformations(const std::string system = "", bool all = false);
     virtual std::vector<std::string> getVideoModes(const std::string output = "");
 	std::vector<std::string> getCustomRunners();
 
