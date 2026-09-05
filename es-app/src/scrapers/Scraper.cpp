@@ -22,7 +22,7 @@
 
 std::vector<std::pair<std::string, Scraper*>> Scraper::scrapers
 {
-#ifdef SCREENSCRAPER_DEV_LOGIN
+#if defined(SCREENSCRAPER_DEV_LOGIN) || defined(SCREENSCRAPER_RUNTIME_DEV_LOGIN)
 	{ "ScreenScraper", new ScreenScraperScraper() },
 #endif
 

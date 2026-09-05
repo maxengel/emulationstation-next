@@ -286,6 +286,15 @@ if(DEFINED ENV{SCREENSCRAPER_DEV_LOGIN})
     add_definitions(-DSCREENSCRAPER_DEV_LOGIN="$ENV{SCREENSCRAPER_DEV_LOGIN}")
 endif()
 
+# The ScreenScraper developer pair entered on the device rather than compiled
+# in: the scraper is built, and its settings page grows DEVELOPER ID and
+# DEVELOPER PASSWORD rows, so no image carries a key. Set from the package
+# recipe (-DSCREENSCRAPER_RUNTIME_DEV_LOGIN=1) or the environment. A compiled-in
+# SCREENSCRAPER_DEV_LOGIN still takes precedence and hides the rows.
+if(SCREENSCRAPER_RUNTIME_DEV_LOGIN OR DEFINED ENV{SCREENSCRAPER_RUNTIME_DEV_LOGIN})
+    add_definitions(-DSCREENSCRAPER_RUNTIME_DEV_LOGIN=1)
+endif()
+
 if(DEFINED ENV{GAMESDB_APIKEY})
     add_definitions(-DGAMESDB_APIKEY="$ENV{GAMESDB_APIKEY}")
 endif()

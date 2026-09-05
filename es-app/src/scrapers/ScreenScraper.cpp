@@ -23,7 +23,25 @@
 
 using namespace PlatformIds;
 
+#if defined(SCREENSCRAPER_DEV_LOGIN) || defined(SCREENSCRAPER_RUNTIME_DEV_LOGIN)
+
+// Upstream compiles the developer pair in. A fork build without one reads it
+// from settings, entered by the player under the scraper's options beside the
+// account it belongs to, so no image carries a key and images can be shared
+// (#64). Callers check for empty and say what is missing rather than letting
+// the API answer with a login error.
+std::string screenScraperDevLogin()
+{
 #if defined(SCREENSCRAPER_DEV_LOGIN)
+	return SCREENSCRAPER_DEV_LOGIN;
+#else
+	const std::string id = Settings::getInstance()->getString("ScreenScraperDevId");
+	const std::string pass = Settings::getInstance()->getString("ScreenScraperDevPass");
+	if (id.empty() || pass.empty())
+		return "";
+	return "devid=" + HttpReq::urlEncode(id) + "&devpassword=" + HttpReq::urlEncode(pass);
+#endif
+}
 
 /**
 	List of systems and thein IDs from
@@ -838,7 +856,7 @@ void ScreenScraperRequest::processGame(const pugi::xml_document& xmldoc, std::ve
 std::string ScreenScraperRequest::ScreenScraperConfig::getGameSearchUrl(const std::string gameName, bool jeuRecherche) const
 {	
 	std::string ret = API_URL_BASE
-		+ "/jeuInfos.php?" + std::string(SCREENSCRAPER_DEV_LOGIN) +
+		+ "/jeuInfos.php?" + screenScraperDevLogin() +
 		+ "&softname=" + HttpReq::urlEncode(VERSIONED_SOFT_NAME)
 		+ "&output=xml"
 		+ "&romnom=" + HttpReq::urlEncode(gameName);
@@ -846,7 +864,7 @@ std::string ScreenScraperRequest::ScreenScraperConfig::getGameSearchUrl(const st
 	if (jeuRecherche)
 	{
 		ret = std::string(API_URL_BASE)
-			+ "/jeuRecherche.php?" + std::string(SCREENSCRAPER_DEV_LOGIN) +
+			+ "/jeuRecherche.php?" + screenScraperDevLogin() +
 			+ "&softname=" + HttpReq::urlEncode(VERSIONED_SOFT_NAME)
 			+ "&output=xml"
 			+ "&recherche=" + HttpReq::urlEncode(gameName);
@@ -864,7 +882,7 @@ std::string ScreenScraperRequest::ScreenScraperConfig::getGameSearchUrl(const st
 std::string ScreenScraperRequest::ScreenScraperConfig::getUserInfoUrl() const
 {
 	std::string ret = API_URL_BASE
-		+ "/ssuserInfos.php?" + std::string(SCREENSCRAPER_DEV_LOGIN) +
+		+ "/ssuserInfos.php?" + screenScraperDevLogin() +
 		+ "&softname=" + HttpReq::urlEncode(VERSIONED_SOFT_NAME)
 		+ "&output=xml";
 

@@ -6513,6 +6513,10 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 			{
 				auto ss = new GuiSettings(window, _("SCREENSCRAPER"));
 				ss->addInputTextConfigRow(_("PASSWORD"), "ScreenScraperPass", true, true);
+#if defined(SCREENSCRAPER_RUNTIME_DEV_LOGIN) && !defined(SCREENSCRAPER_DEV_LOGIN)
+				// The developer password is held back from backups too (#64).
+				ss->addInputTextConfigRow(_("DEVELOPER PASSWORD"), "ScreenScraperDevPass", true, true);
+#endif
 				ss->onFinalize([s, reopen] { s->close(); reopen(); });
 				window->pushGui(ss);
 			});
