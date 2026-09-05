@@ -89,6 +89,20 @@ void ThreadedCloudSync::run()
 			if (clean.rfind("Transferred:", 0) == 0)
 				clean = Utils::String::trim(clean.substr(12));
 
+			// rclone's check counter -- "Checks: 12 / 70, 17%, Listed 313" --
+			// is a comparison, not a transfer. Drawn as a bar it reads as
+			// seventy uploads, and somebody who has just exited one game asks
+			// why every game is being synced. Say what it is, and leave the
+			// bar to the transfer line.
+			const bool isChecks = clean.rfind("Checks:", 0) == 0;
+			if (isChecks)
+			{
+				auto comma = clean.find(',');
+				const std::string count = Utils::String::trim(
+					clean.substr(7, comma == std::string::npos ? std::string::npos : comma - 7));
+				clean = _("COMPARING SAVE FILES WITH THE CLOUD") + std::string(" ") + count;
+			}
+
 			if (informative && !clean.empty() && mWndNotification != nullptr)
 			{
 				mWndNotification->updateText(clean);
@@ -100,7 +114,7 @@ void ThreadedCloudSync::run()
 				// the line already passing through rather than asking rclone
 				// for it a second way.
 				auto pct = clean.find('%');
-				if (pct != std::string::npos && pct > 0)
+				if (!isChecks && pct != std::string::npos && pct > 0)
 				{
 					size_t start = pct;
 					while (start > 0 && isdigit((unsigned char)clean[start - 1]))
@@ -134,12 +148,14 @@ void ThreadedCloudSync::run()
 	if (mWndNotification != nullptr)
 	{
 		mWndNotification->updateTitle(ICONINDEX + mTitle);
-		// 3 is the scripts' "another cloud sync holds the lock". Not a
-		// failure: the boot-time sync was already doing this work, and
-		// FAILED would send somebody to a log to find out nothing went wrong.
+		// 3 is the scripts' "another cloud sync holds the lock"; 4 is "no
+		// network". Neither is a failure: the boot-time sync was already
+		// doing this work, or there was nothing to sync to -- and FAILED
+		// would send somebody to a log to find out nothing went wrong.
 		mWndNotification->updateText(ret == 0
 			? _("COMPLETED SUCCESSFULLY")
 			: ret == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
+			: ret == 4 ? _("SKIPPED - NO NETWORK CONNECTION")
 			: _("FAILED - SEE /var/log/cloud_sync.log"));
 
 		// A full bar on success; on failure the bar goes, because a
