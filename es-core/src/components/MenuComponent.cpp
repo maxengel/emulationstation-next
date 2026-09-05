@@ -75,20 +75,27 @@ MenuComponent::MenuComponent(Window* window,
 	mGrid.setEntry(mHeaderGrid, Vector2i(0, 0), false, true, Vector2i(1, 1), mTabs == nullptr ? GridFlags::BORDER_BOTTOM : GridFlags::BORDER_NONE);
 	//mGrid.setEntry(mTitle, Vector2i(0, 0), false);
 
+	// Wrap-around between the focus stops: tab strip (if any), rows, buttons.
+	// The grid gets here only when the focused stop could not move that way.
 	mGrid.setUnhandledInputCallback([this](InputConfig* config, Input input) -> bool {
 		if (config->isMappedLike("down", input)) {
-			mGrid.setCursorTo(mList);
-			mList->setCursorIndex(0);
+			// past the bottom: back to the top stop
+			if (mTabs != nullptr && mTabs->size())
+				mGrid.setCursorTo(mTabs);
+			else {
+				mGrid.setCursorTo(mList);
+				mList->setCursorIndex(0);
+			}
 			return true;
 		}
 		if (config->isMappedLike("up", input)) {
+			// past the top: down to the bottom stop, with the last row ready
+			// for the next press up from the buttons
 			mList->setCursorIndex(mList->size() - 1);
-			if (mButtons.size()) {
-				mGrid.moveCursor(Vector2i(0, 1));
-			}
-			else {
+			if (mButtonGrid)
+				mGrid.setCursorTo(mButtonGrid);
+			else
 				mGrid.setCursorTo(mList);
-			}
 			return true;
 		}
 		return false;
@@ -97,33 +104,27 @@ MenuComponent::MenuComponent(Window* window,
 	// set up list which will never change (externally, anyway)
 	mList = std::make_shared<ComponentList>(mWindow);
 
+	// The strip is a focus stop of its own (#65): up from the first row lands
+	// on it, left/right there switch tabs, down returns to the rows. Rows keep
+	// left/right for themselves, which is how an option row cycles in place.
 	if (mTabs != nullptr)
-		mGrid.setEntry(mTabs, Vector2i(0, 1), false, true, Vector2i(1, 1), GridFlags::BORDER_BOTTOM);
+		mGrid.setEntry(mTabs, Vector2i(0, 1), true, true, Vector2i(1, 1), GridFlags::BORDER_BOTTOM);
 
 	mGrid.setEntry(mList, Vector2i(0, 2), true);
 
 	updateGrid();
 	updateSize();
 
-	mGrid.resetCursor();
+	// A page opens on its first row, not on the strip.
+	mGrid.setCursorTo(mList);
 }
 
 bool MenuComponent::input(InputConfig* config, Input input)
-{	
-	if (mTabs != nullptr && mTabs->size() && mGrid.getSelectedComponent() != mButtonGrid && (config->isMappedLike("left", input) || config->isMappedLike("right", input)))
-	{
-		bool ret = mTabs->input(config, input);
-
-		if (input.type != TYPE_HAT || input.value != 0) 
-			return ret;
-
-		// continue processing if the HAT value was reset to 0
-	}
-
-	if (GuiComponent::input(config, input))
-		return true;
-
-	return false;
+{
+	// Left/right go to whichever stop is focused. The strip only sees them
+	// while it holds the focus (#65); before, it took every left/right on the
+	// page, and no row ever cycled in place.
+	return GuiComponent::input(config, input);
 }
 
 void MenuComponent::addTab(const std::string label, const std::string value, bool setCursorHere)
