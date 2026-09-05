@@ -6004,19 +6004,21 @@ static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
 	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
 	s->setSubTitle(Utils::String::toUpper(backend.label));
 
+	// Showing this choice closes prev. Each action must replace this page,
+	// not the provider page that has already been deleted.
 	s->addGroup(_("HOW DO YOU WANT TO TYPE?"));
 	s->addWithDescription(_("WITH THE ON-SCREEN KEYBOARD"),
 		_("WORKED WITH THE D-PAD, ON THIS SCREEN."),
-		nullptr, [window, backend, remoteName, prev, ready]
+		nullptr, [window, backend, remoteName, s, ready]
 		{
-			cloudOAuthShowSignIn(window, backend, remoteName, prev, false, ready);
+			cloudOAuthShowSignIn(window, backend, remoteName, s, false, ready);
 		}, "", false, true);
 
 	s->addWithDescription(_("WITH MY PHONE"),
 		_("SCAN THE CODE, THEN CHOOSE CONTINUE. YOUR PHONE BECOMES A KEYBOARD FOR THIS SCREEN."),
-		nullptr, [window, backend, remoteName, prev, ready]
+		nullptr, [window, backend, remoteName, s, ready]
 		{
-			cloudOAuthShowSignIn(window, backend, remoteName, prev, true, ready);
+			cloudOAuthShowSignIn(window, backend, remoteName, s, true, ready);
 		}, "", false, true);
 
 	cloudSetupSetButtons(s, nullptr);
