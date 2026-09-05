@@ -2,6 +2,7 @@
 
 
 #include <string>
+#include "HttpReq.h"
 #include <vector>
 #include <map>
 
@@ -211,6 +212,9 @@ class RetroAchievements
 {
 public:
 	static std::string				getApiUrl(const std::string& method, const std::string& parameters);
+	static std::string				getApiLogin();
+	static std::string				getMissingLoginMessage();
+	static std::string				getLoginErrorMessage(HttpReq& req);
 	static UserSummary				getUserSummary(const std::string& userName = "", int gameCount = 100);
 	static GameInfoAndUserProgress	getGameInfoAndUserProgress(int gameId, const std::string& userName = "");
 	static UserRankAndScore         getUserRankAndScore(const std::string& userName);

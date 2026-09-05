@@ -6501,6 +6501,10 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 			{
 				auto ra = new GuiSettings(window, _("RETROACHIEVEMENTS"));
 				ra->addInputTextConfigRow(_("PASSWORD"), "global.retroachievements.password", true);
+#ifndef CHEEVOS_DEV_LOGIN
+				// The web API key is held back from backups too (#68).
+				ra->addInputTextConfigRow(_("WEB API KEY"), "global.retroachievements.key", true);
+#endif
 				ra->onFinalize([s, reopen] { s->close(); reopen(); });
 				window->pushGui(ra);
 			});
