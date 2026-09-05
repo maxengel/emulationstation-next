@@ -720,14 +720,18 @@ std::vector<std::string> ApiSystem::getSystemInformations()
 	return executeEnumerationScript("rocknix-info --full");
 }
 
-std::vector<BiosSystem> ApiSystem::getBiosInformations(const std::string system) 
+std::vector<BiosSystem> ApiSystem::getBiosInformations(const std::string system, bool all) 
 {
 	std::vector<BiosSystem> res;
 	BiosSystem current;
 	bool isCurrent = false;
 
+	// The default output lists problems only, which is what the launch-time
+	// check wants. --all adds every present file, for the BIOS CHECK page.
 	std::string cmd = "rocknix-systems";
-	if (!system.empty())
+	if (all)
+		cmd += " --all";
+	else if (!system.empty())
 		cmd += " --filter " + system;
 
 	auto systems = executeEnumerationScript(cmd);
