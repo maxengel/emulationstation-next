@@ -163,13 +163,19 @@ void ThreadedCloudSync::run()
 		// measure of how much of the failure has completed.
 		mWndNotification->updatePercent(ret == 0 ? 100 : -1);
 
-		// Nothing is running any more, so stop claiming otherwise: this is
-		// long enough to read, and somebody who wants to start another sync
-		// in the meantime should not be told one is already going.
+		// Nothing is running any more, so stop claiming otherwise: somebody
+		// who wants to start another sync while the card is still up should
+		// not be told one is already going.
 		if (ThreadedCloudSync::mInstance == this)
 			ThreadedCloudSync::mInstance = nullptr;
 
-		std::this_thread::sleep_for(std::chrono::seconds(5));
+		// Hold the outcome long enough to read, then let the card fade.
+		// Success is two words and a full bar, so three seconds; a skip or a
+		// failure is a sentence somebody has to act on, so five. Five for
+		// everything dated from when a sync took 18 seconds -- once the exit
+		// sync came down to about five, the card spent as long saying it was
+		// done as it had spent working.
+		std::this_thread::sleep_for(std::chrono::seconds(ret == 0 ? 3 : 5));
 	}
 
 	delete this;
