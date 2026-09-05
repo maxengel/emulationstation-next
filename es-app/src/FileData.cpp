@@ -821,11 +821,19 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	//
 	// Not gated on exitCode: an emulator that crashed may still have written a
 	// save, and that is the copy most worth having.
+	//
+	// --saves-only --recent: the after-every-game job is the saves this
+	// session touched, pushed now. The system-settings archive is the
+	// occasional job and has its own row. Comparing every save on the device
+	// against the cloud was 18 seconds of somebody's time to move nothing,
+	// most of it remote round trips that had nothing to do with the game
+	// just played. With no network, cloud_backup answers exit 4 at once
+	// rather than waiting for a probe to time out.
 	if (SystemConf::getInstance()->get("cloudsaves.gameexit") == "1"
 		&& Utils::FileSystem::exists("/usr/bin/cloud_backup")
 		&& !ThreadedCloudSync::isRunning())
 	{
-		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes",
+		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent",
 			_("SAVE DATA SYNC"), _("SYNCING SAVE DATA TO THE CLOUD"));
 	}
 
