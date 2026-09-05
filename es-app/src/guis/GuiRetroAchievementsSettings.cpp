@@ -26,6 +26,12 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	// retroachievements, username, password
 	addInputTextConfigRow(_("USERNAME"), "global.retroachievements.username", false);
 	addInputTextConfigRow(_("PASSWORD"), "global.retroachievements.password", true);
+#ifndef CHEEVOS_DEV_LOGIN
+	// A fork build compiles no developer pair in, so the menu pages authenticate
+	// with the player's own web API key, from the account's settings page on
+	// retroachievements.org (#68). Held back from backups like the password.
+	addInputTextConfigRow(_("WEB API KEY"), "global.retroachievements.key", true);
+#endif
 
 	addGroup(_("OPTIONS"));
 

@@ -125,28 +125,63 @@ const std::set<unsigned short> consolesWithmd5hashes
 	RC_CONSOLE_SUPERVISION
 };
 
+// The web API authenticates with a user and that user's web API key
+// ("z=<user>&y=<key>"). Upstream compiles a pair in (CHEEVOS_DEV_LOGIN). A
+// fork build compiles none in, so the player's own key -- from the account's
+// settings page on retroachievements.org, entered under RETROACHIEVEMENTS
+// SETTINGS -- goes with their username (#68). Empty means the API cannot be
+// asked, and callers say so instead of letting it answer 401.
+std::string RetroAchievements::getApiLogin()
+{
+#ifdef CHEEVOS_DEV_LOGIN
+	return CHEEVOS_DEV_LOGIN;
+#else
+	const std::string user = SystemConf::getInstance()->get("global.retroachievements.username");
+	const std::string key = SystemConf::getInstance()->get("global.retroachievements.key");
+	if (user.empty() || key.empty())
+		return "";
+	return "z=" + HttpReq::urlEncode(user) + "&y=" + HttpReq::urlEncode(key);
+#endif
+}
+
+std::string RetroAchievements::getMissingLoginMessage()
+{
+	return _("RETROACHIEVEMENTS NEEDS YOUR WEB API KEY.\nENTER IT UNDER RETROACHIEVEMENTS SETTINGS, NEXT TO YOUR PASSWORD.");
+}
+
+// A 401 from the API is the key being wrong; say that in English rather than
+// showing the API's JSON.
+std::string RetroAchievements::getLoginErrorMessage(HttpReq& req)
+{
+	if (req.status() == HttpReq::REQ_401_FORBIDDEN || req.status() == HttpReq::REQ_403_BADLOGIN)
+		return _("RETROACHIEVEMENTS REJECTED YOUR WEB API KEY.\nCHECK IT AND YOUR USERNAME UNDER RETROACHIEVEMENTS SETTINGS.");
+
+	return req.getErrorMsg();
+}
+
 // Use empty UserAgent with doRequest.php calls
 static HttpReqOptions getHttpOptions()
 {
 	HttpReqOptions options;
 
-#ifdef CHEEVOS_DEV_LOGIN
-	std::string ret = Utils::String::extractString(CHEEVOS_DEV_LOGIN, "z=", "&");
-	ret =  ret + "/" + Utils::String::replace(RESOURCE_VERSION_STRING, ",", ".");		 
-	options.userAgent = ret;
-#endif	
+	std::string login = RetroAchievements::getApiLogin();
+	if (!login.empty())
+	{
+		std::string ret = Utils::String::extractString(login, "z=", "&");
+		ret =  ret + "/" + Utils::String::replace(RESOURCE_VERSION_STRING, ",", ".");		 
+		options.userAgent = ret;
+	}
 
 	return options;
 }
 
 std::string RetroAchievements::getApiUrl(const std::string& method, const std::string& parameters)
 {
-#ifdef CHEEVOS_DEV_LOGIN
-	auto options = std::string(CHEEVOS_DEV_LOGIN);
-	return "https://retroachievements.org/API/"+ method +".php?"+ options +"&" + parameters;
-#else 
-	return "https://retroachievements.org/API/" + method + ".php?" + parameters;
-#endif
+	std::string login = getApiLogin();
+	if (login.empty())
+		return "https://retroachievements.org/API/" + method + ".php?" + parameters;
+
+	return "https://retroachievements.org/API/" + method + ".php?" + login + "&" + parameters;
 }
 
 std::string GameInfoAndUserProgress::getImageUrl(const std::string& image)
@@ -218,9 +253,11 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId
 	GameInfoAndUserProgress ret;
 	ret.ID = 0;
 
-#ifndef CHEEVOS_DEV_LOGIN
-	return ret;
-#endif
+	if (getApiLogin().empty())
+	{
+		ret.Title = getMissingLoginMessage();
+		return ret;
+	}
 
 	auto options = getHttpOptions();
 	HttpReq httpreq(getApiUrl("API_GetGameInfoAndUserProgress", "u=" + HttpReq::urlEncode(usrName) + "&g=" + std::to_string(gameId)), &options);
@@ -283,7 +320,7 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId
 		std::sort(ret.Achievements.begin(), ret.Achievements.end(), sortAchievements);
 	}
 	else
-		ret.Title = httpreq.getErrorMsg();
+		ret.Title = getLoginErrorMessage(httpreq);
 
 	return ret;
 }
@@ -295,6 +332,12 @@ UserSummary RetroAchievements::getUserSummary(const std::string& userName, int g
 		usrName = SystemConf::getInstance()->get("global.retroachievements.username");
 
 	UserSummary ret;
+
+	if (getApiLogin().empty())
+	{
+		ret.Status = getMissingLoginMessage();
+		return ret;
+	}
 
 	std::string count = std::to_string(gameCount);
 
@@ -395,7 +438,7 @@ UserSummary RetroAchievements::getUserSummary(const std::string& userName, int g
 		}
 	}
 	else
-		ret.Status = httpreq.getErrorMsg();
+		ret.Status = getLoginErrorMessage(httpreq);
 
 	return ret;
 }
@@ -407,6 +450,9 @@ UserRankAndScore RetroAchievements::getUserRankAndScore(const std::string& userN
 		usrName = SystemConf::getInstance()->get("global.retroachievements.username");
 
 	UserRankAndScore ret;
+
+	if (getApiLogin().empty())
+		return ret;
 
 	auto options = getHttpOptions();
 
