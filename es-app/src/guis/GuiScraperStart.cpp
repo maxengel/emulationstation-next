@@ -6,6 +6,7 @@
 #include "FileData.h"
 #include "SystemData.h"
 #include "scrapers/ThreadedScraper.h"
+#include "scrapers/ScreenScraper.h"
 #include "LocaleES.h"
 #include "GuiLoading.h"
 #include "views/gamelist/IGameListView.h"
@@ -340,6 +341,13 @@ void GuiScraperStart::loadAccountsPage()
 	addGroup(_("SCREENSCRAPER"));
 	addInputTextConfigRow(_("USERNAME"), "ScreenScraperUser", false, true);
 	addInputTextConfigRow(_("PASSWORD"), "ScreenScraperPass", true, true);
+#if defined(SCREENSCRAPER_RUNTIME_DEV_LOGIN) && !defined(SCREENSCRAPER_DEV_LOGIN)
+	// This build carries no developer pair; the player enters theirs here,
+	// beside the account it belongs to (#64). Someone with their own developer
+	// access types the same pair in both places.
+	addInputTextConfigRow(_("DEVELOPER ID"), "ScreenScraperDevId", false, true);
+	addInputTextConfigRow(_("DEVELOPER PASSWORD"), "ScreenScraperDevPass", true, true);
+#endif
 
 	addGroup(_("IGDB"));
 	addInputTextConfigRow(_("CLIENT ID"), "IGDBClientID", false, true);
@@ -348,6 +356,17 @@ void GuiScraperStart::loadAccountsPage()
 
 void GuiScraperStart::pressedStart()
 {
+#if defined(SCREENSCRAPER_RUNTIME_DEV_LOGIN) && !defined(SCREENSCRAPER_DEV_LOGIN)
+	// Without a developer pair the API refuses every request with a French
+	// login error. Say what is missing and where it goes.
+	if (Settings::getInstance()->getString("Scraper") == "ScreenScraper" && screenScraperDevLogin().empty())
+	{
+		mWindow->pushGui(new GuiMsgBox(mWindow,
+			_("SCREENSCRAPER NEEDS A DEVELOPER ID AND PASSWORD.\nENTER YOURS UNDER OPTIONS, NEXT TO YOUR ACCOUNT.")));
+		return;
+	}
+#endif
+
 	std::vector<SystemData*> systems = mSystems->getSelectedObjects();
 	for(auto system : systems)
 	{
