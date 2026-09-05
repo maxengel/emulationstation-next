@@ -10,6 +10,7 @@
 #include "LocaleES.h"
 #include "GuiLoading.h"
 #include "views/gamelist/IGameListView.h"
+#include <set>
 
 GuiScraperStart::GuiScraperStart(Window* window)
 	: GuiSettings(window, _("SCRAPER"), true)
@@ -80,12 +81,30 @@ void GuiScraperStart::loadScrapPage()
 
 	auto scraper = Scraper::getScraper(scraperName);
 
+	// GAMES TO SCRAPE FOR, IGNORE RECENTLY SCRAPED GAMES and SYSTEMS INCLUDED are
+	// remembered (#67). They used to be rebuilt with hard-coded defaults on every
+	// visit and on every tab switch, so a choice made before stepping to OPTIONS
+	// was gone on the way back. Each is written by a save function, which runs
+	// when the tab changes and when the page closes — the path the OPTIONS rows
+	// already use.
+
 	// Media Filter
+	std::string mediaFilter = Settings::getInstance()->getString("ScraperFilter");
+	if (mediaFilter != "all" && mediaFilter != "missing-all")
+		mediaFilter = "missing-any";
+
 	mFilters = std::make_shared< OptionListComponent<FilterFunc> >(mWindow, _("GAMES TO SCRAPE FOR"), false);
-	mFilters->add(_("ALL"), [](FileData*) -> bool { return true; }, false);
-	mFilters->add(_("GAMES MISSING ANY MEDIA"), [this, scraper](FileData* g) -> bool { mOverwriteMedias = false; return scraper->hasMissingMedia(g); }, true);
-	mFilters->add(_("GAMES MISSING ALL MEDIA"), [this, scraper](FileData* g) -> bool { mOverwriteMedias = true; return !scraper->hasAnyMedia(g); }, false);
+	mFilters->add(_("ALL"), [](FileData*) -> bool { return true; }, mediaFilter == "all");
+	mFilters->add(_("GAMES MISSING ANY MEDIA"), [this, scraper](FileData* g) -> bool { mOverwriteMedias = false; return scraper->hasMissingMedia(g); }, mediaFilter == "missing-any");
+	mFilters->add(_("GAMES MISSING ALL MEDIA"), [this, scraper](FileData* g) -> bool { mOverwriteMedias = true; return !scraper->hasAnyMedia(g); }, mediaFilter == "missing-all");
 	addWithLabel(_("GAMES TO SCRAPE FOR"), mFilters);
+	addSaveFunc([this]
+	{
+		static const char* keys[] = { "all", "missing-any", "missing-all" };
+		int i = mFilters->getSelectedIndex();
+		if (i >= 0 && i < 3)
+			Settings::getInstance()->setString("ScraperFilter", keys[i]);
+	});
 
 	// Date Filter
 	auto now = Utils::Time::now();
@@ -98,7 +117,10 @@ void GuiScraperStart::loadScrapPage()
 		return date->getTime() <= (now - (days * 86400));
 	};
 
-	int idx = 3;
+	// Upstream declared this setting (default 3, LAST 15 DAYS) and never read it.
+	int idx = Settings::getInstance()->getInt("RecentlyScrappedFilter");
+	if (idx < 0 || idx > 6)
+		idx = 3;
 
 	mDateFilters = std::make_shared< OptionListComponent<FilterFunc> >(mWindow, _("IGNORE RECENTLY SCRAPED GAMES"), false);
 	mDateFilters->add(_("NO"), [](FileData*) -> bool { return true; }, idx == 0);
@@ -109,6 +131,12 @@ void GuiScraperStart::loadScrapPage()
 	mDateFilters->add(_("LAST 3 MONTHS"), [this, scraperName, isOlderThan](FileData* g) -> bool { return isOlderThan(scraperName, g, 90); }, idx == 5);
 	mDateFilters->add(_("LAST YEAR"), [this, scraperName, isOlderThan](FileData* g) -> bool { return isOlderThan(scraperName, g, 365); }, idx == 6);
 	addWithLabel(_("IGNORE RECENTLY SCRAPED GAMES"), mDateFilters);
+	addSaveFunc([this]
+	{
+		int i = mDateFilters->getSelectedIndex();
+		if (i >= 0)
+			Settings::getInstance()->setInt("RecentlyScrappedFilter", i);
+	});
 
 	// System Filter
 	std::string currentSystem;
@@ -130,13 +158,55 @@ void GuiScraperStart::loadScrapPage()
 		}
 	}
 
-	mSystems = std::make_shared<OptionListComponent<SystemData*>>(mWindow, _("SYSTEMS INCLUDED"), true);
+	// Opened from a game list, the page pre-selects that system ("scrape this
+	// one"). Opened from the main menu, it restores the set used last time, and
+	// falls back to today's default — every system with a platform id — when
+	// nothing was remembered or the remembered names match no listed system.
+	std::set<std::string> remembered;
+	for (auto& name : Utils::String::split(Settings::getInstance()->getString("ScraperSystems"), ','))
+		if (!name.empty())
+			remembered.insert(name);
 
+	std::vector<SystemData*> listed;
+	bool anyRemembered = false;
 	for (auto system : SystemData::sSystemVector)
 		if (system->isGameSystem() && !system->isCollection() && !system->hasPlatformId(PlatformIds::PLATFORM_IGNORE) && scraper->isSupportedPlatform(system))
-			mSystems->add(system->getFullName(), system, currentSystem.empty() ? !system->getPlatformIds().empty() : system->getName() == currentSystem && !system->getPlatformIds().empty());
+		{
+			listed.push_back(system);
+			if (remembered.count(system->getName()))
+				anyRemembered = true;
+		}
+
+	bool useRemembered = currentSystem.empty() && anyRemembered;
+
+	mSystems = std::make_shared<OptionListComponent<SystemData*>>(mWindow, _("SYSTEMS INCLUDED"), true);
+
+	for (auto system : listed)
+	{
+		bool selected;
+		if (!currentSystem.empty())
+			selected = system->getName() == currentSystem && !system->getPlatformIds().empty();
+		else if (useRemembered)
+			selected = remembered.count(system->getName()) > 0;
+		else
+			selected = !system->getPlatformIds().empty();
+
+		mSystems->add(system->getFullName(), system, selected);
+	}
 
 	addWithLabel(_("SYSTEMS INCLUDED"), mSystems);
+
+	// A game list's pre-selection is contextual; only a set chosen from the main
+	// menu is worth remembering.
+	if (currentSystem.empty())
+		addSaveFunc([this]
+		{
+			std::string names;
+			for (auto system : mSystems->getSelectedObjects())
+				names += (names.empty() ? "" : ",") + system->getName();
+
+			Settings::getInstance()->setString("ScraperSystems", names);
+		});
 
 	mMenu.clearButtons();
 	mMenu.addButton(_("SCRAPE NOW"), _("START"), std::bind(&GuiScraperStart::pressedStart, this));

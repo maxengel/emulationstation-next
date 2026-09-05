@@ -218,6 +218,8 @@ void Settings::setDefaults()
 	mBoolMap["DrawGunCrosshair"] = true;
 	
 	mIntMap["RecentlyScrappedFilter"] = 3;
+	mStringMap["ScraperFilter"] = "missing-any"; // #67: GAMES TO SCRAPE FOR — all / missing-any / missing-all
+	mStringMap["ScraperSystems"] = "";            // #67: SYSTEMS INCLUDED, comma-joined system names; empty = default set
 	
 	mIntMap["ScreenSaverTime"] = Settings::_ScreenSaverTime;
 	mIntMap["FpsLimit"] = 0;
