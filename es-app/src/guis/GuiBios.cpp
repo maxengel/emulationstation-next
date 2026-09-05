@@ -53,8 +53,13 @@ GuiBios::GuiBios(Window* window, const std::vector<BiosSystem> bioses)
 
 	// Tabs
 	mTabs = std::make_shared<ComponentTab>(mWindow);
-	mTabs->addTab(_("Installed systems"));
-	mTabs->addTab(_("All"));	
+	// Named for what the filter is, not for a concept the player does not
+	// have. "Installed systems" meant "systems EmulationStation has loaded",
+	// which it does only when a system has games -- so the first tab is the
+	// BIOS gaps for the games on this device, and the maintainer could not
+	// tell that from the label.
+	mTabs->addTab(_("SYSTEMS WITH GAMES"));
+	mTabs->addTab(_("ALL SYSTEMS"));
 
 	mTabs->setCursorChangedCallback([&](const CursorState& /*state*/)
 		{			
@@ -199,11 +204,24 @@ void GuiBios::loadList()
 		// is the whole difference between a finished check and a broken one.
 		auto text = std::make_shared<TextComponent>(mWindow,
 			mBios.size() == 0 ? _("NO MISSING BIOS")
-			: mTabFilter == 0 ? _("NO MISSING BIOS FOR THE SYSTEMS YOU HAVE GAMES FOR - SEE 'ALL'")
+			: mTabFilter == 0 ? _("NO MISSING BIOS FOR THE SYSTEMS YOU HAVE GAMES FOR. SEE ALL SYSTEMS FOR THE REST.")
 			: _("NO MISSING BIOS"),
 			font, color);
 		if (EsLocale::isRTL())
 			text->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
+
+		// Wrap, or the sentence above runs off the right edge of a 640-wide
+		// panel. A TextComponent measures itself as one line when it is
+		// built; the list then keeps that height while widening it, so it
+		// never re-wraps. Height 0 hands the height back to the text, which
+		// wraps at the width it is given and grows the row to fit. The list
+		// may not be sized yet on the first pass, so fall back to the
+		// window's own width rule.
+		float wrapWidth = mList->getSize().x();
+		if (wrapWidth <= 0)
+			wrapWidth = Renderer::ScreenSettings::fullScreenMenus() ? Renderer::getScreenWidth() : WINDOW_WIDTH;
+		text->setMultiLine(MultiLineType::MULTILINE);
+		text->setSize(wrapWidth * 0.94f, 0);
 
 		ComponentListRow row;
 		row.addElement(text, true);
