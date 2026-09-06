@@ -3947,10 +3947,20 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			// would do next, in the bar with BACK and the verb -- rows in the
 			// list read as choices of their own (maintainer, 2026-09-06).
 			auto proceed = std::make_shared<bool>(false);
-			if (onDone)
-				s->onFinalize([proceed, onDone] { if (*proceed) onDone(); });
+			// Rebuilding the bar destroys its buttons, so it must never run
+			// from inside a button's own callback: the first cut did, and
+			// EmulationStation died on the SELECT ALL press (VM, 2026-09-06).
+			// The rebuild is posted to the UI thread instead, and the switches
+			// stay quiet while the button sets them. A weak reference from
+			// the callbacks to the rebuild breaks the cycle a shared one made.
 			auto buttons = std::make_shared<std::function<void()>>();
-			*buttons = [s, switches, proceed, onDone, proceedLabel, buttons]()
+			std::weak_ptr<std::function<void()>> weak = buttons;
+			auto quiet = std::make_shared<bool>(false);
+			auto later = [window, weak]
+			{
+				window->postToUiThread([weak] { if (auto b = weak.lock()) (*b)(); });
+			};
+			*buttons = [s, switches, proceed, onDone, proceedLabel, quiet, later]()
 			{
 				bool allOn = !switches->empty();
 				for (auto& e : *switches)
@@ -3958,20 +3968,25 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				s->getMenu().clearButtons();
 				s->getMenu().addButton(_("BACK"), _("back"), [s] { s->close(); });
 				s->getMenu().addButton(allOn ? _("SELECT NONE") : _("SELECT ALL"), allOn ? _("select none") : _("select all"),
-					[switches, allOn, buttons]
+					[switches, allOn, quiet, later]
 					{
+						*quiet = true;
 						for (auto& e : *switches)
 							e.second->setState(!allOn);
-						(*buttons)();
+						*quiet = false;
+						later();
 					});
 				if (onDone)
 					s->getMenu().addButton(proceedLabel.empty() ? _("CONTINUE") : proceedLabel,
 						_("continue"), [s, proceed] { *proceed = true; s->close(); });
 			};
 			for (auto& e : *switches)
-				e.second->setOnChangedCallback([buttons] { (*buttons)(); });
+				e.second->setOnChangedCallback([quiet, later] { if (!*quiet) later(); });
 			(*buttons)();
 			window->pushGui(s);
+			// The page owns the rebuild; nothing else holds the shared_ptr, so
+			// the weak references above go dead the moment the page does.
+			s->onFinalize([buttons, proceed, onDone] { if (*proceed && onDone) onDone(); });
 		}));
 }
 
