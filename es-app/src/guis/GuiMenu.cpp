@@ -3956,9 +3956,19 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			auto buttons = std::make_shared<std::function<void()>>();
 			std::weak_ptr<std::function<void()>> weak = buttons;
 			auto quiet = std::make_shared<bool>(false);
-			auto later = [window, weak]
+			// fromButton: the toggle was pressed, so the rebuilt bar hands the
+			// focus back to it; a switch row's change leaves the list focused.
+			auto later = [window, weak, s](bool fromButton)
 			{
-				window->postToUiThread([weak] { if (auto b = weak.lock()) (*b)(); });
+				window->postToUiThread([weak, s, fromButton]
+				{
+					if (auto b = weak.lock())
+					{
+						(*b)();
+						if (fromButton)
+							s->getMenu().setCursorToButton(1);
+					}
+				});
 			};
 			*buttons = [s, switches, proceed, onDone, proceedLabel, quiet, later]()
 			{
@@ -3974,14 +3984,14 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 						for (auto& e : *switches)
 							e.second->setState(!allOn);
 						*quiet = false;
-						later();
+						later(true);
 					});
 				if (onDone)
 					s->getMenu().addButton(proceedLabel.empty() ? _("CONTINUE") : proceedLabel,
 						_("continue"), [s, proceed] { *proceed = true; s->close(); });
 			};
 			for (auto& e : *switches)
-				e.second->setOnChangedCallback([quiet, later] { if (!*quiet) later(); });
+				e.second->setOnChangedCallback([quiet, later] { if (!*quiet) later(false); });
 			(*buttons)();
 			window->pushGui(s);
 			// The page owns the rebuild; nothing else holds the shared_ptr, so

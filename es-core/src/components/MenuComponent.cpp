@@ -485,6 +485,17 @@ void MenuComponent::setButtonGrid(std::shared_ptr<GuiComponent> grid)
 	}
 }
 
+void MenuComponent::setCursorToButton(int index)
+{
+	if (!mButtonGrid || index < 0 || index >= (int) mButtons.size())
+		return;
+	// The inner cursor first, then the outer focus, so the focus event that
+	// the outer move raises lands on the button asked for.
+	std::static_pointer_cast<ComponentGrid>(mButtonGrid)->setCursorTo(Vector2i(index, 0));
+	mGrid.setCursorTo(mButtonGrid);
+	updateHelpPrompts();
+}
+
 void MenuComponent::updateGrid()
 {
 	if (mButtonGrid)

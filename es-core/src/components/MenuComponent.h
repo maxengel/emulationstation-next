@@ -50,6 +50,10 @@ public:
 
 	inline void setCursorToList() { mGrid.setCursorTo(mList); }
 	inline void setCursorToButtons() { if (mButtonGrid) mGrid.setCursorTo(mButtonGrid); }
+	// Focus one button by index. A bar rebuilt with clearButtons()/addButton()
+	// comes back with its cursor on the first button and nothing highlighted;
+	// a page that relabels a button in place hands the focus back to it here.
+	void setCursorToButton(int index);
 	inline bool isCursorToButtons() { return mButtonGrid && mGrid.isCursorTo(mButtonGrid); }
 
 	inline int getCursorIndex() const { return mList->getCursorIndex(); }
