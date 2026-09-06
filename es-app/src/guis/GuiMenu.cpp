@@ -4782,7 +4782,7 @@ void GuiMenu::openGamesSettings()
 		});
 
 		s->addWithDescription(_("MANAGE CLOUD STORAGE"),
-			_("BACK UP OR RESTORE, CHOOSE ROMS AND BIOS, SET WHEN SAVES SYNC, AND CONNECT OR REPAIR YOUR CLOUD STORAGE."), nullptr,
+			_("BACKUP AND RESTORE, SAVE MANAGEMENT, CLOUD STORAGE SETUP."), nullptr,
 			[window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
 
