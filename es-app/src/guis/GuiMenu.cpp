@@ -4015,15 +4015,15 @@ static std::string cloudLastRunDetail(const std::string& name)
 
 // One data class, with what it carries and how it last went.
 static void cloudAddClassRow(GuiSettings* s, Window* window, bool configured,
-	const std::string& label, const std::string& carries, const std::string& stamp,
+	const std::string& label, const std::string& stamp,
 	const std::function<void()>& action)
 {
-	// Three lines: what it is, what it carries, how it last went. They were one
-	// run-on description separated by dashes, which is a sentence pretending to
-	// be a table -- the outcome is the part somebody scans for, and it was
-	// buried mid-line.
-	cloudAddGatedEntry(s, window, configured, label,
-		carries + "\n" + cloudLastRunDetail(stamp), action);
+	// Two lines, never three: the label says what and where, and the one line
+	// under it is how it last went -- the part somebody scans for after walking
+	// off. What the row carries (game saves, save states, and screenshots) is
+	// said in its confirmation dialog, where it is additive rather than a third
+	// line of small text. Maintainer's rule, 2026-09-06 (D-UI-023).
+	cloudAddGatedEntry(s, window, configured, label, cloudLastRunDetail(stamp), action);
 }
 
 // Step two: having chosen a direction, tick what moves and confirm.
@@ -4059,8 +4059,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	auto saves = std::make_shared<SwitchComponent>(window);
 	saves->setState(remembered("saves", true));
 	s->addWithDescription(_("SAVES"),
-		_("GAME SAVES, SAVE STATES, AND SCREENSHOTS") + std::string("\n")
-			+ cloudLastRunDetail(backup ? "backup" : "restore"), saves);
+		_("GAME SAVES, SAVE STATES, AND SCREENSHOTS"), saves);
 
 	auto content = std::make_shared<SwitchComponent>(window);
 	const bool hasContent = Utils::FileSystem::exists(
@@ -4069,15 +4068,13 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	if (hasContent)
 	{
 		s->addWithDescription(_("ROMS AND BIOS"),
-			_("THE SYSTEMS YOU CHOSE FOR THIS DEVICE") + std::string("\n")
-				+ cloudLastRunDetail(backup ? "content-backup" : "content-restore"), content);
+			_("THE SYSTEMS YOU CHOSE FOR THIS DEVICE"), content);
 	}
 
 	auto settings = std::make_shared<SwitchComponent>(window);
 	settings->setState(remembered("settings", false));
 	s->addWithDescription(_("SETTINGS"),
-		_("CONFIGURATION, CONTROLS, AND THEMES") + std::string("\n")
-			+ cloudLastRunDetail(backup ? "settings-backup" : "settings-restore"), settings);
+		_("CONFIGURATION, CONTROLS, AND THEMES"), settings);
 
 	// Written on the way out, by whichever exit -- BACK included, because a
 	// tick somebody set and then thought better of running is still their
@@ -4761,21 +4758,18 @@ void GuiMenu::openGamesSettings()
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		s->addGroup(_("CLOUD SETTINGS"));
 
-		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"),
-			_("TWO-WAY: THE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), [window] {
+		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"), "", [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVES"), _("SYNCING SAVES"));
 				}, _("NO"), nullptr));
 		});
-		cloudAddClassRow(s, window, cloudConfigured, _("BACK UP SAVES TO THE CLOUD"),
-			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: DEVICE TO CLOUD"), "backup", [window] {
+		cloudAddClassRow(s, window, cloudConfigured, _("BACK UP SAVES TO THE CLOUD"), "backup", [window] {
 			window->pushGui(new GuiMsgBox(window, _("BACK UP GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
 				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("BACK UP SAVES"), _("BACKING UP SAVES")); },
 				_("NO"), nullptr));
 		});
-		cloudAddClassRow(s, window, cloudConfigured, _("RESTORE SAVES FROM THE CLOUD"),
-			_("GAME SAVES, SAVE STATES, AND SCREENSHOTS: CLOUD TO DEVICE"), "restore", [window] {
+		cloudAddClassRow(s, window, cloudConfigured, _("RESTORE SAVES FROM THE CLOUD"), "restore", [window] {
 			window->pushGui(new GuiMsgBox(window, _("RESTORE GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
 				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("RESTORE SAVES"), _("RESTORING SAVES")); },
 				_("NO"), nullptr));
