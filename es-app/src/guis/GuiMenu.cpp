@@ -4303,8 +4303,9 @@ void GuiMenu::openCloud(Window* window)
 	// reaches first.
 	if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
 	{
-		cloudAddClassRow(s, window, configured, _("MATCH THIS DEVICE TO THE CLOUD"),
-			_("REMOVE ROMS YOUR CLOUD NO LONGER HAS."), "content-match",
+		// Two lines (D-UI-023): what it removes is named, ROM by ROM, in the
+		// preview that precedes the confirmation -- stronger than a sentence here.
+		cloudAddClassRow(s, window, configured, _("MATCH THIS DEVICE TO THE CLOUD"), "content-match",
 			[window] { cloudOpenMatch(window); });
 	}
 
