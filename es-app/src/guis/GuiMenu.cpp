@@ -3895,9 +3895,16 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			for (auto& f : found)
 			{
 				const bool isBios = (f.name == "bios");
+				// BIOS is not a system and no longer a pick here: it comes with the
+				// tier whenever the cloud has it (cloud_content_restore --selected),
+				// and the tier's own switch already says ROMS AND BIOS. The row
+				// existed because bios was once treated like any other folder.
+				// Maintainer, 2026-09-06.
+				if (isBios)
+					continue;
 				if (!isBios && !headedSystems)
 				{
-					s->addGroup(_("ROMS AND BIOS IN YOUR CLOUD"));
+					s->addGroup(_("ROMS IN YOUR CLOUD"));
 					headedSystems = true;
 				}
 				auto sw = std::make_shared<SwitchComponent>(window);

@@ -4,6 +4,7 @@
 #include "ThemeData.h"
 #include "LocaleES.h"
 #include "utils/StringUtil.h"
+#include "utils/FileSystemUtil.h"
 #include "Log.h"
 
 #include <cctype>
@@ -26,43 +27,40 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	const float SH = Renderer::getScreenHeight();
 	setSize(SW, SH);
 
-	mTitle  = std::make_shared<TextComponent>(window, Utils::String::toUpper(title),
-		theme->Title.font, theme->Title.color, ALIGN_CENTER);
-	mStatus = std::make_shared<TextComponent>(window, _("STARTING..."),
-		theme->Text.font, theme->Text.color, ALIGN_CENTER);
-	mDetail = std::make_shared<TextComponent>(window, "",
-		theme->Text.font, theme->Text.color, ALIGN_CENTER);
-	mFooter = std::make_shared<TextComponent>(window, "",
-		theme->TextSmall.font, theme->TextSmall.color, ALIGN_CENTER);
+	mTextFont  = theme->Text.font;
+	mSmallFont = theme->TextSmall.font;
+	mTitle    = std::make_shared<TextComponent>(window, Utils::String::toUpper(title), theme->Title.font, theme->Title.color, ALIGN_CENTER);
+	mStatus   = std::make_shared<TextComponent>(window, _("PREPARING..."), mTextFont,  theme->Text.color,      ALIGN_CENTER);
+	mFileLine = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
+	mUnit     = std::make_shared<TextComponent>(window, "",                mTextFont,  theme->Text.color,      ALIGN_CENTER);
+	mUnitLine = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
+	mElapsed  = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
+	mFooter   = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 
+	// One column, 0.78 of the width, every line fitted to it (fitOneLine) so a
+	// long ROM name is clipped rather than wrapped into the line beneath -- the
+	// overlap this layout replaces came from boxes that grew with their text
+	// while their neighbours sat at fixed heights.
 	const float w  = SW * 0.78f;
 	const float cx = SW * 0.5f;
-	for (auto& t : { mTitle, mStatus, mDetail, mFooter })
-	{
+	mLineWidth = w;
+	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mElapsed, mFooter })
 		t->setSize(w, 0);
-		t->setPosition(cx - w / 2.0f, 0);
-	}
-
-	// One column, in the order somebody reads it: what this is, what it is
-	// doing right now, how much is left, how long it has been going.
-	mTitle ->setPosition(cx - w / 2.0f, SH * 0.32f);
-	mStatus->setPosition(cx - w / 2.0f, SH * 0.44f);
-	mDetail->setPosition(cx - w / 2.0f, SH * 0.52f);
-	mFooter->setPosition(cx - w / 2.0f, SH * 0.66f);
-
-	mPanelSize = Vector2f(w + SW * 0.06f, SH * 0.46f);
-	mPanelPos  = Vector2f(cx - mPanelSize.x() / 2.0f, SH * 0.28f);
-	mBackground.fitTo(mPanelSize, Vector3f(mPanelPos.x(), mPanelPos.y(), 0), Vector2f(-32, -32));
-
-	// The spinner occupies the band the progress bar uses, since only one of
-	// the two is ever shown. It must be given a size: BusyComponent::onSizeChanged
-	// returns immediately at zero, so an unsized one lays out nothing and draws
-	// nothing -- silently, which is how this page spent a whole restore looking
-	// like it had not started.
-	mBusyAnim.setBackgroundVisible(false);
+	mTitle   ->setPosition(cx - w / 2.0f, SH * 0.20f);
+	mStatus  ->setPosition(cx - w / 2.0f, SH * 0.29f);   // 1. the ROM
+	mFileLine->setPosition(cx - w / 2.0f, SH * 0.34f);   // 2. its transfer
+	mUnit    ->setPosition(cx - w / 2.0f, SH * 0.41f);   // 3. the system
+	mUnitLine->setPosition(cx - w / 2.0f, SH * 0.46f);   // 4. the system's transfer
+	mBusyAnim.setBackgroundVisible(false);                //   5. the bar
 	mBusyAnim.setText("");
-	mBusyAnim.setSize(w, SH * 0.06f);
-	mBusyAnim.setPosition(cx - w / 2.0f, SH * 0.58f);
+	mBusyAnim.setSize(w, SH * 0.05f);
+	mBusyAnim.setPosition(cx - w / 2.0f, SH * 0.53f);
+	mElapsed ->setPosition(cx - w / 2.0f, SH * 0.61f);   // 6. elapsed
+	mFooter  ->setPosition(cx - w / 2.0f, SH * 0.66f);   // 7. the notice
+
+	mPanelSize = Vector2f(w + SW * 0.06f, SH * 0.56f);
+	mPanelPos  = Vector2f(cx - mPanelSize.x() / 2.0f, SH * 0.16f);
+	mBackground.fitTo(mPanelSize, Vector3f(mPanelPos.x(), mPanelPos.y(), 0), Vector2f(-32, -32));
 
 	mHandle = new std::thread(&GuiCloudTransfer::threadRun, this);
 }
@@ -116,10 +114,8 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 	// in the app that has one.
 	mBackground.render(trans);
 
-	mTitle->render(trans);
-	mStatus->render(trans);
-	mDetail->render(trans);
-	mFooter->render(trans);
+	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mElapsed, mFooter })
+		t->render(trans);
 
 	std::unique_lock<std::mutex> lock(mMutex);
 	const bool finished = mFinished;
@@ -146,51 +142,102 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 	}
 }
 
+// Clip to one line: a long ROM name gets an ellipsis, never a second line.
+std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width)
+{
+	if (!font || text.empty() || font->sizeText(text).x() <= width)
+		return text;
+	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
+		text.pop_back();
+	return text + "...";
+}
+
+// rclone's fragments in the player's units and separators:
+//   "45% /2.5Mi, 300Ki/s, 5s"                      -> "45% OF 2.5 MB · 300 KB/S · 5S LEFT"
+//   "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"  -> "1.4 GB OF 2.0 GB · 70% · 2.5 MB/S · 3M2S LEFT"
+std::string GuiCloudTransfer::prettyRclone(std::string f)
+{
+	auto rep = [&f](const std::string& from, const std::string& to) { f = Utils::String::replace(f, from, to); };
+	rep("GiB", "GB"); rep("MiB", "MB"); rep("KiB", "KB");
+	rep("Gi", " GB"); rep("Mi", " MB"); rep("Ki", " KB");
+	rep("ETA ", "");
+	rep(" / ", " OF "); rep(" /", " OF ");
+	rep(", ", " · ");
+	f = Utils::String::toUpper(f);
+	// a trailing duration -- digits then a unit letter, no percent, no bytes -- is time left
+	size_t sep = f.rfind(" · ");
+	std::string last = sep == std::string::npos ? f : f.substr(sep + 3);
+	if (!last.empty() && isdigit((unsigned char) last[0]) && last.find('%') == std::string::npos
+		&& last.find('B') == std::string::npos && !isdigit((unsigned char) last.back()))
+		f += " " + std::string(_("LEFT"));
+	return f;
+}
+
 void GuiCloudTransfer::update(int deltaTime)
 {
 	GuiComponent::update(deltaTime);
 	mBusyAnim.update(deltaTime);
-
 	std::unique_lock<std::mutex> lock(mMutex);
 	if (!mFinished)
 		mElapsedMs += deltaTime;
-
 	const int mins = mElapsedMs / 60000;
 	const int secs = (mElapsedMs / 1000) % 60;
 	char elapsed[32];
 	snprintf(elapsed, sizeof(elapsed), "%d:%02d", mins, secs);
 
+	// 3 and 4: the system (or phase) and its totals -- shown in both states.
+	std::string unit = Utils::String::toUpper(mUnitLabel);
+	if (!unit.empty() && !mUnitIndex.empty() && !mUnitCount.empty())
+		unit += "   " + mUnitIndex + " " + std::string(_("OF")) + " " + mUnitCount;
+	std::string unitLine;
+	if (!mFilesTotals.empty())
+	{
+		// "12 / 45, 27%" -> "12 OF 45 FILES · 27%"
+		auto pct = mFilesTotals.find(", ");
+		unitLine = Utils::String::replace(mFilesTotals.substr(0, pct), " / ", " " + std::string(_("OF")) + " ") + " " + std::string(_("FILES"));
+		if (pct != std::string::npos)
+			unitLine += " · " + mFilesTotals.substr(pct + 2);
+	}
+	if (!mTotals.empty())
+		unitLine += (unitLine.empty() ? "" : "   ") + prettyRclone(mTotals);
+	mUnit    ->setText(fitOneLine(mTextFont,  unit,     mLineWidth));
+	mUnitLine->setText(fitOneLine(mSmallFont, unitLine, mLineWidth));
+
 	if (mFinished)
 	{
-		// 130 is the interrupt the backends' trap exits with. Somebody stopped
-		// it; saying FAILED to a person who pressed stop is the page arguing
-		// with them. Same three outcomes the menu's last-run line reports, so
-		// the two never disagree about the same run.
 		mStatus->setText(mExit == 0 ? _("COMPLETED SUCCESSFULLY")
 			: mExit == 130 ? _("STOPPED")
 			: mExit == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
 			: _("FAILED"));
-		mDetail->setText(mTotals.empty()
-			? std::string(_("ELAPSED")) + " " + elapsed
-			: mTotals + "     " + _("ELAPSED") + " " + elapsed);
-		mFooter->setText(_("PRESS ANY BUTTON TO CLOSE"));
+		mFileLine->setText("");
+		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
+		mFooter  ->setText(_("PRESS ANY BUTTON TO CLOSE"));
 	}
 	else
 	{
-		// The file it is on right now is the line that says it is alive. A
-		// thousand small BIOS files spend minutes between percentage changes,
-		// and a frozen percentage is indistinguishable from a hung transfer.
-		std::string now = mCurrent;
-		if (!now.empty() && mFilesThisBlock > 1)
-			now += "   (+" + std::to_string(mFilesThisBlock - 1) + ")";
-		mStatus->setText(now.empty() ? _("WORKING...") : now);
-		mDetail->setText(mTotals);
-		mFooter->setText(std::string(_("ELAPSED")) + " " + elapsed
-			+ "     " + _("THIS CAN TAKE A WHILE. YOU CAN LEAVE IT RUNNING."));
+		// 1 and 2: the file it is on right now is the line that says it is
+		// alive -- a thousand small BIOS files spend minutes between percentage
+		// changes, and a frozen percentage is indistinguishable from a hang.
+		if (mCurrent.empty())
+		{
+			mStatus  ->setText(mUnitLabel.empty() ? _("PREPARING...") : _("WORKING..."));
+			mFileLine->setText("");
+		}
+		else
+		{
+			mStatus->setText(fitOneLine(mTextFont, mCurrent, mLineWidth));
+			std::string fl = std::string(_("TRANSFERRING"));
+			if (!mFileProgress.empty())
+				fl += "  " + prettyRclone(mFileProgress);
+			if (mFilesThisBlock > 1)
+				fl += "  · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE"));
+			mFileLine->setText(fitOneLine(mSmallFont, fl, mLineWidth));
+		}
+		mElapsed->setText(std::string(_("ELAPSED")) + " " + elapsed);
+		mFooter ->setText(_("THIS CAN TAKE A WHILE. YOU CAN LEAVE IT RUNNING."));
 	}
 }
 
-// One line of rclone's progress block, already stripped and trimmed.
 void GuiCloudTransfer::handleLine(const std::string& line)
 {
 	std::unique_lock<std::mutex> lock(mMutex);
@@ -201,13 +248,28 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	// ("0 / 6, 0%"). The byte one is the one carrying a unit, which is also
 	// the one somebody wants -- a count of files says nothing about how long
 	// this will take when the files are a save game and a disc image.
+	// ">>> unit nes|2|5" -- the script announces each system (or phase) as it
+	// starts. Everything per-block is reset with it; the label survives.
+	if (line.rfind(">>> unit ", 0) == 0)
+	{
+		auto parts = Utils::String::split(line.substr(9), '|', false);
+		mUnitLabel = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
+		mUnitIndex = parts.size() > 1 ? Utils::String::trim(parts[1]) : "";
+		mUnitCount = parts.size() > 2 ? Utils::String::trim(parts[2]) : "";
+		mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear();
+		mFilesThisBlock = 0; mPercent = -1;
+		return;
+	}
 	if (line.rfind("Transferred:", 0) == 0)
 	{
 		std::string body = Utils::String::trim(line.substr(12));
 		if (body.find('/') == std::string::npos)
 			return;
 		if (body.find("iB") == std::string::npos && body.find(" B") == std::string::npos)
+		{
+			mFilesTotals = body;   // the count line of the block: "12 / 45, 27%"
 			return;
+		}
 
 		mTotals = body;
 		mFilesThisBlock = 0;   // a new block: the next " * " line is the head of it
@@ -235,7 +297,15 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	if (!line.empty() && line[0] == '*')
 	{
 		if (mFilesThisBlock == 0)
-			mCurrent = Utils::String::trim(line.substr(1));
+		{
+			// "name.zip: 45% /2.5Mi, 300Ki/s, 5s" -- the name and its progress
+			// arrive on one line; shown on two, so neither wraps.
+			std::string body = Utils::String::trim(line.substr(1));
+			auto sep = body.rfind(": ");
+			std::string name = sep == std::string::npos ? body : body.substr(0, sep);
+			mFileProgress = sep == std::string::npos ? "" : Utils::String::trim(body.substr(sep + 2));
+			mCurrent = Utils::FileSystem::getFileName(name);
+		}
 		mFilesThisBlock++;
 		return;
 	}
