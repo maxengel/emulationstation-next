@@ -4360,7 +4360,7 @@ void GuiMenu::openCloud(Window* window)
 			"/usr/bin/cloud_migrate_layout --check >/dev/null 2>&1", "", nullptr) == 0)
 	{
 		s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
-			_("MOVE SAVES AND BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
+			_("MOVE SAVES AND SETTINGS BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
 			nullptr, [window]
 			{
 				auto lines = Utils::Platform::GetShOutputLines(
@@ -4781,8 +4781,8 @@ void GuiMenu::openGamesSettings()
 				_("NO"), nullptr));
 		});
 
-		s->addWithDescription(_("ALL CLOUD SETTINGS AND SERVICES"),
-			_("ROMS AND BIOS, SETTINGS BACKUPS, AND HOW THIS DEVICE IS SET UP."), nullptr,
+		s->addWithDescription(_("MANAGE CLOUD STORAGE"),
+			_("BACK UP OR RESTORE, CHOOSE ROMS AND BIOS, SET WHEN SAVES SYNC, AND CONNECT OR REPAIR YOUR CLOUD STORAGE."), nullptr,
 			[window] { GuiMenu::openCloud(window); }, "", false, true);
 	}
 
