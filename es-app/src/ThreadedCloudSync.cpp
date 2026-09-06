@@ -65,7 +65,7 @@ void ThreadedCloudSync::run()
 			// seconds at a time, and -- during a sync, which runs a restore
 			// and then a backup -- banners announcing "CLOUD RESTORE UTILITY"
 			// and "CLOUD BACKUP UTILITY" underneath a title reading SYNCING
-			// SAVE DATA. Those are written for a log read afterwards, not for
+			// SAVES. Those are written for a log read afterwards, not for
 			// somebody watching a handheld.
 			//
 			// So: transfer progress, and anything that went wrong. A line
