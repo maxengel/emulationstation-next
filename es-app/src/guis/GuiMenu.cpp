@@ -4362,10 +4362,16 @@ void GuiMenu::openCloud(Window* window)
 	// where a player's saves live is theirs to decide. The row only appears
 	// when there is something to move -- the script answers 3 when the device
 	// is already current.
+	// runSystemCommand returns 0 whatever the command exits, so the old
+	// "== 0" here was always true and the row appeared on every device,
+	// including one set up minutes earlier -- whose press then produced
+	// "Already on the current layout. MOVE THEM?" (maintainer, 2026-09-06).
+	// executeScriptLegacy's pair form carries the real exit code: 0 means
+	// something to move, 3 means already current.
 	if (configured
 		&& Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout")
-		&& Utils::Platform::runSystemCommand(
-			"/usr/bin/cloud_migrate_layout --check >/dev/null 2>&1", "", nullptr) == 0)
+		&& ApiSystem::executeScriptLegacy("/usr/bin/cloud_migrate_layout --check",
+			[](const std::string&) {}).second == 0)
 	{
 		s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
 			_("MOVE SAVES AND SETTINGS BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
