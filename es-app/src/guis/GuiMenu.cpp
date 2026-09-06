@@ -4759,7 +4759,10 @@ void GuiMenu::openGamesSettings()
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		s->addGroup(_("CLOUD SETTINGS"));
 
-		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"), "", [window] {
+		// Label and one line, like its neighbours (D-UI-023): the two facts a
+		// player wants before pressing. The dialog carries the rest.
+		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"),
+			_("BOTH WAYS. NOTHING IS DELETED."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVES"), _("SYNCING SAVES"));
