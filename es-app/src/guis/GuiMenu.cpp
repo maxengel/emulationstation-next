@@ -4303,10 +4303,13 @@ void GuiMenu::openCloud(Window* window)
 	// reaches first.
 	if (Utils::FileSystem::exists("/usr/bin/cloud_content_restore"))
 	{
-		// Two lines (D-UI-023): what it removes is named, ROM by ROM, in the
-		// preview that precedes the confirmation -- stronger than a sentence here.
-		cloudAddClassRow(s, window, configured, _("MATCH THIS DEVICE TO THE CLOUD"), "content-match",
-			[window] { cloudOpenMatch(window); });
+		// Two lines (D-UI-023), and the same two as its siblings: a label and a
+		// line saying what it does. This is the one row in the group that removes
+		// something, so that is the line -- the preview then names every ROM.
+		// It briefly carried its last-run stamp instead, which read as a third
+		// kind of row beside two submenus (maintainer, 2026-09-06).
+		cloudAddGatedEntry(s, window, configured, _("MATCH THIS DEVICE TO THE CLOUD"),
+			_("REMOVE ROMS YOUR CLOUD NO LONGER HAS."), [window] { cloudOpenMatch(window); });
 	}
 
 	s->addGroup(_("SAVE MANAGEMENT"));
