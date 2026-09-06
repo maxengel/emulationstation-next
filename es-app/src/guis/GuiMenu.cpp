@@ -6601,7 +6601,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 					if (rc == 0)
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD SETTINGS > ALL CLOUD SETTINGS AND SERVICES.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD SETTINGS > MANAGE CLOUD STORAGE.")));
 				}));
 		});
 	}
