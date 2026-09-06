@@ -4068,8 +4068,10 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		conf->set(key + "settings", settings->getState() ? "1" : "0");
 	});
 
-	// The line the systems page opens with: every ticked class, serial comma
-	// and all, in this direction's verb.
+	// The line the systems page opens with: every ticked class, in this
+	// direction's verb. Separated by middle dots, not joined by AND: one of
+	// the classes is called ROMS AND BIOS, and "SAVES AND ROMS AND BIOS" was
+	// the line the first frame showed.
 	auto moving = [backup, saves, content, media, settings, hasContent]()
 	{
 		std::vector<std::string> parts;
@@ -4079,12 +4081,8 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		if (settings->getState())               parts.push_back(_("SETTINGS"));
 		std::string list;
 		for (size_t i = 0; i < parts.size(); i++)
-		{
-			if (i > 0)
-				list += (i + 1 == parts.size()) ? (parts.size() > 2 ? ", AND " : " AND ") : ", ";
-			list += parts[i];
-		}
-		return (backup ? _("BACKING UP ") : _("RESTORING ")) + list;
+			list += (i > 0 ? "  \u00B7  " : "") + parts[i];
+		return (backup ? _("BACKING UP: ") : _("RESTORING: ")) + list;
 	};
 
 	// The run itself, shared by the button and by the system chooser that can
