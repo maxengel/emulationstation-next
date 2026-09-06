@@ -3818,11 +3818,17 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 // The scan reads sizes because without them "should I take PSX?" cannot be
 // answered. It is one recursive listing rather than a size call per system,
 // but it is still a network round trip, so it runs behind GuiLoading.
-// The scraped-game-content switch (D-CLOUD-048): " --with-media" for the
-// content scripts when it is on, "" when it is off, which is the default.
-static std::string cloudMediaFlag()
+// The content scripts' mode for a pair of ticks (D-CLOUD-050): ROMs and
+// BIOS alone is the default; game content rides along with --with-media, or
+// moves on its own with --media-only. The game list is game content
+// (D-CLOUD-049), so a ROMs-only transfer leaves it where it is.
+static std::string cloudContentMode(bool content, bool media)
 {
-	return SystemConf::getInstance()->get("cloudsync.content.media") == "1" ? " --with-media" : "";
+	if (content && media)
+		return " --with-media";
+	if (media)
+		return " --media-only";
+	return "";
 }
 
 // One page per direction (D-CLOUD-048). SYSTEMS TO BACK UP lists what this
@@ -3830,17 +3836,17 @@ static std::string cloudMediaFlag()
 // listed by the transfer's own rule and compared by file name, because totals
 // cannot say whether one side has what the other has -- a restored-then-
 // scraped device read "different size" on every system for that reason.
-static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel = "", bool backup = false)
+static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel, bool backup, bool content, bool media, const std::string& moving)
 {
 	window->pushGui(new GuiLoading<std::pair<std::vector<std::string>, std::vector<std::string>>>(
 		window, backup ? _("COMPARING YOUR ROMS AND BIOS FILES WITH THE CLOUD") : _("SCANNING YOUR CLOUD FOR ROMS AND BIOS FILES"),
-		[](auto gui)
+		[content, media](auto gui)
 		{
-			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudMediaFlag());
+			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudContentMode(content, media));
 			auto sel  = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
 			return std::make_pair(scan, sel);
 		},
-		[window, onDone, proceedLabel, backup](std::pair<std::vector<std::string>, std::vector<std::string>> result)
+		[window, onDone, proceedLabel, backup, moving](std::pair<std::vector<std::string>, std::vector<std::string>> result)
 		{
 			std::set<std::string> chosen;
 			for (auto& line : result.second)
@@ -3875,11 +3881,15 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			if (found.empty())
 			{
 				window->pushGui(new GuiMsgBox(window, backup
-					? _("NO ROMS ON THIS DEVICE YET.")
-					: _("NO ROMS OR BIOS FILES FOUND IN YOUR CLOUD YET.\n\nPUT ROMS INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
+					? _("NO SYSTEM ON THIS DEVICE HOLDS WHAT YOU TICKED.")
+					: _("NO SYSTEM IN YOUR CLOUD HOLDS WHAT YOU TICKED.\n\nPUT FILES INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
 				return;
 			}
 			auto s = new GuiSettings(window, backup ? _("SYSTEMS TO BACK UP") : _("SYSTEMS TO RESTORE"));
+			// What this run carries, in the maintainer's words: the page "tells
+			// you what you are backing up" (D-CLOUD-050). Saves and settings are
+			// whole-device; the line names them without pretending otherwise.
+			cloudSetupAddInfoRow(s, window, moving, false);
 			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
 			s->addEntry(_("SELECT ALL"), false, [switches] {
 				for (auto& e : *switches) e.second->setState(true);
@@ -3887,7 +3897,7 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			s->addEntry(_("SELECT NONE"), false, [switches] {
 				for (auto& e : *switches) e.second->setState(false);
 			});
-			s->addGroup(backup ? _("ROMS ON THIS DEVICE") : _("ROMS IN YOUR CLOUD"));
+			s->addGroup(backup ? _("SYSTEMS ON THIS DEVICE") : _("SYSTEMS IN YOUR CLOUD"));
 			for (auto& f : found)
 			{
 				auto sw = std::make_shared<SwitchComponent>(window);
@@ -3910,22 +3920,13 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					note += "  -  " + _("THIS DEVICE CANNOT RUN IT");
 				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
 			}
-			// The switch the counts above were made under. Changing it here is
-			// remembered on save; the next visit counts by the new rule. One line
-			// under it, saying what the row carries (D-UI-023): what "off" does
-			// is visible in the counts above the moment the page reopens.
-			s->addGroup(_("ALSO"));
-			auto media = std::make_shared<SwitchComponent>(window);
-			media->setState(SystemConf::getInstance()->get("cloudsync.content.media") == "1");
-			s->addWithDescription(_("SCRAPED GAME CONTENT"), _("ARTWORK, VIDEOS, AND MANUALS FROM THE SCRAPER"), media);
-			s->addSaveFunc([switches, media]
+			s->addSaveFunc([switches]
 			{
 				std::string picked;
 				for (auto& entry : *switches)
 					if (entry.second->getState())
 						picked += (picked.empty() ? "" : " ") + entry.first;
 				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --set-systems \"" + picked + "\"");
-				SystemConf::getInstance()->set("cloudsync.content.media", media->getState() ? "1" : "0");
 			});
 			if (onDone)
 			{
@@ -4038,11 +4039,16 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	{
 		s->addWithDescription(_("ROMS AND BIOS"),
 			_("THE SYSTEMS YOU CHOSE FOR THIS DEVICE"), content);
-		// The page that makes that choice, in this direction (D-CLOUD-048):
-		// a row with a choice behind it is a submenu, not a longer row.
-		s->addEntry(backup ? _("SYSTEMS TO BACK UP") : _("SYSTEMS TO RESTORE"), true,
-			[window, backup] { cloudContentSystemPicker(window, nullptr, "", backup); });
 	}
+	// Game content is a class of its own (D-CLOUD-050) -- what the scraper
+	// made, the game list included (D-CLOUD-049) -- so a scraped device can
+	// back up its ROMs alone and read as matching, or send the artwork on
+	// its own. Which systems it comes from is CONTINUE's question.
+	auto media = std::make_shared<SwitchComponent>(window);
+	media->setState(hasContent && remembered("media", false));
+	if (hasContent)
+		s->addWithDescription(_("GAME CONTENT"),
+			_("SCRAPED ARTWORK, VIDEOS, MANUALS, AND GAME LISTS"), media);
 
 	auto settings = std::make_shared<SwitchComponent>(window);
 	settings->setState(remembered("settings", false));
@@ -4053,19 +4059,39 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	// tick somebody set and then thought better of running is still their
 	// answer to "what moves". GuiSettings::save() also returns early when a
 	// page registers no save function, so this is what flushes SystemConf.
-	s->addSaveFunc([key, saves, content, settings]
+	s->addSaveFunc([key, saves, content, media, settings]
 	{
 		auto conf = SystemConf::getInstance();
 		conf->set(key + "saves",    saves->getState()    ? "1" : "0");
 		conf->set(key + "content",  content->getState()  ? "1" : "0");
+		conf->set(key + "media",    media->getState()    ? "1" : "0");
 		conf->set(key + "settings", settings->getState() ? "1" : "0");
 	});
+
+	// The line the systems page opens with: every ticked class, serial comma
+	// and all, in this direction's verb.
+	auto moving = [backup, saves, content, media, settings, hasContent]()
+	{
+		std::vector<std::string> parts;
+		if (saves->getState())                  parts.push_back(_("SAVES"));
+		if (hasContent && content->getState())  parts.push_back(_("ROMS AND BIOS"));
+		if (hasContent && media->getState())    parts.push_back(_("GAME CONTENT"));
+		if (settings->getState())               parts.push_back(_("SETTINGS"));
+		std::string list;
+		for (size_t i = 0; i < parts.size(); i++)
+		{
+			if (i > 0)
+				list += (i + 1 == parts.size()) ? (parts.size() > 2 ? ", AND " : " AND ") : ", ";
+			list += parts[i];
+		}
+		return (backup ? _("BACKING UP ") : _("RESTORING ")) + list;
+	};
 
 	// The run itself, shared by the button and by the system chooser that can
 	// precede it. A shared_ptr because the two lambdas have to reach the same
 	// function and one of them is built before the other exists.
 	auto run = std::make_shared<std::function<void()>>();
-	*run = [window, s, backup, configured, saves, content, settings, hasContent]
+	*run = [window, s, backup, configured, saves, content, media, settings, hasContent]
 	{
 		if (!configured)
 		{
@@ -4076,8 +4102,9 @@ static void cloudOpenTransfer(Window* window, bool backup)
 
 		const bool wantSaves = saves->getState();
 		const bool wantContent = hasContent && content->getState();
+		const bool wantMedia = hasContent && media->getState();
 		const bool wantSettings = settings->getState();
-		if (!wantSaves && !wantContent && !wantSettings)
+		if (!wantSaves && !wantContent && !wantMedia && !wantSettings)
 		{
 			window->pushGui(new GuiMsgBox(window, _("NOTHING IS TICKED.\n\nCHOOSE AT LEAST ONE THING TO MOVE.")));
 			return;
@@ -4118,9 +4145,10 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		};
 		if (wantSaves)
 			add(backup ? "/usr/bin/cloud_backup --yes" : "/usr/bin/cloud_restore --yes");
-		if (wantContent)
-			add(backup ? std::string("/usr/bin/cloud_content_backup --selected") + cloudMediaFlag()
-			           : std::string("/usr/bin/cloud_content_restore --selected") + cloudMediaFlag());
+		if (wantContent || wantMedia)
+			add((backup ? std::string("/usr/bin/cloud_content_backup --selected")
+			            : std::string("/usr/bin/cloud_content_restore --selected"))
+			    + cloudContentMode(wantContent, wantMedia));
 		if (backup && wantSettings)
 			add("/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
 
@@ -4136,30 +4164,35 @@ static void cloudOpenTransfer(Window* window, bool backup)
 			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD")));
 	};
 
-	// Which systems is a question only ROMS AND BIOS raises, so it is a second
-	// step rather than a row sitting there whether or not it applies -- and the
-	// button says CONTINUE when there is a step after it, which is the only
-	// honest label for a control that does not yet perform the action.
-	auto rebuildButtons = [s, window, backup, content, hasContent, run]()
+	// Which systems is a question only the per-system classes raise -- ROMS AND
+	// BIOS and GAME CONTENT -- so it is a second step rather than a row sitting
+	// there whether or not it applies, and the button says CONTINUE when there
+	// is a step after it, which is the only honest label for a control that
+	// does not yet perform the action.
+	auto rebuildButtons = [s, window, backup, content, media, hasContent, run, moving]()
 	{
-		const bool staged = hasContent && content->getState();
+		const bool staged = hasContent && (content->getState() || media->getState());
 		s->getMenu().clearButtons();
 		s->getMenu().addButton(_("BACK"), _("back"), [s] { s->close(); });
 		s->getMenu().addButton(
 			staged ? _("CONTINUE") : (backup ? _("BACK UP") : _("RESTORE")),
 			staged ? _("choose systems") : (backup ? _("back up") : _("restore")),
-			[window, staged, run, backup]
+			[window, staged, run, backup, content, media, moving]
 			{
 				if (staged)
 					cloudContentSystemPicker(window, [run] { (*run)(); },
-						backup ? _("BACK UP") : _("RESTORE"), backup);
+						backup ? _("BACK UP") : _("RESTORE"), backup,
+						content->getState(), media->getState(), moving());
 				else
 					(*run)();
 			});
 	};
 	rebuildButtons();
 	if (hasContent)
+	{
 		content->setOnChangedCallback([rebuildButtons] { rebuildButtons(); });
+		media->setOnChangedCallback([rebuildButtons] { rebuildButtons(); });
+	}
 
 	window->pushGui(s);
 }
