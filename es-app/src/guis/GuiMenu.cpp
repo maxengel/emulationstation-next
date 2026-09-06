@@ -3804,6 +3804,9 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static std::map<std::string, std::string> cloudSetupInfo();
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
+// Horizontal padding matching what ComponentList applies to selectable
+// rows, so informational text lines up with the actionable rows.
+#define CLOUD_SETUP_ROW_PADDING Vector4f(10, 0, 10, 0)
 static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::string& text, bool accent);
 
 // Which systems this device syncs.
@@ -3836,17 +3839,30 @@ static std::string cloudContentMode(bool content, bool media)
 // listed by the transfer's own rule and compared by file name, because totals
 // cannot say whether one side has what the other has -- a restored-then-
 // scraped device read "different size" on every system for that reason.
-static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel, bool backup, bool content, bool media, const std::string& moving)
+// A centred, unselectable line of standard text: what a page says about
+// itself before its rows begin.
+static void cloudAddCentredLine(GuiSettings* s, Window* window, const std::string& text)
+{
+	auto theme = ThemeData::getMenuTheme();
+	ComponentListRow row;
+	row.selectable = false;
+	auto tc = std::make_shared<TextComponent>(window, text, theme->Text.font, theme->Text.color, ALIGN_CENTER);
+	tc->setPadding(CLOUD_SETUP_ROW_PADDING);
+	row.addElement(tc, true);
+	s->addRow(row);
+}
+
+static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel, bool backup, bool content, bool media, const std::string& perSystem, const std::string& wholeDevice)
 {
 	window->pushGui(new GuiLoading<std::pair<std::vector<std::string>, std::vector<std::string>>>(
-		window, backup ? _("COMPARING YOUR ROMS AND BIOS FILES WITH THE CLOUD") : _("SCANNING YOUR CLOUD FOR ROMS AND BIOS FILES"),
+		window, backup ? _("COMPARING THIS DEVICE'S CONTENT WITH YOUR CLOUD") : _("COMPARING YOUR CLOUD'S CONTENT WITH THIS DEVICE"),
 		[content, media](auto gui)
 		{
 			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudContentMode(content, media));
 			auto sel  = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
 			return std::make_pair(scan, sel);
 		},
-		[window, onDone, proceedLabel, backup, moving](std::pair<std::vector<std::string>, std::vector<std::string>> result)
+		[window, onDone, proceedLabel, backup, perSystem, wholeDevice](std::pair<std::vector<std::string>, std::vector<std::string>> result)
 		{
 			std::set<std::string> chosen;
 			for (auto& line : result.second)
@@ -3885,18 +3901,17 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					: _("NO SYSTEM IN YOUR CLOUD HOLDS WHAT YOU TICKED.\n\nPUT FILES INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
 				return;
 			}
-			auto s = new GuiSettings(window, backup ? _("SYSTEMS TO BACK UP") : _("SYSTEMS TO RESTORE"));
-			// What this run carries, in the maintainer's words: the page "tells
-			// you what you are backing up" (D-CLOUD-050). Saves and settings are
-			// whole-device; the line names them without pretending otherwise.
-			cloudSetupAddInfoRow(s, window, moving, false);
+			// CONTENT TO ..., not SYSTEMS TO ...: settings cover the whole device
+			// and do not belong to a system, and the maintainer read a page
+			// called SYSTEMS that listed them as a contradiction (2026-09-06).
+			// Two centred lines say what this run carries: the per-system
+			// classes the choice below applies to, then the whole-device ones
+			// that ride along regardless.
+			auto s = new GuiSettings(window, backup ? _("CONTENT TO BACK UP") : _("CONTENT TO RESTORE"));
+			cloudAddCentredLine(s, window, perSystem);
+			if (!wholeDevice.empty())
+				cloudAddCentredLine(s, window, wholeDevice);
 			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
-			s->addEntry(_("SELECT ALL"), false, [switches] {
-				for (auto& e : *switches) e.second->setState(true);
-			});
-			s->addEntry(_("SELECT NONE"), false, [switches] {
-				for (auto& e : *switches) e.second->setState(false);
-			});
 			s->addGroup(backup ? _("SYSTEMS ON THIS DEVICE") : _("SYSTEMS IN YOUR CLOUD"));
 			for (auto& f : found)
 			{
@@ -3928,15 +3943,34 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 						picked += (picked.empty() ? "" : " ") + entry.first;
 				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --set-systems \"" + picked + "\"");
 			});
+			// SELECT ALL / SELECT NONE is one button that reads as the thing it
+			// would do next, in the bar with BACK and the verb -- rows in the
+			// list read as choices of their own (maintainer, 2026-09-06).
+			auto proceed = std::make_shared<bool>(false);
 			if (onDone)
-			{
-				auto proceed = std::make_shared<bool>(false);
 				s->onFinalize([proceed, onDone] { if (*proceed) onDone(); });
+			auto buttons = std::make_shared<std::function<void()>>();
+			*buttons = [s, switches, proceed, onDone, proceedLabel, buttons]()
+			{
+				bool allOn = !switches->empty();
+				for (auto& e : *switches)
+					allOn = allOn && e.second->getState();
 				s->getMenu().clearButtons();
 				s->getMenu().addButton(_("BACK"), _("back"), [s] { s->close(); });
-				s->getMenu().addButton(proceedLabel.empty() ? _("CONTINUE") : proceedLabel,
-					_("continue"), [s, proceed] { *proceed = true; s->close(); });
-			}
+				s->getMenu().addButton(allOn ? _("SELECT NONE") : _("SELECT ALL"), allOn ? _("select none") : _("select all"),
+					[switches, allOn, buttons]
+					{
+						for (auto& e : *switches)
+							e.second->setState(!allOn);
+						(*buttons)();
+					});
+				if (onDone)
+					s->getMenu().addButton(proceedLabel.empty() ? _("CONTINUE") : proceedLabel,
+						_("continue"), [s, proceed] { *proceed = true; s->close(); });
+			};
+			for (auto& e : *switches)
+				e.second->setOnChangedCallback([buttons] { (*buttons)(); });
+			(*buttons)();
 			window->pushGui(s);
 		}));
 }
@@ -4068,21 +4102,29 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		conf->set(key + "settings", settings->getState() ? "1" : "0");
 	});
 
-	// The line the systems page opens with: every ticked class, in this
-	// direction's verb. Separated by middle dots, not joined by AND: one of
-	// the classes is called ROMS AND BIOS, and "SAVES AND ROMS AND BIOS" was
-	// the line the first frame showed.
-	auto moving = [backup, saves, content, media, settings, hasContent]()
+	// The two lines the content page opens with. The first names the
+	// per-system classes -- what the choice of systems on that page applies
+	// to -- separated by middle dots, not joined by AND (one class is called
+	// ROMS AND BIOS). The second names what rides along for the whole device:
+	// settings always; saves too, today, because the saves sync is one pass
+	// over the whole tree until the reconciler owns it (#22).
+	auto perSystemLine = [backup, content, media, hasContent]()
 	{
 		std::vector<std::string> parts;
-		if (saves->getState())                  parts.push_back(_("SAVES"));
 		if (hasContent && content->getState())  parts.push_back(_("ROMS AND BIOS"));
 		if (hasContent && media->getState())    parts.push_back(_("GAME CONTENT"));
-		if (settings->getState())               parts.push_back(_("SETTINGS"));
 		std::string list;
 		for (size_t i = 0; i < parts.size(); i++)
 			list += (i > 0 ? "  \u00B7  " : "") + parts[i];
 		return (backup ? _("BACKING UP: ") : _("RESTORING: ")) + list;
+	};
+	auto wholeDeviceLine = [saves, settings]()
+	{
+		const bool sv = saves->getState(), st = settings->getState();
+		if (sv && st) return std::string(_("PLUS SAVES AND SETTINGS FOR THE WHOLE DEVICE"));
+		if (sv)       return std::string(_("PLUS SAVES FOR THE WHOLE DEVICE"));
+		if (st)       return std::string(_("PLUS SETTINGS FOR THE WHOLE DEVICE"));
+		return std::string();
 	};
 
 	// The run itself, shared by the button and by the system chooser that can
@@ -4141,8 +4183,13 @@ static void cloudOpenTransfer(Window* window, bool backup)
 				cmd = "rc=0";
 			cmd += " ; { " + part + " ; } || rc=$?";
 		};
+		// --saves-only: without it the saves scripts run their settings-archive
+		// phase too, and a run with SETTINGS unticked still moved the archive
+		// under a SETTINGS BACKUP label the page then kept showing through the
+		// ROMs (maintainer, 2026-09-06). The settings tier below is the only
+		// thing that moves settings.
 		if (wantSaves)
-			add(backup ? "/usr/bin/cloud_backup --yes" : "/usr/bin/cloud_restore --yes");
+			add(backup ? "/usr/bin/cloud_backup --yes --saves-only" : "/usr/bin/cloud_restore --yes --saves-only");
 		if (wantContent || wantMedia)
 			add((backup ? std::string("/usr/bin/cloud_content_backup --selected")
 			            : std::string("/usr/bin/cloud_content_restore --selected"))
@@ -4167,7 +4214,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	// there whether or not it applies, and the button says CONTINUE when there
 	// is a step after it, which is the only honest label for a control that
 	// does not yet perform the action.
-	auto rebuildButtons = [s, window, backup, content, media, hasContent, run, moving]()
+	auto rebuildButtons = [s, window, backup, content, media, hasContent, run, perSystemLine, wholeDeviceLine]()
 	{
 		const bool staged = hasContent && (content->getState() || media->getState());
 		s->getMenu().clearButtons();
@@ -4175,12 +4222,12 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		s->getMenu().addButton(
 			staged ? _("CONTINUE") : (backup ? _("BACK UP") : _("RESTORE")),
 			staged ? _("choose systems") : (backup ? _("back up") : _("restore")),
-			[window, staged, run, backup, content, media, moving]
+			[window, staged, run, backup, content, media, perSystemLine, wholeDeviceLine]
 			{
 				if (staged)
 					cloudContentSystemPicker(window, [run] { (*run)(); },
 						backup ? _("BACK UP") : _("RESTORE"), backup,
-						content->getState(), media->getState(), moving());
+						content->getState(), media->getState(), perSystemLine(), wholeDeviceLine());
 				else
 					(*run)();
 			});
@@ -4775,17 +4822,17 @@ void GuiMenu::openGamesSettings()
 			_("BOTH WAYS. NOTHING IS DELETED."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update && /usr/bin/cloud_backup --yes --method=copy --update", _("SYNC SAVES"), _("SYNCING SAVES"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update --saves-only && /usr/bin/cloud_backup --yes --method=copy --update --saves-only", _("SYNC SAVES"), _("SYNCING SAVES"));
 				}, _("NO"), nullptr));
 		});
 		cloudAddClassRow(s, window, cloudConfigured, _("BACK UP SAVES TO THE CLOUD"), "backup", [window] {
 			window->pushGui(new GuiMsgBox(window, _("BACK UP GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes", _("BACK UP SAVES"), _("BACKING UP SAVES")); },
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only", _("BACK UP SAVES"), _("BACKING UP SAVES")); },
 				_("NO"), nullptr));
 		});
 		cloudAddClassRow(s, window, cloudConfigured, _("RESTORE SAVES FROM THE CLOUD"), "restore", [window] {
 			window->pushGui(new GuiMsgBox(window, _("RESTORE GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
-				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes", _("RESTORE SAVES"), _("RESTORING SAVES")); },
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --saves-only", _("RESTORE SAVES"), _("RESTORING SAVES")); },
 				_("NO"), nullptr));
 		});
 
@@ -4892,9 +4939,6 @@ static std::map<std::string, std::string> cloudSetupInfo()
 	return info;
 }
 
-// Horizontal padding matching what ComponentList applies to selectable
-// rows, so informational text lines up with the actionable rows.
-#define CLOUD_SETUP_ROW_PADDING Vector4f(10, 0, 10, 0)
 
 // A body-text row: never selectable, small theme font, padded to align
 // with the selectable rows. `accent` renders the accent color used for

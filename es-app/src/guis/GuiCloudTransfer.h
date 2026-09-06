@@ -72,6 +72,7 @@ private:
 	std::string mUnitLabel;     // ">>> unit nes|2|5" from the script: what is being copied
 	std::string mUnitIndex, mUnitCount;
 	int mFilesThisBlock;
+	bool mSeenBlock;
 	int mPercent;
 	bool mFinished;
 	int mExit;

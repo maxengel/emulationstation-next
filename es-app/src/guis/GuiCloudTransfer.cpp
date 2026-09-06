@@ -13,8 +13,8 @@
 #include <sys/wait.h>
 
 GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, const std::string& title)
-	: GuiComponent(window), mBusyAnim(window), mBackground(window, ":/frame.png"),
-	  mCommand(command), mTitleText(title), mFilesThisBlock(0), mPercent(-1),
+	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
+	  mCommand(command), mTitleText(title), mFilesThisBlock(0), mSeenBlock(false), mPercent(-1),
 	  mFinished(false), mExit(-1), mElapsedMs(0), mHandle(nullptr)
 {
 	auto theme = ThemeData::getMenuTheme();
@@ -51,12 +51,18 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	mFileLine->setPosition(cx - w / 2.0f, SH * 0.34f);   // 2. its transfer
 	mUnit    ->setPosition(cx - w / 2.0f, SH * 0.41f);   // 3. the system
 	mUnitLine->setPosition(cx - w / 2.0f, SH * 0.46f);   // 4. the system's transfer
+	// The bar is the system's (or the collection's -- SAVES, SETTINGS BACKUP),
+	// so it sits tight under lines 3 and 4; ELAPSED is the whole run's, so the
+	// gap opens beneath the bar, not above it (maintainer, 2026-09-06).
+	// No caption on the spinner: line 1 already says WORKING..., and the
+	// caption is set at construction because BusyComponent::setText("") is a
+	// no-op against its empty initial state -- the default WORKING... showed
+	// beside the spinner, twice on one screen (maintainer, 2026-09-06).
 	mBusyAnim.setBackgroundVisible(false);                //   5. the bar
-	mBusyAnim.setText("");
 	mBusyAnim.setSize(w, SH * 0.05f);
-	mBusyAnim.setPosition(cx - w / 2.0f, SH * 0.53f);
-	mElapsed ->setPosition(cx - w / 2.0f, SH * 0.61f);   // 6. elapsed
-	mFooter  ->setPosition(cx - w / 2.0f, SH * 0.66f);   // 7. the notice
+	mBusyAnim.setPosition(cx - w / 2.0f, SH * 0.505f);
+	mElapsed ->setPosition(cx - w / 2.0f, SH * 0.62f);   // 6. elapsed
+	mFooter  ->setPosition(cx - w / 2.0f, SH * 0.67f);   // 7. the notice
 
 	mPanelSize = Vector2f(w + SW * 0.06f, SH * 0.56f);
 	mPanelPos  = Vector2f(cx - mPanelSize.x() / 2.0f, SH * 0.16f);
@@ -157,6 +163,35 @@ std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std:
 //   "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"  -> "1.4 GB OF 2.0 GB · 70% · 2.5 MB/S · 3M2S LEFT"
 std::string GuiCloudTransfer::prettyRclone(std::string f)
 {
+	// Piped -- there is no terminal here -- rclone cuts every per-file line
+	// at 80 columns, so the last field often arrives torn: "5.722 MiB/",
+	// "976.547 Ki". A field is a percentage, a size (ends in B), a speed
+	// (ends in /s), a time (digits and h/m/s), or "-"; anything else is a
+	// fragment and is dropped rather than shown as "5.722 MB/".
+	{
+		std::vector<std::string> kept;
+		for (auto& raw : Utils::String::split(f, ',', true))
+		{
+			std::string t = Utils::String::trim(raw);
+			if (t.empty()) continue;
+			std::string tail = t;
+			if (tail.rfind("ETA ", 0) == 0) tail = tail.substr(4);
+			const bool pct   = tail.back() == '%';
+			const bool size  = tail.back() == 'B' || (tail.size() > 2 && tail.compare(tail.size() - 2, 2, "iB") == 0);
+			const bool speed = tail.size() > 2 && tail.compare(tail.size() - 2, 2, "/s") == 0;
+			bool time = !tail.empty() && isdigit((unsigned char) tail[0]);
+			for (char ch : tail) if (!(isdigit((unsigned char) ch) || ch == 'h' || ch == 'm' || ch == 's')) { time = false; break; }
+			if (time && isdigit((unsigned char) tail.back())) time = false;
+			const bool dash = tail == "-";
+			// the first field may be "45% /2.5Mi" -- a percentage and a size in one
+			const bool pctSize = t.find('%') != std::string::npos && t.find('/') != std::string::npos && (size || t.back() == 'i');
+			if (pct || size || speed || time || dash || pctSize)
+				kept.push_back(t);
+		}
+		f.clear();
+		for (size_t i = 0; i < kept.size(); i++)
+			f += (i ? ", " : "") + kept[i];
+	}
 	auto rep = [&f](const std::string& from, const std::string& to) { f = Utils::String::replace(f, from, to); };
 	rep("GiB", "GB"); rep("MiB", "MB"); rep("KiB", "KB");
 	rep("Gi", " GB"); rep("Mi", " MB"); rep("Ki", " KB");
@@ -230,7 +265,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			if (!mFileProgress.empty())
 				fl += "  " + prettyRclone(mFileProgress);
 			if (mFilesThisBlock > 1)
-				fl += "  · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE"));
+				fl += "  · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES"));
 			mFileLine->setText(fitOneLine(mSmallFont, fl, mLineWidth));
 		}
 		mElapsed->setText(std::string(_("ELAPSED")) + " " + elapsed);
@@ -257,7 +292,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 		mUnitIndex = parts.size() > 1 ? Utils::String::trim(parts[1]) : "";
 		mUnitCount = parts.size() > 2 ? Utils::String::trim(parts[2]) : "";
 		mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear();
-		mFilesThisBlock = 0; mPercent = -1;
+		mFilesThisBlock = 0; mPercent = -1; mSeenBlock = false;
 		return;
 	}
 	if (line.rfind("Transferred:", 0) == 0)
@@ -272,6 +307,15 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 		}
 
 		mTotals = body;
+		// A block that carried no per-file line had nothing in flight -- the
+		// unit's files are done or being checked -- so the name row does not
+		// keep showing a file that finished a block ago.
+		if (mSeenBlock && mFilesThisBlock == 0)
+		{
+			mCurrent.clear();
+			mFileProgress.clear();
+		}
+		mSeenBlock = true;
 		mFilesThisBlock = 0;   // a new block: the next " * " line is the head of it
 
 		auto pp = body.find('%');
@@ -300,11 +344,34 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 		{
 			// "name.zip: 45% /2.5Mi, 300Ki/s, 5s" -- the name and its progress
 			// arrive on one line; shown on two, so neither wraps.
+			//
+			// rclone prints the percentage as %3d, so the separator is ": " at
+			// 45% and ":" at 100% ("name.zip:100% /40Mi, 1Mi/s, 0s"). Splitting
+			// on ": " put the whole line on the name row at 100%, and the
+			// basename of "1Mi/s, 0s" is "s" -- the file the maintainer saw
+			// called "S". The separator is the last ':' followed by a
+			// percentage; a name may contain ':' but not ':' + digits + '%'.
 			std::string body = Utils::String::trim(line.substr(1));
-			auto sep = body.rfind(": ");
+			size_t sep = std::string::npos;
+			for (size_t i = body.size(); i-- > 0; )
+			{
+				if (body[i] != ':')
+					continue;
+				size_t j = i + 1;
+				while (j < body.size() && body[j] == ' ')
+					j++;
+				size_t d = j;
+				while (d < body.size() && isdigit((unsigned char) body[d]))
+					d++;
+				if (d > j && d < body.size() && body[d] == '%')
+				{
+					sep = i;
+					break;
+				}
+			}
 			std::string name = sep == std::string::npos ? body : body.substr(0, sep);
-			mFileProgress = sep == std::string::npos ? "" : Utils::String::trim(body.substr(sep + 2));
-			mCurrent = Utils::FileSystem::getFileName(name);
+			mFileProgress = sep == std::string::npos ? "" : Utils::String::trim(body.substr(sep + 1));
+			mCurrent = Utils::FileSystem::getFileName(Utils::String::trim(name));
 		}
 		mFilesThisBlock++;
 		return;
@@ -383,7 +450,10 @@ std::string GuiCloudTransfer::cleanLine(const std::string& raw)
 				i++;
 			continue;
 		}
-		if ((unsigned char) raw[i] >= 32 && (unsigned char) raw[i] < 127)
+		// Printable ASCII and every UTF-8 byte: rclone shortens a long name
+		// with U+2026, and dropping it as "unprintable" turned "Ikari n…ge"
+		// into "Ikari nge" on the page. Only C0 controls and DEL are noise.
+		if (((unsigned char) raw[i] >= 32 && (unsigned char) raw[i] < 127) || (unsigned char) raw[i] >= 0x80)
 			clean += raw[i];
 	}
 	return Utils::String::trim(clean);
