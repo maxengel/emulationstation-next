@@ -6188,12 +6188,18 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	// name, because there is one page. This said two, which was accurate when
 	// cloud was split across two menus and became a way to send somebody to
 	// the wrong half of a page that no longer exists.
+	//
+	// The rows are numbered and named exactly as that page names them, under
+	// an "in" line, so the list reads as what you can do once you are there
+	// rather than as three unrelated facts (maintainer, 2026-09-06).
 	s->addGroup(_("WHAT YOU CAN DO NOW"));
-	cloudSetupAddInfoRow(s, window, _("GAME SETTINGS > CLOUD SETTINGS"), true);
-	cloudSetupAddInfoRow(s, window, _("SYNC YOUR SAVES, OR OPEN ALL CLOUD SETTINGS AND SERVICES"));
+	cloudSetupAddInfoRow(s, window, _("IN GAME SETTINGS > CLOUD SETTINGS:"), true);
+	cloudSetupAddInfoRow(s, window, "1.  " + _("SYNC SAVES WITH THE CLOUD"));
+	cloudSetupAddInfoRow(s, window, "2.  " + _("BACK UP SAVES TO THE CLOUD, OR RESTORE THEM"));
+	cloudSetupAddInfoRow(s, window, "3.  " + _("MANAGE CLOUD STORAGE"));
 
 	cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
-		_("CONNECTING A PROVIDER ONLY GIVES THE DEVICE SOMEWHERE TO PUT THINGS. TURN ON THE SYSTEMS YOU WANT KEPT, AND ROMS AND BIOS FILES ARE NEVER UPLOADED."));
+		_("CONNECTING A PROVIDER ONLY GIVES THE DEVICE SOMEWHERE TO PUT THINGS. TURN ON THE SYSTEMS YOU WANT KEPT. ROMS AND BIOS FILES ARE NEVER INCLUDED."));
 
 	// One button, and it leaves. There is nothing left to continue to -- the
 	// sign-in is done, and the page it would return to is the provider list,
