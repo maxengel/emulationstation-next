@@ -3818,68 +3818,68 @@ static void cloudSetupAddInfoRow(GuiSettings* s, Window* window, const std::stri
 // The scan reads sizes because without them "should I take PSX?" cannot be
 // answered. It is one recursive listing rather than a size call per system,
 // but it is still a network round trip, so it runs behind GuiLoading.
-static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel = "")
+// The scraped-game-content switch (D-CLOUD-048): " --with-media" for the
+// content scripts when it is on, "" when it is off, which is the default.
+static std::string cloudMediaFlag()
+{
+	return SystemConf::getInstance()->get("cloudsync.content.media") == "1" ? " --with-media" : "";
+}
+
+// One page per direction (D-CLOUD-048). SYSTEMS TO BACK UP lists what this
+// device holds; SYSTEMS TO RESTORE lists what the cloud holds. Both sides are
+// listed by the transfer's own rule and compared by file name, because totals
+// cannot say whether one side has what the other has -- a restored-then-
+// scraped device read "different size" on every system for that reason.
+static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel = "", bool backup = false)
 {
 	window->pushGui(new GuiLoading<std::pair<std::vector<std::string>, std::vector<std::string>>>(
-		window, _("SCANNING YOUR CLOUD FOR ROMS AND BIOS FILES"),
+		window, backup ? _("COMPARING YOUR ROMS AND BIOS FILES WITH THE CLOUD") : _("SCANNING YOUR CLOUD FOR ROMS AND BIOS FILES"),
 		[](auto gui)
 		{
-			// Three answers, one wait: what the cloud holds, what is selected,
-			// and what this device already has. The third is what turns "should
-			// I take PSX?" into "PSX is 4 GB and you do not have it yet".
-			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan");
+			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudMediaFlag());
 			auto sel  = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
-			// name|bytes, so the badge can say whether what is here matches
-			// what is stored rather than only that something is here.
-			for (auto& l : ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_backup --list-sizes"))
-			{
-				auto d = Utils::String::trim(l);
-				if (!d.empty())
-					sel.push_back("\x01" + d);   // marked: already on this device
-			}
 			return std::make_pair(scan, sel);
 		},
-		[window, onDone, proceedLabel](std::pair<std::vector<std::string>, std::vector<std::string>> result)
+		[window, onDone, proceedLabel, backup](std::pair<std::vector<std::string>, std::vector<std::string>> result)
 		{
 			std::set<std::string> chosen;
-			std::map<std::string, unsigned long> present;   // on this device -> bytes
 			for (auto& line : result.second)
 			{
 				auto name = Utils::String::trim(line);
-				if (name.empty())
-					continue;
-				if (name[0] == '\x01')
-				{
-					auto p = Utils::String::split(name.substr(1), '|', true);
-					if (!p.empty())
-						present[p[0]] = p.size() > 1 ? (unsigned long) atol(p[1].c_str()) : 0;
-				}
-				else
+				if (!name.empty())
 					chosen.insert(name);
 			}
-
-			struct Found { std::string name; unsigned long bytes; bool supported; };
+			// name|cloud_bytes|supported|device_bytes|files_in_cloud_not_here|files_here_not_in_cloud
+			struct Found { std::string name; unsigned long cloudBytes; bool supported; unsigned long localBytes; int cloudNotHere; int hereNotCloud; };
 			std::vector<Found> found;
 			for (auto& line : result.first)
 			{
-				auto parts = Utils::String::split(Utils::String::trim(line), '|', true);
-				if (parts.size() < 3)
+				auto p = Utils::String::split(Utils::String::trim(line), '|', true);
+				if (p.size() < 3)
 					continue;
-				found.push_back({ parts[0], (unsigned long) atol(parts[1].c_str()), parts[2] == "1" });
+				Found f{ p[0], (unsigned long) atol(p[1].c_str()), p[2] == "1", 0, 0, 0 };
+				if (p.size() >= 6)
+				{
+					f.localBytes   = (unsigned long) atol(p[3].c_str());
+					f.cloudNotHere = atoi(p[4].c_str());
+					f.hereNotCloud = atoi(p[5].c_str());
+				}
+				if (f.name == "bios")
+					continue;   // not a system; comes with the tier (D-CLOUD-043)
+				// Each direction lists only what it can act on: backup sends what
+				// is here, restore brings what is there.
+				if (backup ? f.localBytes == 0 : f.cloudBytes == 0)
+					continue;
+				found.push_back(f);
 			}
-			// bios last, so its heading does not interrupt the systems.
-			std::stable_sort(found.begin(), found.end(),
-				[](const Found& a, const Found& b) { return (a.name == "bios") < (b.name == "bios"); });
-
 			if (found.empty())
 			{
-				window->pushGui(new GuiMsgBox(window,
-					_("NO ROMS OR BIOS FILES FOUND IN YOUR CLOUD YET.\n\nPUT ROMS INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
+				window->pushGui(new GuiMsgBox(window, backup
+					? _("NO ROMS ON THIS DEVICE YET.")
+					: _("NO ROMS OR BIOS FILES FOUND IN YOUR CLOUD YET.\n\nPUT ROMS INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
 				return;
 			}
-
-			auto s = new GuiSettings(window, _("SYSTEMS TO SYNC"));
-
+			auto s = new GuiSettings(window, backup ? _("SYSTEMS TO BACK UP") : _("SYSTEMS TO RESTORE"));
 			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
 			s->addEntry(_("SELECT ALL"), false, [switches] {
 				for (auto& e : *switches) e.second->setState(true);
@@ -3887,86 +3887,46 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			s->addEntry(_("SELECT NONE"), false, [switches] {
 				for (auto& e : *switches) e.second->setState(false);
 			});
-			// BIOS is not a game system. It rides in the same transfer because
-			// it is bulk static content, but listing it among snes and psx asks
-			// the reader to work out why "bios" is a console -- so it gets its
-			// own heading and keeps the systems list honest.
-			bool headedSystems = false;
+			s->addGroup(backup ? _("ROMS ON THIS DEVICE") : _("ROMS IN YOUR CLOUD"));
 			for (auto& f : found)
 			{
-				const bool isBios = (f.name == "bios");
-				// BIOS is not a system and no longer a pick here: it comes with the
-				// tier whenever the cloud has it (cloud_content_restore --selected),
-				// and the tier's own switch already says ROMS AND BIOS. The row
-				// existed because bios was once treated like any other folder.
-				// Maintainer, 2026-09-06.
-				if (isBios)
-					continue;
-				if (!isBios && !headedSystems)
-				{
-					s->addGroup(_("ROMS IN YOUR CLOUD"));
-					headedSystems = true;
-				}
 				auto sw = std::make_shared<SwitchComponent>(window);
 				sw->setState(chosen.find(f.name) != chosen.end());
 				switches->push_back({ f.name, sw });
-
-				// A system this image cannot run is stated as fact, not guessed:
-				// es_systems.cfg declares every system the device supports, so its
-				// absence there means the games cannot launch here. Still
-				// selectable -- somebody may be staging a library for another
-				// handheld - but nobody should spend a card on it unknowingly.
-				//
-				// Three states, all on the cloud glyph, because all three are
-				// facts about the cloud copy: it is only up there; it is here
-				// and matches; it is here and does not. A bare tick answered
-				// "have I got this?" and left the more useful question --
-				// whether the copy here is the copy in the cloud -- unasked.
-				//
-				// The middle state is a size comparison, so it is worded as
-				// one. Equal totals are not proof of identical files (#53); a
-				// difference IS proof they differ, which is the state somebody
-				// needs to act on, and the words carry the claim rather than
-				// the glyph.
-				auto here = present.find(f.name);
-				const bool onCard = here != present.end();
-				const bool matches = onCard && here->second == f.bytes;
-				std::string note = onCard
-					? (matches ? _U("\uF0C2 \uF058  ") : _U("\uF0C2 \uF071  "))
-					: _U("\uF0C2  ");
-				note += Utils::FileSystem::kiloBytesToString(f.bytes / 1024);
-				note += "  -  " + (onCard
-					? (matches ? _("ON THIS DEVICE") : _("ON THIS DEVICE, DIFFERENT SIZE"))
-					: _("IN YOUR CLOUD ONLY"));
+				// One line under the label (D-UI-023): this side's size, then a
+				// verdict by file name. "N FILES ..." is a difference a transfer
+				// would actually move; totals never said that.
+				std::string verdict;
+				if (backup)
+					verdict = f.cloudBytes == 0 ? _("NOT IN YOUR CLOUD YET")
+						: f.hereNotCloud > 0 ? std::to_string(f.hereNotCloud) + " " + (f.hereNotCloud == 1 ? _("FILE NOT IN YOUR CLOUD YET") : _("FILES NOT IN YOUR CLOUD YET"))
+						: _("IN YOUR CLOUD");
+				else
+					verdict = f.localBytes == 0 ? _("IN YOUR CLOUD ONLY")
+						: f.cloudNotHere > 0 ? std::to_string(f.cloudNotHere) + " " + (f.cloudNotHere == 1 ? _("FILE NOT ON THIS DEVICE") : _("FILES NOT ON THIS DEVICE"))
+						: _("ON THIS DEVICE");
+				std::string note = Utils::FileSystem::kiloBytesToString((backup ? f.localBytes : f.cloudBytes) / 1024) + "  -  " + verdict;
 				if (!f.supported)
 					note += "  -  " + _("THIS DEVICE CANNOT RUN IT");
-				// "bios" is the folder name, not a thing anybody calls a system.
-				// It gets a label rather than a heading of its own: a group that
-				// can only ever hold one row tells the reader nothing the row does
-				// not already say.
-				s->addWithDescription(isBios ? _("BIOS AND FIRMWARE") : Utils::String::toUpper(f.name), note, sw);
+				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
 			}
-
-			s->addSaveFunc([switches]
+			// The switch the counts above were made under. Changing it here is
+			// remembered on save; the next visit counts by the new rule.
+			s->addGroup(_("ALSO"));
+			auto media = std::make_shared<SwitchComponent>(window);
+			media->setState(SystemConf::getInstance()->get("cloudsync.content.media") == "1");
+			s->addWithDescription(_("SCRAPED GAME CONTENT"), _("ARTWORK, VIDEOS, AND MANUALS THE SCRAPER SAVED. OFF: NEITHER MOVED NOR COUNTED."), media);
+			s->addSaveFunc([switches, media]
 			{
 				std::string picked;
 				for (auto& entry : *switches)
 					if (entry.second->getState())
 						picked += (picked.empty() ? "" : " ") + entry.first;
 				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --set-systems \"" + picked + "\"");
+				SystemConf::getInstance()->set("cloudsync.content.media", media->getState() ? "1" : "0");
 			});
-
 			if (onDone)
 			{
-				// A page used as a wizard step needs a way forward that is not
-				// "leave". onFinalize alone could not be it: GuiSettings::close()
-				// runs save() and then the finalize hook, so BACK fired the
-				// transfer -- a cancel that performed the action.
-				//
-				// The flag is what makes the two paths different, and it is read
-				// inside finalize rather than after close() because close()
-				// deletes the page and with it the button closure currently
-				// executing (blindspot 4). Finalize runs before that delete.
 				auto proceed = std::make_shared<bool>(false);
 				s->onFinalize([proceed, onDone] { if (*proceed) onDone(); });
 				s->getMenu().clearButtons();
@@ -4076,6 +4036,10 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	{
 		s->addWithDescription(_("ROMS AND BIOS"),
 			_("THE SYSTEMS YOU CHOSE FOR THIS DEVICE"), content);
+		// The page that makes that choice, in this direction (D-CLOUD-048):
+		// a row with a choice behind it is a submenu, not a longer row.
+		s->addEntry(backup ? _("SYSTEMS TO BACK UP") : _("SYSTEMS TO RESTORE"), true,
+			[window, backup] { cloudContentSystemPicker(window, nullptr, "", backup); });
 	}
 
 	auto settings = std::make_shared<SwitchComponent>(window);
@@ -4153,8 +4117,8 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		if (wantSaves)
 			add(backup ? "/usr/bin/cloud_backup --yes" : "/usr/bin/cloud_restore --yes");
 		if (wantContent)
-			add(backup ? "/usr/bin/cloud_content_backup --selected"
-			           : "/usr/bin/cloud_content_restore --selected");
+			add(backup ? std::string("/usr/bin/cloud_content_backup --selected") + cloudMediaFlag()
+			           : std::string("/usr/bin/cloud_content_restore --selected") + cloudMediaFlag());
 		if (backup && wantSettings)
 			add("/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
 
@@ -4186,7 +4150,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 			{
 				if (staged)
 					cloudContentSystemPicker(window, [run] { (*run)(); },
-						backup ? _("BACK UP") : _("RESTORE"));
+						backup ? _("BACK UP") : _("RESTORE"), backup);
 				else
 					(*run)();
 			});
@@ -4338,9 +4302,6 @@ void GuiMenu::openCloud(Window* window)
 	s->addGroup(_("CLOUD STORAGE SETUP"));
 	if (configured)
 	{
-		cloudAddGatedEntry(s, window, true, _("CHOOSE SYSTEMS TO SYNC"),
-			_("PICK WHICH ROMS AND BIOS FILES THIS DEVICE TAKES FROM THE CLOUD, WITH SIZES."),
-			[window] { cloudContentSystemPicker(window, nullptr); });
 
 		// Came here with the rest of NETWORK SETTINGS' cloud group, and was
 		// missed when that group was deleted -- which left the folder editable
