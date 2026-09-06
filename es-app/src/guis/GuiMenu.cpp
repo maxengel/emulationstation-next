@@ -3911,11 +3911,13 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
 			}
 			// The switch the counts above were made under. Changing it here is
-			// remembered on save; the next visit counts by the new rule.
+			// remembered on save; the next visit counts by the new rule. One line
+			// under it, saying what the row carries (D-UI-023): what "off" does
+			// is visible in the counts above the moment the page reopens.
 			s->addGroup(_("ALSO"));
 			auto media = std::make_shared<SwitchComponent>(window);
 			media->setState(SystemConf::getInstance()->get("cloudsync.content.media") == "1");
-			s->addWithDescription(_("SCRAPED GAME CONTENT"), _("ARTWORK, VIDEOS, AND MANUALS THE SCRAPER SAVED. OFF: NEITHER MOVED NOR COUNTED."), media);
+			s->addWithDescription(_("SCRAPED GAME CONTENT"), _("ARTWORK, VIDEOS, AND MANUALS FROM THE SCRAPER"), media);
 			s->addSaveFunc([switches, media]
 			{
 				std::string picked;
