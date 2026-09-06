@@ -39,9 +39,21 @@ private:
 	NinePatchComponent mBackground;
 
 	std::shared_ptr<TextComponent> mTitle;
-	std::shared_ptr<TextComponent> mStatus;   // the file being moved right now
-	std::shared_ptr<TextComponent> mDetail;   // bytes, rate, ETA
-	std::shared_ptr<TextComponent> mFooter;
+	// Seven lines under the title (maintainer's layout, 2026-09-06): the ROM,
+	// its transfer, the system, the system's transfer, the bar, elapsed, and
+	// the notice. Each is one line, fitted to the width, so nothing wraps into
+	// the line below.
+	std::shared_ptr<TextComponent> mStatus;    // 1. the file being moved right now
+	std::shared_ptr<TextComponent> mFileLine;  // 2. that file's own progress
+	std::shared_ptr<TextComponent> mUnit;      // 3. the system (or phase) being copied
+	std::shared_ptr<TextComponent> mUnitLine;  // 4. its files and bytes so far
+	std::shared_ptr<TextComponent> mElapsed;   // 6. elapsed
+	std::shared_ptr<TextComponent> mFooter;    // 7. the notice / press any button
+	std::shared_ptr<Font> mTextFont;
+	std::shared_ptr<Font> mSmallFont;
+	float mLineWidth;
+	static std::string fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width);
+	static std::string prettyRclone(std::string fragment);
 
 	std::string mCommand;
 	std::string mTitleText;
@@ -53,8 +65,12 @@ private:
 	Vector2f mPanelSize;
 
 	std::mutex mMutex;
-	std::string mCurrent;   // " * name.zip: 45% /2.5Mi, 300Ki/s, 5s"
-	std::string mTotals;    // "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"
+	std::string mCurrent;       // "name.zip" -- the head of the current block
+	std::string mFileProgress;  // "45% /2.5Mi, 300Ki/s, 5s" -- that file's own line
+	std::string mTotals;        // "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"
+	std::string mFilesTotals;   // "12 / 45, 27%" -- the count line of the same block
+	std::string mUnitLabel;     // ">>> unit nes|2|5" from the script: what is being copied
+	std::string mUnitIndex, mUnitCount;
 	int mFilesThisBlock;
 	int mPercent;
 	bool mFinished;
