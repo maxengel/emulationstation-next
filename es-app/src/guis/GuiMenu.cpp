@@ -5214,12 +5214,24 @@ static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& curr
 		// screen: with the exit code discarded, a refused folder left the
 		// setting as it was while the page carried on as if it had changed
 		// (the A3 fixture, 2026-09-06).
-		const std::string out = Utils::Platform::GetShOutput(
-			"/usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\" 2>&1; echo \"RC=$?\"");
-		const size_t rcAt = out.rfind("RC=");
-		if (rcAt == std::string::npos || Utils::String::trim(out.substr(rcAt + 3)) != "0")
+		// Line by line: GetShOutput glues lines together, which turned the
+		// script's paragraphs into "thefolder" and "nameshave" (VM frame,
+		// 2026-09-07). rclone's own log line -- the one starting with a date
+		// -- is for the log, not the screen; the script's sentences are.
+		std::string why, rc;
+		for (auto& line : Utils::Platform::GetShOutputLines(
+			"/usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\" 2>&1; echo \"RC=$?\""))
 		{
-			const std::string why = Utils::String::trim(rcAt == std::string::npos ? out : out.substr(0, rcAt));
+			const std::string l = Utils::String::trim(line);
+			if (Utils::String::startsWith(l, "RC="))
+				rc = l.substr(3);
+			else if (l.size() > 10 && isdigit((unsigned char) l[0]) && l[4] == '/' && l[7] == '/')
+				LOG(LogWarning) << "cloud_setup wizard: " << l;
+			else if (!l.empty())
+				why += (why.empty() ? "" : "\n") + l;
+		}
+		if (rc != "0")
+		{
 			LOG(LogWarning) << "cloud_setup wizard: the folder was refused: " << why;
 			window->pushGui(new GuiMsgBox(window,
 				_("THE CLOUD FOLDER WAS NOT CHANGED") + (why.empty() ? "" : "\n\n" + why), _("OK"), nullptr));
