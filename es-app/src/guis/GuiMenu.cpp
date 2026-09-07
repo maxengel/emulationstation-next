@@ -5209,7 +5209,22 @@ static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& curr
 		if (trimmed.empty() || trimmed == "/")
 			return;
 		LOG(LogInfo) << "cloud_setup wizard: setting sync path to " << trimmed;
-		Utils::Platform::runSystemCommand("/usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\"", "", nullptr);
+		// The script asks the provider whether it will take the folder and
+		// refuses one it will not, saying why. That answer has to reach the
+		// screen: with the exit code discarded, a refused folder left the
+		// setting as it was while the page carried on as if it had changed
+		// (the A3 fixture, 2026-09-06).
+		const std::string out = Utils::Platform::GetShOutput(
+			"/usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\" 2>&1; echo \"RC=$?\"");
+		const size_t rcAt = out.rfind("RC=");
+		if (rcAt == std::string::npos || Utils::String::trim(out.substr(rcAt + 3)) != "0")
+		{
+			const std::string why = Utils::String::trim(rcAt == std::string::npos ? out : out.substr(0, rcAt));
+			LOG(LogWarning) << "cloud_setup wizard: the folder was refused: " << why;
+			window->pushGui(new GuiMsgBox(window,
+				_("THE CLOUD FOLDER WAS NOT CHANGED") + (why.empty() ? "" : "\n\n" + why), _("OK"), nullptr));
+			return;
+		}
 		if (onDone != nullptr)
 			onDone();
 	};
