@@ -4326,7 +4326,7 @@ static void cloudOpenMatch(Window* window)
 			for (auto& c : changes)
 			{
 				detail += Utils::String::toUpper(c.name) + "  -  "
-					+ std::to_string(c.files) + " " + _("FILES");
+					+ std::to_string(c.files) + " " + (c.files == 1 ? _("FILE") : _("FILES"));
 				if (c.bytes > 0)
 					detail += "  (" + Utils::FileSystem::kiloBytesToString(c.bytes / 1024) + ")";
 				detail += "\n";
@@ -4337,7 +4337,7 @@ static void cloudOpenMatch(Window* window)
 			// a library, and somebody about to press YES needs to know their
 			// saves are not in scope.
 			std::string text = _("REMOVE") + std::string(" ") + std::to_string(totalFiles)
-				+ " " + _("FILES FROM THIS DEVICE?");
+				+ " " + (totalFiles == 1 ? _("FILE FROM THIS DEVICE?") : _("FILES FROM THIS DEVICE?"));
 			if (totalBytes > 0)
 				text += "  (" + Utils::FileSystem::kiloBytesToString(totalBytes / 1024) + ")";
 			text += "\n\n" + detail

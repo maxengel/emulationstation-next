@@ -258,7 +258,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			// are "0 B / 0 B" -- true and useless. Lines 3 and 4 carry what the
 			// confirmation showed instead: what went, per system.
 			std::string removed = std::string(_("REMOVED")) + " " + std::to_string(mRemovedFiles) + " "
-				+ std::string(_("FILES FROM THIS DEVICE"));
+				+ std::string(mRemovedFiles == 1 ? _("FILE FROM THIS DEVICE") : _("FILES FROM THIS DEVICE"));
 			if (mRemovedBytes > 0)
 				removed += " · " + Utils::FileSystem::kiloBytesToString(mRemovedBytes / 1024);
 			mUnit->setText(fitOneLine(mTextFont, removed, mLineWidth));
@@ -327,7 +327,8 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 				auto f = Utils::String::split(item, ':', false);
 				if (f.size() < 2)
 					continue;
-				std::string d = Utils::String::toUpper(Utils::String::trim(f[0])) + " " + Utils::String::trim(f[1]) + " " + std::string(_("FILES"));
+				const std::string n = Utils::String::trim(f[1]);
+				std::string d = Utils::String::toUpper(Utils::String::trim(f[0])) + " " + n + " " + std::string(n == "1" ? _("FILE") : _("FILES"));
 				long b = f.size() > 2 ? atol(Utils::String::trim(f[2]).c_str()) : 0;
 				if (b > 0)
 					d += " · " + Utils::FileSystem::kiloBytesToString(b / 1024);
