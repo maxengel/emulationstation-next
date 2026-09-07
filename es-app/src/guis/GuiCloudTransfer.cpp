@@ -15,6 +15,7 @@
 GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, const std::string& title)
 	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
 	  mCommand(command), mTitleText(title), mFilesThisBlock(0), mSeenBlock(false), mPercent(-1),
+	  mRemovedFiles(0), mRemovedBytes(0), mAnyTransferred(false),
 	  mFinished(false), mExit(-1), mElapsedMs(0), mHandle(nullptr)
 {
 	auto theme = ThemeData::getMenuTheme();
@@ -34,6 +35,7 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	mFileLine = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 	mUnit     = std::make_shared<TextComponent>(window, "",                mTextFont,  theme->Text.color,      ALIGN_CENTER);
 	mUnitLine = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
+	mNote     = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 	mElapsed  = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 	mFooter   = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 
@@ -44,7 +46,7 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	const float w  = SW * 0.78f;
 	const float cx = SW * 0.5f;
 	mLineWidth = w;
-	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mElapsed, mFooter })
+	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mNote, mElapsed, mFooter })
 		t->setSize(w, 0);
 	mTitle   ->setPosition(cx - w / 2.0f, SH * 0.20f);
 	mStatus  ->setPosition(cx - w / 2.0f, SH * 0.29f);   // 1. the ROM
@@ -61,6 +63,11 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	mBusyAnim.setBackgroundVisible(false);                //   5. the bar
 	mBusyAnim.setSize(w, SH * 0.05f);
 	mBusyAnim.setPosition(cx - w / 2.0f, SH * 0.505f);
+	// Once the run is over the bar's row is free, and it is where the one
+	// thing left to do goes: a content run that changed the ROMs on this
+	// device is not visible in the game lists until they are rebuilt, and
+	// nobody should have to know that (maintainer, 2026-09-07).
+	mNote    ->setPosition(cx - w / 2.0f, SH * 0.54f);   //   5. the note, when done
 	mElapsed ->setPosition(cx - w / 2.0f, SH * 0.62f);   // 6. elapsed
 	mFooter  ->setPosition(cx - w / 2.0f, SH * 0.67f);   // 7. the notice
 
@@ -120,7 +127,7 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 	// in the app that has one.
 	mBackground.render(trans);
 
-	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mElapsed, mFooter })
+	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mNote, mElapsed, mFooter })
 		t->render(trans);
 
 	std::unique_lock<std::mutex> lock(mMutex);
@@ -245,6 +252,28 @@ void GuiCloudTransfer::update(int deltaTime)
 			: mExit == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
 			: _("FAILED"));
 		mFileLine->setText("");
+		if (mRemovedFiles > 0)
+		{
+			// A match is mostly deletion, and rclone's totals for a deletion
+			// are "0 B / 0 B" -- true and useless. Lines 3 and 4 carry what the
+			// confirmation showed instead: what went, per system.
+			std::string removed = std::string(_("REMOVED")) + " " + std::to_string(mRemovedFiles) + " "
+				+ std::string(_("FILES FROM THIS DEVICE"));
+			if (mRemovedBytes > 0)
+				removed += " · " + Utils::FileSystem::kiloBytesToString(mRemovedBytes / 1024);
+			mUnit->setText(fitOneLine(mTextFont, removed, mLineWidth));
+			std::string detail;
+			for (auto& d : mRemovedDetail)
+				detail += (detail.empty() ? "" : "   ") + d;
+			mUnitLine->setText(fitOneLine(mSmallFont, detail, mLineWidth));
+			if (mAnyTransferred)
+				mFileLine->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DID NOT WERE DOWNLOADED TOO."), mLineWidth));
+		}
+		// The ROMs on this device changed: the game lists do not know until
+		// they are rebuilt. Says where, in the words of the row that does it.
+		const bool contentRun = mCommand.find("cloud_content_restore") != std::string::npos;
+		if (mExit == 0 && contentRun && (mRemovedFiles > 0 || mAnyTransferred))
+			mNote->setText(fitOneLine(mSmallFont, _("UPDATE GAMELISTS UNDER GAME SETTINGS TO SEE THE CHANGE."), mLineWidth));
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
 		mFooter  ->setText(_("PRESS ANY BUTTON TO CLOSE"));
 	}
@@ -285,6 +314,28 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	// this will take when the files are a save game and a disc image.
 	// ">>> unit nes|2|5" -- the script announces each system (or phase) as it
 	// starts. Everything per-block is reset with it; the label survives.
+	if (line.rfind(">>> removed ", 0) == 0)
+	{
+		auto parts = Utils::String::split(line.substr(12), '|', false);
+		mRemovedFiles = parts.size() > 0 ? atol(Utils::String::trim(parts[0]).c_str()) : 0;
+		mRemovedBytes = parts.size() > 1 ? atol(Utils::String::trim(parts[1]).c_str()) : 0;
+		mRemovedDetail.clear();
+		if (parts.size() > 2)
+		{
+			for (auto& item : Utils::String::split(Utils::String::trim(parts[2]), ',', true))
+			{
+				auto f = Utils::String::split(item, ':', false);
+				if (f.size() < 2)
+					continue;
+				std::string d = Utils::String::toUpper(Utils::String::trim(f[0])) + " " + Utils::String::trim(f[1]) + " " + std::string(_("FILES"));
+				long b = f.size() > 2 ? atol(Utils::String::trim(f[2]).c_str()) : 0;
+				if (b > 0)
+					d += " · " + Utils::FileSystem::kiloBytesToString(b / 1024);
+				mRemovedDetail.push_back(d);
+			}
+		}
+		return;
+	}
 	if (line.rfind(">>> unit ", 0) == 0)
 	{
 		auto parts = Utils::String::split(line.substr(9), '|', false);
@@ -307,6 +358,8 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 		}
 
 		mTotals = body;
+		if (body.rfind("0 B /", 0) != 0)
+			mAnyTransferred = true;
 		// A block that carried no per-file line had nothing in flight -- the
 		// unit's files are done or being checked -- so the name row does not
 		// keep showing a file that finished a block ago.

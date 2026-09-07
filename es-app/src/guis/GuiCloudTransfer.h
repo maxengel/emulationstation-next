@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 // A screen for a transfer that takes minutes, not seconds.
 //
@@ -47,6 +48,7 @@ private:
 	std::shared_ptr<TextComponent> mFileLine;  // 2. that file's own progress
 	std::shared_ptr<TextComponent> mUnit;      // 3. the system (or phase) being copied
 	std::shared_ptr<TextComponent> mUnitLine;  // 4. its files and bytes so far
+	std::shared_ptr<TextComponent> mNote;      // 5. where the bar was: what to do next, once done
 	std::shared_ptr<TextComponent> mElapsed;   // 6. elapsed
 	std::shared_ptr<TextComponent> mFooter;    // 7. the notice / press any button
 	std::shared_ptr<Font> mTextFont;
@@ -71,6 +73,12 @@ private:
 	std::string mFilesTotals;   // "12 / 45, 27%" -- the count line of the same block
 	std::string mUnitLabel;     // ">>> unit nes|2|5" from the script: what is being copied
 	std::string mUnitIndex, mUnitCount;
+	// ">>> removed 14|314572800|snes:12:300000000,gb:2:14572800" -- a match's
+	// summary, rendered on the last screen in place of rclone's totals, which
+	// for a deletion read "0 B / 0 B" (maintainer, 2026-09-07).
+	long mRemovedFiles, mRemovedBytes;
+	std::vector<std::string> mRemovedDetail;   // "SNES 12 FILES · 300 MB", per system
+	bool mAnyTransferred;       // some block moved bytes: the device's ROMs changed
 	int mFilesThisBlock;
 	bool mSeenBlock;
 	int mPercent;

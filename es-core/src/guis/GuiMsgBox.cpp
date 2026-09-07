@@ -9,6 +9,19 @@
 
 #define HORIZONTAL_PADDING_PX  (Renderer::getScreenWidth()*0.01)
 
+// A dialog is 0.6 of the screen wide, and 0.8 when it has a paragraph to
+// say. The switch is measured, never matched on a string: a message that
+// would wrap past MSGBOX_WIDE_LINES lines at the standard width is laid out
+// at the wide one, so a confirmation that has to say several things -- what
+// goes, what arrives, what is never touched -- reads as lines and not as a
+// block (maintainer, 2026-09-07, the match preview on a 640-wide panel). A
+// short message never widens; the box still shrinks to the text's own width
+// when that is narrower than either cap. 0.8 is under the 0.9 that menus and
+// the toast use, so a dialog still reads as a dialog over the page behind it.
+#define MSGBOX_WIDTH           (Renderer::getScreenWidth() * 0.6f)
+#define MSGBOX_WIDE_WIDTH      (Renderer::getScreenWidth() * 0.8f)
+#define MSGBOX_WIDE_LINES      4
+
 GuiMsgBox::GuiMsgBox(Window* window, const std::string& text, const std::string& name1, const std::function<void()>& func1, GuiMsgBoxIcon icon) 
 	: GuiMsgBox(window, text, name1, func1, "", nullptr, "", nullptr, icon) { }
 
@@ -36,7 +49,7 @@ GuiMsgBox::GuiMsgBox(Window* window, const std::string& text,
 	mBackground.setCornerSize(theme->Background.cornerSize);
 	mBackground.setPostProcessShader(theme->Background.menuShader);
 
-	float width = Renderer::getScreenWidth() * 0.6f; // max width
+	float width = MSGBOX_WIDTH; // max width
 	float minWidth = Renderer::getScreenWidth() * 0.3f; // minimum width
 	
 	mImage = nullptr;
@@ -123,6 +136,18 @@ GuiMsgBox::GuiMsgBox(Window* window, const std::string& text,
 	// put the buttons into a ComponentGrid
 	mButtonGrid = makeButtonGrid(mWindow, mButtons);
 	mGrid.setEntry(mButtonGrid, Vector2i(0, 1), true, false, Vector2i(2, 1), GridFlags::BORDER_TOP);
+
+	// A paragraph gets the wide box (see MSGBOX_WIDE_LINES). Measured with
+	// the text's own font at the width the text would actually get.
+	if (width < MSGBOX_WIDE_WIDTH)
+	{
+		float textWidth = width - 3 * HORIZONTAL_PADDING_PX;
+		if (mImage != nullptr)
+			textWidth -= mImage->getSize().x() + 2 * HORIZONTAL_PADDING_PX;
+		const float lineHeight = mMsg->getFont()->getHeight();
+		if (lineHeight > 0 && mMsg->getFont()->sizeWrappedText(text, textWidth).y() > lineHeight * MSGBOX_WIDE_LINES)
+			width = MSGBOX_WIDE_WIDTH;
+	}
 
 	// decide final width
 	if(mMsg->getSize().x() < width && mButtonGrid->getSize().x() < width)
