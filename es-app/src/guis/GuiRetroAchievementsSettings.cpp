@@ -46,8 +46,15 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	// indicators -- it counts measured progress (34/99 rings) while an
 	// indicator marks a live "do X without Y" achievement -- and it had no
 	// switch here, so it could not be turned off (maintainer, 2026-09-07).
-	// On by default, as RetroArch ships it.
-	addSwitch(_("PROGRESS TRACKER"), _("Shows how far you are toward an achievement while you play."), "global.retroachievements.progress_tracker", true, nullptr);
+	// On by default, as RetroArch ships it: absent reads as on, so an
+	// upgraded device shows the state it is actually in. Written by hand
+	// rather than through addSwitch, whose bool means "store in Settings",
+	// not "default" -- the first version passed true there and the value
+	// went to es_settings.cfg, where the launch script never looks.
+	auto progressTracker = std::make_shared<SwitchComponent>(mWindow);
+	progressTracker->setState(SystemConf::getInstance()->getBool("global.retroachievements.progress_tracker", true));
+	addWithDescription(_("PROGRESS TRACKER"), _("Shows how far you are toward an achievement while you play."), progressTracker);
+	addSaveFunc([progressTracker] { SystemConf::getInstance()->setBool("global.retroachievements.progress_tracker", progressTracker->getState()); });
 	addSwitch(_("UNOFFICIAL ACHIEVEMENTS"), _("Enable unlocking of unofficial achievements."), "global.retroachievements.unofficial", false, nullptr);
 
 	// Unlock sound
