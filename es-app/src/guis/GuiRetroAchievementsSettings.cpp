@@ -42,6 +42,12 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	addSwitch(_("ENCORE MODE"), _("Unlocked achievements can be earned again."), "global.retroachievements.encore", false, nullptr);
 	addSwitch(_("AUTOMATIC SCREENSHOT"), _("Automatically take a screenshot when an achievement is earned."), "global.retroachievements.screenshot", false, nullptr);
 	addSwitch(_("CHALLENGE INDICATORS"), _("Shows icons in the bottom right corner when eligible achievements can be earned."), "global.retroachievements.challenge_indicators", false, nullptr);
+	// RetroArch's progress tracker is a separate widget from the challenge
+	// indicators -- it counts measured progress (34/99 rings) while an
+	// indicator marks a live "do X without Y" achievement -- and it had no
+	// switch here, so it could not be turned off (maintainer, 2026-09-07).
+	// On by default, as RetroArch ships it.
+	addSwitch(_("PROGRESS TRACKER"), _("Shows how far you are toward an achievement while you play."), "global.retroachievements.progress_tracker", true, nullptr);
 	addSwitch(_("UNOFFICIAL ACHIEVEMENTS"), _("Enable unlocking of unofficial achievements."), "global.retroachievements.unofficial", false, nullptr);
 
 	// Unlock sound
