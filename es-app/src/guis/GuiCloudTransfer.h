@@ -32,8 +32,9 @@ public:
 	void update(int deltaTime) override;
 
 	// A size at the precision it has: "200 KB", "1.2 MB", "1.20 GB". The one
-	// formatter for every size a cloud page prints -- this page's summary and
-	// the content picker's rows -- so the two never disagree on a number.
+	// formatter for every size a cloud page prints -- this page's summary,
+	// the content picker's rows, and the match confirmation -- so no two of
+	// them disagree on a number.
 	static std::string sizeLabel(unsigned long bytes);
 
 private:

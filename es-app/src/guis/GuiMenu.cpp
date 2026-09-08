@@ -4385,13 +4385,18 @@ static void cloudOpenMatch(Window* window)
 				return;
 			}
 
+			// Sizes are the transfer page's (GuiCloudTransfer::sizeLabel), as
+			// on the picker rows and the done page this dialog leads to, so
+			// the number a player agrees to here is the number they see
+			// removed there. kiloBytesToString of a KB-rounded size read
+			// "200.00 KB" -- two decimals that could only ever be zero (#85).
 			std::string detail;
 			for (auto& c : changes)
 			{
 				detail += Utils::String::toUpper(c.name) + "  -  "
 					+ std::to_string(c.files) + " " + (c.files == 1 ? _("FILE") : _("FILES"));
 				if (c.bytes > 0)
-					detail += "  (" + Utils::FileSystem::kiloBytesToString(c.bytes / 1024) + ")";
+					detail += "  (" + GuiCloudTransfer::sizeLabel((unsigned long) c.bytes) + ")";
 				detail += "\n";
 			}
 
@@ -4402,7 +4407,7 @@ static void cloudOpenMatch(Window* window)
 			std::string text = _("REMOVE") + std::string(" ") + std::to_string(totalFiles)
 				+ " " + (totalFiles == 1 ? _("FILE FROM THIS DEVICE?") : _("FILES FROM THIS DEVICE?"));
 			if (totalBytes > 0)
-				text += "  (" + Utils::FileSystem::kiloBytesToString(totalBytes / 1024) + ")";
+				text += "  (" + GuiCloudTransfer::sizeLabel((unsigned long) totalBytes) + ")";
 			text += "\n\n" + detail
 				+ "\n" + _("ANYTHING YOUR CLOUD HAS THAT THIS DEVICE DOES NOT IS DOWNLOADED AT THE SAME TIME.")
 				+ "\n" + _("GAME SAVES, SAVE STATES, AND SCREENSHOTS ARE NEVER TOUCHED.");
