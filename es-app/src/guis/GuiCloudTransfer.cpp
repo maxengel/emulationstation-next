@@ -318,8 +318,8 @@ void GuiCloudTransfer::foldUnit()
 }
 
 // rclone's fragments in the player's units and separators:
-//   "45% /2.5Mi, 300Ki/s, 5s"                      -> "45% OF 2.5 MB · 300 KB/S · 5S LEFT"
-//   "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"  -> "1.4 GB OF 2.0 GB · 70% · 2.5 MB/S · 3M2S LEFT"
+//   "45% /2.5Mi, 300Ki/s, 5s"                      -> "45% OF 2.5 MB . 300 KB/S . 5S LEFT"
+//   "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"  -> "1.4 GB OF 2.0 GB . 70% . 2.5 MB/S . 3M2S LEFT"
 std::string GuiCloudTransfer::prettyRclone(std::string f)
 {
 	// Piped -- there is no terminal here -- rclone cuts every per-file line
@@ -330,7 +330,7 @@ std::string GuiCloudTransfer::prettyRclone(std::string f)
 	// is rclone's word for a value it does not have yet -- the ETA of a
 	// transfer that has not started, the percentage of nothing -- and is
 	// dropped too: it is honest, but on the page it read as broken
-	// ("0 B OF 0 B · - · 0 B/S · -", review 2026-09-08).
+	// ("0 B OF 0 B . - . 0 B/S . -", review 2026-09-08).
 	{
 		std::vector<std::string> kept;
 		for (auto& raw : Utils::String::split(f, ',', true))
@@ -394,7 +394,7 @@ void GuiCloudTransfer::update(int deltaTime)
 	std::string unitLine;
 	if (!mFilesTotals.empty())
 	{
-		// "12 / 45, 27%" -> "12 OF 45 FILES · 27%"
+		// "12 / 45, 27%" -> "12 OF 45 FILES . 27%"
 		auto pct = mFilesTotals.find(", ");
 		unitLine = Utils::String::replace(mFilesTotals.substr(0, pct), " / ", " " + std::string(_("OF")) + " ") + " " + std::string(_("FILES"));
 		if (pct != std::string::npos)
@@ -403,7 +403,7 @@ void GuiCloudTransfer::update(int deltaTime)
 	// "0 B / 0 B, -, 0 B/s, ETA -" is the byte line while nothing is queued
 	// to move -- the whole of a run that only compares -- and it is true of
 	// nothing anybody asked about. Line 2 says what such a run is doing;
-	// this line stays blank rather than read "0 B OF 0 B · 0 B/S".
+	// this line stays blank rather than read "0 B OF 0 B . 0 B/S".
 	if (!mTotals.empty() && mTotals.rfind("0 B / 0 B", 0) != 0)
 		unitLine += (unitLine.empty() ? "" : "   ") + prettyRclone(mTotals);
 	mUnit    ->setText(fitOneLine(mTextFont,  unit,     mLineWidth));
@@ -495,8 +495,8 @@ void GuiCloudTransfer::update(int deltaTime)
 		if (!mCurrent.empty())
 		{
 			mStatus->setText(fitOneLine(mTextFont, mCurrent, mLineWidth));
-			// "TRANSFERRING 45% OF 2.5 MB · 300 KB/S · AND 3 MORE FILES": a
-			// single space inside a segment and " · " between them, the same
+			// "TRANSFERRING 45% OF 2.5 MB . 300 KB/S . AND 3 MORE FILES": a
+			// single space inside a segment and " . " between them, the same
 			// as every other row. Two spaces read as a gap twice the width of
 			// the word gaps beside it (#85).
 			std::string fl = std::string(_("TRANSFERRING"));
@@ -854,7 +854,7 @@ std::string GuiCloudTransfer::cleanLine(const std::string& raw)
 			continue;
 		}
 		// Printable ASCII and every UTF-8 byte: rclone shortens a long name
-		// with U+2026, and dropping it as "unprintable" turned "Ikari n…ge"
+		// with U+2026, and dropping it as "unprintable" turned "Ikari n...ge"
 		// into "Ikari nge" on the page. Only C0 controls and DEL are noise.
 		if (((unsigned char) raw[i] >= 32 && (unsigned char) raw[i] < 127) || (unsigned char) raw[i] >= 0x80)
 			clean += raw[i];
