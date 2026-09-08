@@ -3941,9 +3941,13 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				// with the delta -- the bytes a copy in this direction would
 				// send, and how many files -- and only when nothing would move
 				// does it name the total, in parentheses, after ALREADY IN YOUR
-				// CLOUD / ALREADY ON THIS DEVICE. Sizes round up to a whole KB,
-				// so a one-byte difference never reads "0.00 KB"; a difference
-				// of only empty files is carried by the count instead.
+				// CLOUD / ALREADY ON THIS DEVICE. Sizes are the transfer page's
+				// (GuiCloudTransfer::sizeLabel): a whole KB below a megabyte,
+				// rounded up so a one-byte difference never reads "0 KB", and
+				// no decimals that could only ever be zero -- the old
+				// kiloBytesToString of a KB-rounded size read "200.00 KB"
+				// (#85). A difference of only empty files is carried by the
+				// count instead.
 				const unsigned long total = backup ? f.localBytes : f.cloudBytes;
 				const unsigned long other = backup ? f.cloudBytes : f.localBytes;
 				unsigned long delta = backup ? f.hereNotCloudBytes : f.cloudNotHereBytes;
@@ -3954,7 +3958,7 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				// layout, which the script lists for size alone).
 				if (other == 0)
 					delta = total;
-				auto sizeOf = [](unsigned long bytes) { return Utils::FileSystem::kiloBytesToString((bytes + 1023) / 1024); };
+				const auto sizeOf = [](unsigned long bytes) { return GuiCloudTransfer::sizeLabel(bytes); };
 				std::string note;
 				if (f.sized || other == 0)
 				{
