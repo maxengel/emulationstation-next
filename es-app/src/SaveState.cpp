@@ -40,7 +40,37 @@ std::string SaveState::getScreenShot() const
 
 static std::string _changeCommandlineArgument(const std::string& commandLine, const std::string& parameter, const std::string& value)
 {
-	size_t corePos = commandLine.find(parameter.c_str());
+	// ROCKNIX passes the pair joined: "--core=<v>" / "--emulator=<v>"
+	// (runemu.sh:23-26). find("-core") matches inside that token and the
+	// code below would erase "=value" and insert the value with no "=",
+	// producing "--coremgba" -- a command line runemu.sh cannot parse.
+	// Handle the joined form first (fork #21).
+	const std::string joined = "-" + parameter + "=";       // "-core" -> "--core="
+	size_t jp = commandLine.rfind(joined);
+	if (jp != std::string::npos)
+	{
+		size_t js = jp + joined.length();
+		size_t je = commandLine.find(' ', js);
+		std::string out = commandLine;
+		out = out.erase(js, je == std::string::npos ? std::string::npos : je - js);
+		return out.insert(js, value);
+	}
+
+	// The legacy "-core <v>" form. Accept a hit only at a token boundary --
+	// a space (or the start) before it and a space after it -- so "-core"
+	// cannot match inside another word (fork #21).
+	size_t corePos = commandLine.find(parameter);
+	while (corePos != std::string::npos)
+	{
+		bool startsToken = (corePos == 0 || commandLine[corePos - 1] == ' ');
+		size_t after = corePos + parameter.length();
+		bool endsToken = (after < commandLine.length() && commandLine[after] == ' ');
+		if (startsToken && endsToken)
+			break;
+
+		corePos = commandLine.find(parameter, corePos + 1);
+	}
+
 	if (corePos != std::string::npos) 
 	{
 		corePos += parameter.length();
