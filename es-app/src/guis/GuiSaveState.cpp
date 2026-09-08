@@ -2,6 +2,7 @@
 #include "SystemData.h"
 #include "FileData.h"
 #include "utils/StringUtil.h"
+#include "utils/FileSystemUtil.h"
 #include "ApiSystem.h"
 #include "HelpStyle.h"
 #include "SystemConf.h"
@@ -231,9 +232,48 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 					const SaveStateItem& toDelete = mGrid->getSelected();
 					auto conf = toDelete.saveState->config;
 
+					// The grid also holds the START NEW GAME / START NEW AUTO SAVE
+					// placeholders, for which remove() below is a no-op; only a real
+					// file is recorded and rescanned.
+					bool recordDeletion = Utils::FileSystem::exists("/usr/bin/cloud_capture")
+						&& toDelete.saveState->isSlotValid()
+						&& !toDelete.saveState->fileName.empty();
+
+					if (recordDeletion)
+					{
+						// Record the deletion before the file goes (#21 R3, D-CLOUD-053): the
+						// next pass then propagates a decided deletion instead of asking about
+						// an absence it cannot explain (D-CLOUD-037).
+						std::string retire = std::string("/usr/bin/cloud_capture --retire ")
+							+ Utils::String::shellQuote(toDelete.saveState->fileName);
+						if (!toDelete.saveState->getScreenShot().empty())
+							retire += " " + Utils::String::shellQuote(toDelete.saveState->getScreenShot());
+						// The deletion proceeds either way (the player asked for it); a
+						// retire that could not record is logged, as launchGame logs a
+						// capture that could not, so the absence has a trace somewhere.
+						int retireCode = ApiSystem::executeScriptLegacy(retire, nullptr).second;
+						if (retireCode != 0)
+							LOG(LogWarning) << "cloud_capture --retire exited " << retireCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
+					}
+
 					toDelete.saveState->remove();
 
 					SaveStateRepository::renumberSlots(mGame, conf);
+
+					if (recordDeletion)
+					{
+						// The renumber moved every slot above the deleted one; re-key now
+						// rather than at the next exit. --rescan carries no provenance, which
+						// is the point: no game ran, so there is no frozen emulator or core to
+						// pass and getEmulator()/getCore() must not be used in its place.
+						FileData* game = mGame->getSourceFileData();
+						int rescanCode = ApiSystem::executeScriptLegacy(std::string("/usr/bin/cloud_capture --rescan --system ")
+							+ Utils::String::shellQuote(game->getSystem()->getName())
+							+ " --rom " + Utils::String::shellQuote(game->getPath()), nullptr).second;
+						if (rescanCode != 0)
+							LOG(LogWarning) << "cloud_capture --rescan exited " << rescanCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
+					}
+
 					mRepository->refresh();
 
 					loadGrid();
