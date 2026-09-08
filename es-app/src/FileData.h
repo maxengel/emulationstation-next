@@ -55,7 +55,9 @@ struct LaunchGameOptions
 		netPlayMode = NetPlayMode::DISABLED; 
 		port = 0;
 		saveStateInfo = nullptr; 
-		isSaveStateInfoTemporary = false; 		  
+		isSaveStateInfoTemporary = false;
+		launchedEmulator = "";
+		launchedCore = "";
 	}
 
 	int netPlayMode;
@@ -68,6 +70,14 @@ struct LaunchGameOptions
 
 	SaveState*	saveStateInfo;
 	bool isSaveStateInfoTemporary;
+
+	// What the launch command actually carried, read after every rewrite of it
+	// (fork #21 R5). The capture step at exit records these. getEmulator() and
+	// getCore() re-resolve from SystemConf and can answer differently by then;
+	// a netplay client override and a savestate config both make them differ.
+	// Out-fields: getlaunchCommand fills them, launchGame reads them.
+	std::string launchedEmulator;
+	std::string launchedCore;
 };
 
 class FolderData;

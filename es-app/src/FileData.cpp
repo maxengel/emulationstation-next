@@ -35,6 +35,7 @@
 #include "Paths.h"
 #include "resources/TextureData.h"
 #include "views/gamelist/GameNameFormatter.h"
+#include "LaunchCommand.h"
 
 using namespace Utils::Platform;
 
@@ -655,6 +656,12 @@ std::string FileData::getlaunchCommand(LaunchGameOptions& options, bool includeC
 		command = options.saveStateInfo->setupSaveState(this, command);		
 	}
 
+	// The pair the emulator will actually be handed, read from the finished
+	// command (fork #21 R5): a savestate config's rewrite above and the netplay
+	// client override both diverge from getEmulator()/getCore().
+	options.launchedEmulator = launchArgument(command, "--emulator", emulator);
+	options.launchedCore = launchArgument(command, "--core", core);
+
 	return command;
 }
 
@@ -761,6 +768,37 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 			options.saveStateInfo->onGameEnded(this);
 
 		getSourceFileData()->getSystem()->getSaveStateRepository()->refresh();
+	}
+
+	// Record what this session wrote (fork #21 R5). On every exit: whatever
+	// the exit code, whatever the cloud toggle says, whether or not another
+	// sync holds the lock -- a save written and not recorded is exactly what
+	// the reconciler cannot explain later. Synchronous, network-free, takes no
+	// lock and spawns no rclone, so it is a handful of stats and at most a few
+	// hundred KB of hashing while the window is still down; it has finished
+	// before the exit sync below starts, so the working copy the push carries
+	// is current. Placed after onGameEnded above, which renumbers slot files
+	// and restores .state.auto -- the paths only settle there. The emulator
+	// and core are the ones the command carried (launchedEmulator/
+	// launchedCore), never getEmulator()/getCore() re-read now. --started is
+	// tstart: a member with no entry is recorded only if this session wrote
+	// it, so nothing stamps a file it did not write. A system with no
+	// <emulators> element (tools, imageviewer) reaches here with an empty
+	// pair; nothing there writes a save, so there is nothing to record and
+	// no failure to stamp -- an empty --emulator would otherwise be a usage
+	// row in capture-failures on every run of such a system.
+	if (Utils::FileSystem::exists("/usr/bin/cloud_capture") && !options.launchedEmulator.empty())
+	{
+		std::string capture = std::string("/usr/bin/cloud_capture")
+			+ " --system "   + Utils::String::shellQuote(system->getName())
+			+ " --rom "      + Utils::String::shellQuote(gameToUpdate->getPath())
+			+ " --emulator " + Utils::String::shellQuote(options.launchedEmulator)
+			+ " --core "     + Utils::String::shellQuote(options.launchedCore)
+			+ " --started "  + std::to_string(static_cast<long long>(tstart))
+			+ " --exit "     + std::to_string(exitCode);
+		int captureCode = ApiSystem::executeScriptLegacy(capture, nullptr).second;
+		if (captureCode != 0)
+			LOG(LogWarning) << "cloud_capture exited " << captureCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
 	}
 
 	if (!p2kConv.empty()) // delete .keys file if it has been converted from p2k

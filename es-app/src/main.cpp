@@ -47,6 +47,8 @@
 #include <thread>
 #include "ZaparooSupport.h"
 #include "utils/ThreadPool.h"
+#include "utils/StringUtil.h"
+#include "LaunchCommand.h"
 
 #ifdef WIN32
 #include <Windows.h>
@@ -440,8 +442,35 @@ void launchStartupGame()
 	{
 		InputManager::getInstance()->init();
 		command = Utils::String::replace(command, "%CONTROLLERSCONFIG%", InputManager::getInstance()->configureEmulators());
-		Utils::Platform::ProcessStartInfo(command).run();		
-	}	
+
+		time_t tstart = time(NULL);
+		int exitCode = Utils::Platform::ProcessStartInfo(command).run();
+
+		// A boot-launched session is a game exit too (fork #21 R5), and the
+		// one FileData::launchGame never sees: a save it wrote has no entry
+		// and an mtime below every later session's --started, so unless it is
+		// recorded here nothing ever records it. No system is loaded yet
+		// (loadSystemConfigFile runs later in main), so the stored command is
+		// the only source -- the -P token is the system, --emulator=/--core=
+		// the frozen pair, read the way runemu.sh reads them. A command with
+		// no emulator token has nothing that writes a save (tools), so there
+		// is nothing to record.
+		std::string system = launchToken(command, "-P");
+		std::string emulator = launchArgument(command, "--emulator", "");
+		if (Utils::FileSystem::exists("/usr/bin/cloud_capture") && !system.empty() && !emulator.empty())
+		{
+			std::string capture = std::string("/usr/bin/cloud_capture")
+				+ " --system "   + Utils::String::shellQuote(system)
+				+ " --rom "      + Utils::String::shellQuote(gamePath)
+				+ " --emulator " + Utils::String::shellQuote(emulator)
+				+ " --core "     + Utils::String::shellQuote(launchArgument(command, "--core", ""))
+				+ " --started "  + std::to_string(static_cast<long long>(tstart))
+				+ " --exit "     + std::to_string(exitCode);
+			int captureCode = ApiSystem::executeScriptLegacy(capture, nullptr).second;
+			if (captureCode != 0)
+				LOG(LogWarning) << "cloud_capture exited " << captureCode << " after the startup game -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
+		}
+	}
 }
 
 // #include "utils/MathExpr.h"
