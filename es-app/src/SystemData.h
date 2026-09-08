@@ -92,6 +92,12 @@ public:
 	static SystemData* getFirstVisibleSystem();
 
 	inline FolderData* getRootFolder() const { return mRootFolder; };
+
+	// Re-read this system's folder from disk when it changed since the last
+	// scan, for systems whose list is the folder (no gamelist). See the
+	// definition for why and when.
+	void rescanIfFolderChanged();
+	static void rescanChangedFolders();
 	inline const std::string& getName() const { return mMetadata.name; }
 	inline const std::string& getFullName() const { return mMetadata.fullName; }
 	inline const std::string& getStartPath() const { return mEnvData->mStartPath; }
@@ -263,6 +269,7 @@ private:
 	FileFilterIndex* mFilterIndex;
 
 	FolderData* mRootFolder;
+	time_t mFolderScannedAt = 0; // the folder's mtime at the last populate (rescanIfFolderChanged)
 	BindableRandom* mBindableRandom;
 
 	std::vector<EmulatorData> mEmulators;

@@ -6,6 +6,7 @@
 #include "utils/StringUtil.h"
 #include "utils/FileSystemUtil.h"
 #include "Log.h"
+#include "SystemData.h"
 
 #include <cctype>
 #include <cstdio>
@@ -97,8 +98,15 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	std::unique_lock<std::mutex> lock(mMutex);
 	if (!mFinished || !input.value)
 		return true;
+	// A restore may have brought files into folders the lists scanned at
+	// boot -- screenshots in particular (#82). Re-read what changed once this
+	// page is gone.
+	const bool restored = mExit == 0 && mCommand.find("restore") != std::string::npos;
 	lock.unlock();
+	Window* window = mWindow;
 	delete this;
+	if (restored)
+		window->postToUiThread([] { SystemData::rescanChangedFolders(); });
 	return true;
 }
 
