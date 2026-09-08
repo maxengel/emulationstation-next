@@ -31,12 +31,19 @@ public:
 	std::vector<HelpPrompt> getHelpPrompts() override;
 	void update(int deltaTime) override;
 
+	// A size at the precision it has: "200 KB", "1.2 MB", "1.20 GB". The one
+	// formatter for every size a cloud page prints -- this page's summary and
+	// the content picker's rows -- so the two never disagree on a number.
+	static std::string sizeLabel(unsigned long bytes);
+
 private:
 	void threadRun();
 	void handleLine(const std::string& line);
 	void refreshPercent();
+	void foldUnit();
 	static std::string cleanLine(const std::string& raw);
 	static int parsePercent(const std::string& body);
+	static long parseBytes(const std::string& field);
 
 	BusyComponent mBusyAnim;
 	NinePatchComponent mBackground;
@@ -77,6 +84,16 @@ private:
 	std::string mFilesTotals;   // "12 / 45, 27%" -- the count line of the same block
 	std::string mUnitLabel;     // ">>> unit nes|2|5" from the script: what is being copied
 	std::string mUnitIndex, mUnitCount;
+	// What this unit's rclone has moved so far, as its last "Transferred:"
+	// pair read: the bytes line's first field and the count line's first
+	// number. Folded into the run's totals when the next unit starts and
+	// when the command exits (foldUnit), so the done page can say what the
+	// whole run moved rather than what its last unit did. mRunSized records
+	// that a byte line was parsed at all: without one there is no number to
+	// show, and the page says so rather than inventing a zero.
+	long mUnitBytes, mUnitFiles;
+	long mRunBytes, mRunFiles;
+	bool mRunSized;
 	// ">>> removed 14|314572800|snes:12:300000000,gb:2:14572800" -- a match's
 	// summary, rendered on the last screen in place of rclone's totals, which
 	// for a deletion read "0 B / 0 B" (maintainer, 2026-09-07).
@@ -99,6 +116,13 @@ private:
 	int mPercent;               // -1 until a block has produced a real number
 	bool mFinished;
 	int mExit;
+	// The frame's copy of (mFinished, mPercent), taken in update() under the
+	// lock that also reads the text -- render() draws the bar from these, so
+	// the bar and the eight rows are always the same stats block. Reading
+	// mPercent again in render() let the worker advance it between the two,
+	// and the bar ran one block ahead of the text for a frame.
+	bool mShownFinished;
+	int mShownPercent;
 
 	int mElapsedMs;
 	std::thread* mHandle;

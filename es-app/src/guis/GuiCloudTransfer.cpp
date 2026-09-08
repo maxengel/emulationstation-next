@@ -9,17 +9,21 @@
 #include "SystemData.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <sys/wait.h>
 
 GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, const std::string& title)
 	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
-	  mCommand(command), mTitleText(title), mFilesThisBlock(0), mSeenBlock(false),
+	  mCommand(command), mTitleText(title),
+	  mUnitBytes(0), mUnitFiles(0), mRunBytes(0), mRunFiles(0), mRunSized(false),
 	  mRemovedFiles(0), mRemovedBytes(0), mAnyTransferred(false),
+	  mFilesThisBlock(0), mSeenBlock(false),
 	  mChecksDone(0), mChecksTotal(0), mListed(0), mChecksThisBlock(0),
 	  mBytePercent(-1), mFilePercent(-1), mCheckPercent(-1), mPercent(-1),
-	  mFinished(false), mExit(-1), mElapsedMs(0), mHandle(nullptr)
+	  mFinished(false), mExit(-1), mShownFinished(false), mShownPercent(-1),
+	  mElapsedMs(0), mHandle(nullptr)
 {
 	auto theme = ThemeData::getMenuTheme();
 	mBackground.setImagePath(theme->Background.path);
@@ -203,14 +207,12 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mNote, mElapsed, mFooter })
 		t->render(trans);
 
-	std::unique_lock<std::mutex> lock(mMutex);
-	const bool finished = mFinished;
-	const int percent = mPercent;
-	lock.unlock();
-
-	if (!finished)
+	// The bar is drawn from the snapshot update() took under the lock, along
+	// with the text above it -- not from mPercent, which the worker may have
+	// moved on since. One block per frame, for every row and the bar alike.
+	if (!mShownFinished)
 	{
-		if (percent >= 0)
+		if (mShownPercent >= 0)
 		{
 			// A bar only where there is a real number behind it. An
 			// indeterminate spinner is honest; a bar at an invented
@@ -218,7 +220,7 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 			// spinner's row, so the two take turns in one place.
 			Renderer::setMatrix(trans);
 			Renderer::drawRect(mBarX, mBarY, mBarW, mBarH, (theme->Text.color & 0xFFFFFF00) | 0x40);
-			Renderer::drawRect(mBarX, mBarY, mBarW * (percent / 100.0f), mBarH, theme->Text.color);
+			Renderer::drawRect(mBarX, mBarY, mBarW * (mShownPercent / 100.0f), mBarH, theme->Text.color);
 		}
 		else
 			mBusyAnim.render(trans);
@@ -233,6 +235,86 @@ std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std:
 	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
 		text.pop_back();
 	return text + "...";
+}
+
+// rclone's size units, once: how each is spelt in its output (the torn
+// "Ki"/"Mi"/"Gi" is a per-file line cut at 80 columns), what the page calls
+// it, and how many bytes it is. prettyRclone renames by this table and
+// parseBytes reads by it, so a unit the page can show is a unit it can add
+// up. Longest spelling first: "GiB" must be matched before "Gi".
+namespace
+{
+	struct RcloneUnit { const char* rclone; const char* shown; double bytes; };
+	const RcloneUnit RCLONE_UNITS[] = {
+		{ "TiB", "TB",  1024.0 * 1024 * 1024 * 1024 },
+		{ "GiB", "GB",  1024.0 * 1024 * 1024 },
+		{ "MiB", "MB",  1024.0 * 1024 },
+		{ "KiB", "KB",  1024.0 },
+		{ "Ti",  " TB", 1024.0 * 1024 * 1024 * 1024 },
+		{ "Gi",  " GB", 1024.0 * 1024 * 1024 },
+		{ "Mi",  " MB", 1024.0 * 1024 },
+		{ "Ki",  " KB", 1024.0 },
+		{ "B",   "B",   1.0 },
+	};
+}
+
+// "200 KB", "1.2 MB", "1.20 GB": a whole KB below a megabyte, one decimal
+// below a gigabyte, two above. That is the precision a listing has and the
+// precision a player can act on. kiloBytesToString prints two decimals of
+// whatever unit it lands on, and fed a size already rounded up to a whole
+// KB it read "200.00 KB" -- two digits that could only ever be zero (#85).
+// A size that is not zero rounds up, so one byte reads "1 KB", never "0 KB".
+// The unit is chosen from the value as it will print, so nothing reads
+// "1024 KB" or "1024.0 MB" a byte short of the next unit.
+std::string GuiCloudTransfer::sizeLabel(unsigned long bytes)
+{
+	char buf[32];
+	const unsigned long kb = (bytes + 1023UL) / 1024UL;
+	const double mb = bytes / (1024.0 * 1024.0);
+	if (kb < 1024UL)
+		snprintf(buf, sizeof(buf), "%lu KB", kb);
+	else if (mb < 1023.95)
+		snprintf(buf, sizeof(buf), "%.1f MB", mb);
+	else
+		snprintf(buf, sizeof(buf), "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+	return buf;
+}
+
+// The bytes in one rclone size field: "80 KiB" -> 81920, "1.4 GiB" ->
+// 1503238553, "0 B" -> 0. -1 when the field carries no number or a unit
+// the table above does not know: a value that was not printed is never
+// added to a total that will be shown. strtod also reads "inf" and "nan",
+// which no size is and whose cast to long is undefined; rclone never prints
+// them, and they are refused all the same.
+long GuiCloudTransfer::parseBytes(const std::string& field)
+{
+	const std::string t = Utils::String::trim(field);
+	char* end = nullptr;
+	const double v = strtod(t.c_str(), &end);
+	if (end == t.c_str() || !std::isfinite(v) || v < 0)
+		return -1;
+	const std::string unit = Utils::String::trim(std::string(end));
+	for (const auto& u : RCLONE_UNITS)
+		if (unit == u.rclone)
+			return (long) (v * u.bytes + 0.5);
+	return -1;
+}
+
+// The unit's last "Transferred:" pair becomes the run's. Called with mMutex
+// held: at the next ">>> unit", when the command exits, and when the byte
+// counter drops -- rclone's never does within one invocation, so a drop
+// means a second one started inside the unit, and what the first moved is
+// banked before its numbers are replaced. A drop of the count line folds
+// the files alone, in handleLine: the byte line of the same block comes
+// first and has settled the bytes by then, and folding both again here
+// banked the new rclone's first bytes twice whenever the old one had moved
+// nothing but empty files (review, 2026-09-08).
+void GuiCloudTransfer::foldUnit()
+{
+	mRunBytes += mUnitBytes;
+	mRunFiles += mUnitFiles;
+	mUnitBytes = 0;
+	mUnitFiles = 0;
 }
 
 // rclone's fragments in the player's units and separators:
@@ -273,8 +355,9 @@ std::string GuiCloudTransfer::prettyRclone(std::string f)
 			f += (i ? ", " : "") + kept[i];
 	}
 	auto rep = [&f](const std::string& from, const std::string& to) { f = Utils::String::replace(f, from, to); };
-	rep("GiB", "GB"); rep("MiB", "MB"); rep("KiB", "KB");
-	rep("Gi", " GB"); rep("Mi", " MB"); rep("Ki", " KB");
+	for (const auto& u : RCLONE_UNITS)
+		if (std::string(u.rclone) != u.shown)
+			rep(u.rclone, u.shown);
 	rep("ETA ", "");
 	rep(" / ", " OF "); rep(" /", " OF ");
 	rep(", ", " · ");
@@ -293,6 +376,10 @@ void GuiCloudTransfer::update(int deltaTime)
 	GuiComponent::update(deltaTime);
 	mBusyAnim.update(deltaTime);
 	std::unique_lock<std::mutex> lock(mMutex);
+	// One snapshot per frame for the bar (render() draws from it) and the
+	// rows below, so they cannot show two different stats blocks.
+	mShownFinished = mFinished;
+	mShownPercent  = mPercent;
 	if (!mFinished)
 		mElapsedMs += deltaTime;
 	const int mins = mElapsedMs / 60000;
@@ -329,6 +416,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			: mExit == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
 			: _("FAILED"));
 		mFileLine->setText("");
+		const bool restore = mCommand.find("restore") != std::string::npos;
 		if (mRemovedFiles > 0)
 		{
 			// A match is mostly deletion, and rclone's totals for a deletion
@@ -337,7 +425,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			std::string removed = std::string(_("REMOVED")) + " " + std::to_string(mRemovedFiles) + " "
 				+ std::string(mRemovedFiles == 1 ? _("FILE FROM THIS DEVICE") : _("FILES FROM THIS DEVICE"));
 			if (mRemovedBytes > 0)
-				removed += " · " + Utils::FileSystem::kiloBytesToString(mRemovedBytes / 1024);
+				removed += " · " + sizeLabel(mRemovedBytes);
 			mUnit->setText(fitOneLine(mTextFont, removed, mLineWidth));
 			std::string detail;
 			for (auto& d : mRemovedDetail)
@@ -345,6 +433,51 @@ void GuiCloudTransfer::update(int deltaTime)
 			mUnitLine->setText(fitOneLine(mSmallFont, detail, mLineWidth));
 			if (mAnyTransferred)
 				mFileLine->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DID NOT WERE DOWNLOADED TOO."), mLineWidth));
+		}
+		else
+		{
+			// Lines 3 and 4 answer for the whole run, not its last unit: the
+			// page used to end on "SNES  3 OF 3" over that unit's totals, or
+			// over nothing when the last unit only compared (#85). Line 3
+			// carries the sum of every unit's final "Transferred:" pair, in
+			// the run's own verb -- the row and the font the match branch
+			// above gives its own summary, so the run's answer to "did that
+			// work?" is not the smallest text on the page under a blank row
+			// (review, 2026-09-08). Line 4 is left clear: a system's name
+			// over a run-wide number would claim the number was its. Only
+			// what rclone printed: a run that never printed a byte line says
+			// COMPLETED SUCCESSFULLY and nothing more.
+			//
+			// The count is of finished files. The bytes are rclone's
+			// bytes-read counter, and on a run that stopped or failed that
+			// includes what the transfers in flight had read when it died
+			// and never completed -- so a run that did not exit 0 names its
+			// files and no size, rather than claim as BACKED UP bytes that
+			// were not.
+			std::string summary;
+			const bool sized = mExit == 0 && mRunBytes > 0;
+			if (mRunSized && (mRunFiles > 0 || sized))
+			{
+				if (mRunFiles > 0)
+					summary = std::to_string(mRunFiles) + " " + std::string(mRunFiles == 1 ? _("FILE") : _("FILES"));
+				if (sized)
+					summary += (summary.empty() ? "" : " · ") + sizeLabel((unsigned long) mRunBytes);
+				summary += " " + std::string(restore ? _("RESTORED") : _("BACKED UP"));
+			}
+			else if (mRunSized && mExit == 0)
+			{
+				// Nothing moved and the run succeeded: everything was there
+				// already. On a failure the same zero means something else,
+				// so the sentence is not offered. The clause after the dash
+				// is dropped whole on a panel too narrow for it, rather than
+				// ending in an ellipsis -- measured in the font it is set in.
+				summary = restore ? _("NOTHING NEW TO RECEIVE - EVERYTHING WAS ALREADY ON THIS DEVICE")
+				                  : _("NOTHING NEW TO SEND - EVERYTHING WAS ALREADY IN YOUR CLOUD");
+				if (mTextFont && mTextFont->sizeText(summary).x() > mLineWidth)
+					summary = restore ? _("NOTHING NEW TO RECEIVE") : _("NOTHING NEW TO SEND");
+			}
+			mUnit    ->setText(fitOneLine(mTextFont, summary, mLineWidth));
+			mUnitLine->setText("");
 		}
 		// The ROMs on this device changed: the game lists do not know until
 		// they are rebuilt. Says where, in the words of the row that does it.
@@ -362,11 +495,15 @@ void GuiCloudTransfer::update(int deltaTime)
 		if (!mCurrent.empty())
 		{
 			mStatus->setText(fitOneLine(mTextFont, mCurrent, mLineWidth));
+			// "TRANSFERRING 45% OF 2.5 MB · 300 KB/S · AND 3 MORE FILES": a
+			// single space inside a segment and " · " between them, the same
+			// as every other row. Two spaces read as a gap twice the width of
+			// the word gaps beside it (#85).
 			std::string fl = std::string(_("TRANSFERRING"));
 			if (!mFileProgress.empty())
-				fl += "  " + prettyRclone(mFileProgress);
+				fl += " " + prettyRclone(mFileProgress);
 			if (mFilesThisBlock > 1)
-				fl += "  · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES"));
+				fl += " · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES"));
 			mFileLine->setText(fitOneLine(mSmallFont, fl, mLineWidth));
 		}
 		else if (mChecksTotal > 0 || mListed > 0)
@@ -430,7 +567,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 				std::string d = Utils::String::toUpper(Utils::String::trim(f[0])) + " " + n + " " + std::string(n == "1" ? _("FILE") : _("FILES"));
 				long b = f.size() > 2 ? atol(Utils::String::trim(f[2]).c_str()) : 0;
 				if (b > 0)
-					d += " · " + Utils::FileSystem::kiloBytesToString(b / 1024);
+					d += " · " + sizeLabel((unsigned long) b);
 				mRemovedDetail.push_back(d);
 			}
 		}
@@ -438,6 +575,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	}
 	if (line.rfind(">>> unit ", 0) == 0)
 	{
+		foldUnit();   // the unit that just ended: its last totals are the run's now
 		auto parts = Utils::String::split(line.substr(9), '|', false);
 		mUnitLabel = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
 		mUnitIndex = parts.size() > 1 ? Utils::String::trim(parts[1]) : "";
@@ -458,12 +596,31 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 			mFilesTotals = body;   // the count line of the block: "12 / 45, 27%"
 			mFilePercent = parsePercent(body);
 			refreshPercent();
+			// "12 / 45" -- twelve files done so far in this unit; it only
+			// grows, so a smaller number is a new rclone inside the unit.
+			// Files only -- the bytes were settled by this block's byte line,
+			// which comes first (foldUnit).
+			const long files = atol(body.c_str());
+			if (files < mUnitFiles)
+				mRunFiles += mUnitFiles;
+			mUnitFiles = files;
 			return;
 		}
 
 		mTotals = body;
 		if (body.rfind("0 B /", 0) != 0)
 			mAnyTransferred = true;
+		// "80 KiB / 300 KiB" -- what this unit has moved so far, read from the
+		// first field. Recorded only when it parsed; a byte line that was
+		// seen at all is what lets the done page show any number.
+		const long bytes = parseBytes(body.substr(0, body.find('/')));
+		if (bytes >= 0)
+		{
+			mRunSized = true;
+			if (bytes < mUnitBytes)
+				foldUnit();
+			mUnitBytes = bytes;
+		}
 		// A block that carried no per-file line had nothing in flight -- the
 		// unit's files are done or being checked -- so the name row does not
 		// keep showing a file that finished a block ago. The same for a name
@@ -677,6 +834,7 @@ void GuiCloudTransfer::threadRun()
 	}
 
 	std::unique_lock<std::mutex> lock(mMutex);
+	foldUnit();   // the last unit: no ">>> unit" follows it
 	mExit = ret;
 	mFinished = true;
 }
