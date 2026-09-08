@@ -3834,11 +3834,15 @@ static std::string cloudContentMode(bool content, bool media)
 	return "";
 }
 
-// One page per direction (D-CLOUD-048). SYSTEMS TO BACK UP lists what this
-// device holds; SYSTEMS TO RESTORE lists what the cloud holds. Both sides are
-// listed by the transfer's own rule and compared by file name, because totals
-// cannot say whether one side has what the other has -- a restored-then-
-// scraped device read "different size" on every system for that reason.
+// One page per direction (D-CLOUD-048). CONTENT TO BACK UP lists what this
+// device holds; CONTENT TO RESTORE lists what the cloud holds. Both sides are
+// listed by the transfer's own rule and compared by file name and size,
+// because totals cannot say whether one side has what the other has -- a
+// restored-then-scraped device read "different size" on every system for
+// that reason. Each row's line leads with what this run would move, since
+// that is the question a player on this page is asking (maintainer,
+// 2026-09-08: "what they'll want to know is the delta, or what's being sent
+// up, not just what's in their cloud").
 // A centred, unselectable line of standard text: what a page says about
 // itself before its rows begin.
 static void cloudAddCentredLine(GuiSettings* s, Window* window, const std::string& text)
@@ -3871,20 +3875,31 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				if (!name.empty())
 					chosen.insert(name);
 			}
-			// name|cloud_bytes|supported|device_bytes|files_in_cloud_not_here|files_here_not_in_cloud
-			struct Found { std::string name; unsigned long cloudBytes; bool supported; unsigned long localBytes; int cloudNotHere; int hereNotCloud; };
+			// name|cloud_bytes|supported|device_bytes|files_in_cloud_not_here|files_here_not_in_cloud|bytes_in_cloud_not_here|bytes_here_not_in_cloud
+			// Fields 7 and 8 -- the bytes a copy in each direction would send --
+			// arrived with the scripts of 2026-09-08. `sized` records whether
+			// this scan carried them, so a page running ahead of its scripts
+			// falls back to the count-only verdict rather than reading two
+			// missing fields as "nothing to move".
+			struct Found { std::string name; unsigned long cloudBytes; bool supported; unsigned long localBytes; int cloudNotHere; int hereNotCloud; unsigned long cloudNotHereBytes; unsigned long hereNotCloudBytes; bool sized; };
 			std::vector<Found> found;
 			for (auto& line : result.first)
 			{
 				auto p = Utils::String::split(Utils::String::trim(line), '|', true);
 				if (p.size() < 3)
 					continue;
-				Found f{ p[0], (unsigned long) atol(p[1].c_str()), p[2] == "1", 0, 0, 0 };
+				Found f{ p[0], (unsigned long) atol(p[1].c_str()), p[2] == "1", 0, 0, 0, 0, 0, false };
 				if (p.size() >= 6)
 				{
 					f.localBytes   = (unsigned long) atol(p[3].c_str());
 					f.cloudNotHere = atoi(p[4].c_str());
 					f.hereNotCloud = atoi(p[5].c_str());
+				}
+				if (p.size() >= 8)
+				{
+					f.cloudNotHereBytes = (unsigned long) atol(p[6].c_str());
+					f.hereNotCloudBytes = (unsigned long) atol(p[7].c_str());
+					f.sized = true;
 				}
 				if (f.name == "bios")
 					continue;   // not a system; comes with the tier (D-CLOUD-043)
@@ -3918,21 +3933,65 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				auto sw = std::make_shared<SwitchComponent>(window);
 				sw->setState(chosen.find(f.name) != chosen.end());
 				switches->push_back({ f.name, sw });
-				// One line under the label (D-UI-023): this side's size, then a
-				// verdict by file name. "N FILES ..." is a difference a transfer
-				// would actually move; totals never said that.
-				std::string verdict;
-				if (backup)
-					verdict = f.cloudBytes == 0 ? _("NOT IN YOUR CLOUD YET")
-						: f.hereNotCloud > 0 ? std::to_string(f.hereNotCloud) + " " + (f.hereNotCloud == 1 ? _("FILE NOT IN YOUR CLOUD YET") : _("FILES NOT IN YOUR CLOUD YET"))
-						: _("IN YOUR CLOUD");
+				// One line under the label (D-UI-023), and it answers the
+				// question this page asks: what would this run move? It used
+				// to read "<this side's total>  -  IN YOUR CLOUD", which the
+				// maintainer found confusing on the backup page, since what is
+				// backed up is on the device (2026-09-08). So the line leads
+				// with the delta -- the bytes a copy in this direction would
+				// send, and how many files -- and only when nothing would move
+				// does it name the total, in parentheses, after ALREADY IN YOUR
+				// CLOUD / ALREADY ON THIS DEVICE. Sizes round up to a whole KB,
+				// so a one-byte difference never reads "0.00 KB"; a difference
+				// of only empty files is carried by the count instead.
+				const unsigned long total = backup ? f.localBytes : f.cloudBytes;
+				const unsigned long other = backup ? f.cloudBytes : f.localBytes;
+				unsigned long delta = backup ? f.hereNotCloudBytes : f.cloudNotHereBytes;
+				const int count = backup ? f.hereNotCloud : f.cloudNotHere;
+				// Nothing on the far side means all of it moves. That is true
+				// by construction, needs no byte fields, and is the only true
+				// reading of a scan line that was never compared (the pre-tier
+				// layout, which the script lists for size alone).
+				if (other == 0)
+					delta = total;
+				auto sizeOf = [](unsigned long bytes) { return Utils::FileSystem::kiloBytesToString((bytes + 1023) / 1024); };
+				std::string note;
+				if (f.sized || other == 0)
+				{
+					if (delta > 0 || count > 0)
+					{
+						// The size leads when there is one. A file the far side
+						// lacks can be empty -- pico-8 ships a 0-byte Splore.png --
+						// and a copy sends it all the same, so when the bytes are
+						// 0 the count carries the line ("1 FILE TO BACK UP") rather
+						// than the row reading ALREADY IN YOUR CLOUD over a file
+						// that would move, or "0.00 KB" beside it. Beside THIS
+						// DEVICE CANNOT RUN IT the count is noise, and size, count
+						// and suffix together run a 640px row to a third line
+						// (D-UI-023), so the count is dropped there.
+						const std::string verb  = backup ? _("TO BACK UP") : _("TO RESTORE");
+						const std::string files = std::to_string(count) + " " + (count == 1 ? _("FILE") : _("FILES"));
+						if (delta == 0)
+							note = files + " " + verb;
+						else if (count > 0 && f.supported)
+							note = sizeOf(delta) + " " + verb + " · " + files;
+						else
+							note = sizeOf(delta) + " " + verb;
+					}
+					else
+						note = std::string(backup ? _("ALREADY IN YOUR CLOUD") : _("ALREADY ON THIS DEVICE")) + " (" + sizeOf(total) + ")";
+				}
 				else
-					verdict = f.localBytes == 0 ? _("IN YOUR CLOUD ONLY")
-						: f.cloudNotHere > 0 ? std::to_string(f.cloudNotHere) + " " + (f.cloudNotHere == 1 ? _("FILE NOT ON THIS DEVICE") : _("FILES NOT ON THIS DEVICE"))
-						: _("ON THIS DEVICE");
-				std::string note = Utils::FileSystem::kiloBytesToString((backup ? f.localBytes : f.cloudBytes) / 1024) + "  -  " + verdict;
+				{
+					// A six-field scan, from scripts older than this page: the
+					// verdict by name count, with this side's total in front.
+					std::string verdict = backup
+						? (f.hereNotCloud > 0 ? std::to_string(f.hereNotCloud) + " " + (f.hereNotCloud == 1 ? _("FILE NOT IN YOUR CLOUD YET") : _("FILES NOT IN YOUR CLOUD YET")) : _("IN YOUR CLOUD"))
+						: (f.cloudNotHere > 0 ? std::to_string(f.cloudNotHere) + " " + (f.cloudNotHere == 1 ? _("FILE NOT ON THIS DEVICE") : _("FILES NOT ON THIS DEVICE")) : _("ON THIS DEVICE"));
+					note = sizeOf(total) + " · " + verdict;
+				}
 				if (!f.supported)
-					note += "  -  " + _("THIS DEVICE CANNOT RUN IT");
+					note += " · " + _("THIS DEVICE CANNOT RUN IT");
 				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
 			}
 			s->addSaveFunc([switches]
