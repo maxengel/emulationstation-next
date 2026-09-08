@@ -34,7 +34,9 @@ public:
 private:
 	void threadRun();
 	void handleLine(const std::string& line);
+	void refreshPercent();
 	static std::string cleanLine(const std::string& raw);
+	static int parsePercent(const std::string& body);
 
 	BusyComponent mBusyAnim;
 	NinePatchComponent mBackground;
@@ -60,11 +62,13 @@ private:
 	std::string mCommand;
 	std::string mTitleText;
 
-	// Panel geometry, computed once in the constructor: render() draws a
-	// border around exactly the rectangle fitTo() was given, so the two
-	// cannot drift apart.
+	// Panel geometry, decided once in the constructor and never re-derived:
+	// fitTo() is given this rectangle, the text rows are stacked inside it,
+	// and the bar is drawn at mBar*, on the row the spinner and the done-note
+	// share -- so the frame, the rows and the bar cannot drift apart.
 	Vector2f mPanelPos;
 	Vector2f mPanelSize;
+	float mBarX, mBarY, mBarW, mBarH;
 
 	std::mutex mMutex;
 	std::string mCurrent;       // "name.zip" -- the head of the current block
@@ -81,7 +85,18 @@ private:
 	bool mAnyTransferred;       // some block moved bytes: the device's ROMs changed
 	int mFilesThisBlock;
 	bool mSeenBlock;
-	int mPercent;
+	// "Checks:  12 / 45, 27%, Listed 300" -- what rclone compared rather than
+	// moved. A run where everything is already in the cloud is nothing but
+	// checks: no bytes, no " * file" lines, and without these it looked hung.
+	long mChecksDone, mChecksTotal, mListed;
+	std::string mChecking;      // " * name: checking" -- the file being compared, if rclone caught one in flight
+	int mChecksThisBlock;
+	// One block of rclone's output carries up to three percentages: bytes,
+	// files transferred, files checked. Each is that line's last word (-1
+	// when it printed no number) so the one shown (mPercent) is chosen in
+	// refreshPercent(), not by whichever line came last.
+	int mBytePercent, mFilePercent, mCheckPercent;
+	int mPercent;               // -1 until a block has produced a real number
 	bool mFinished;
 	int mExit;
 
