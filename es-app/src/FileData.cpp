@@ -805,6 +805,12 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 
 	window->reactivateGui();
 
+	// A screenshot taken in this session is in a folder the viewer scanned
+	// at boot. Re-read the folders that changed, once the launch has fully
+	// unwound (#82; the rescan may delete this very FileData when the game
+	// was an image in the viewer).
+	window->postToUiThread([] { SystemData::rescanChangedFolders(); });
+
 	// Sync saves to the cloud, visibly.
 	//
 	// This was an OS event hook -- /usr/bin/scripts/game-end/, run by the

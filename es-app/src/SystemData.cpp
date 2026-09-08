@@ -103,6 +103,7 @@ SystemData::SystemData(const SystemMetadata& meta, SystemEnvironmentData* envDat
 		if (!Settings::ParseGamelistOnly())
 		{
 			populateFolder(mRootFolder, fileMap);
+			mFolderScannedAt = Utils::FileSystem::getFileModificationDate(mEnvData->mStartPath).getTime();
 
 			if (!UIModeController::LoadEmptySystems())
 			{
@@ -293,6 +294,53 @@ void SystemData::setIsGameSystemStatus()
 	// if/when there are more in the future, maybe this can be a more complex method, with a proper list
 	// but for now a simple string comparison is more performant
 	mIsGameSystem = (mMetadata.name != "retropie" && mMetadata.name != "retrobat");
+}
+
+// A folder that changed while EmulationStation was running is not seen
+// until its list is rebuilt, and UPDATE GAMELISTS was the only way: a
+// screenshot taken in a game -- an achievement's or a manual one -- sat
+// in /storage/roms/screenshots invisible to the SCREENSHOTS entry until
+// the whole library was rescanned (maintainer, 2026-09-08, #82). The same
+// for anything a cloud restore brings down.
+//
+// So after a game exits, and after a restore, each system whose folder's
+// modification time moved is re-read from disk. Only systems with no
+// gamelist take part: their list *is* the folder, so re-reading loses
+// nothing. A system with a gamelist keeps its metadata by staying out of
+// this, and is refreshed by UPDATE GAMELISTS as before. The directory's
+// mtime moves only when an entry is added or removed directly in it, so
+// the check is one stat per system and the rescan is rare.
+//
+// Callers post this to the UI thread rather than calling it from inside a
+// launch: the rescan deletes the folder's FileData children, and the game
+// that was just launched may be one of them (an image in the viewer).
+void SystemData::rescanIfFolderChanged()
+{
+	if (mRootFolder == nullptr || mIsCollectionSystem || !mIsGameSystem || Settings::ParseGamelistOnly())
+		return;
+	if (Utils::FileSystem::exists(getGamelistPath(false)))
+		return;
+
+	const time_t mtime = Utils::FileSystem::getFileModificationDate(mEnvData->mStartPath).getTime();
+	if (mtime == mFolderScannedAt)
+		return;
+
+	LOG(LogInfo) << "SystemData::rescanIfFolderChanged: " << getName() << " changed on disk, re-reading " << mEnvData->mStartPath;
+	mFolderScannedAt = mtime;
+
+	mRootFolder->clear();
+	std::unordered_map<std::string, FileData*> fileMap;
+	fileMap[mEnvData->mStartPath] = mRootFolder;
+	populateFolder(mRootFolder, fileMap);
+
+	if (ViewController::get() != nullptr)
+		ViewController::get()->reloadGameListView(this);
+}
+
+void SystemData::rescanChangedFolders()
+{
+	for (auto* system : sSystemVector)
+		system->rescanIfFolderChanged();
 }
 
 void SystemData::populateFolder(FolderData* folder, std::unordered_map<std::string, FileData*>& fileMap)
