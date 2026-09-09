@@ -4076,10 +4076,21 @@ static std::string cloudLastRunDetail(const std::string& name)
 	if (when <= 0)
 		return never;
 	// 130 is the interrupt the backends' trap exits with: somebody stopped it,
-	// which is not a failure and should not be reported as one.
+	// which is not a failure and should not be reported as one. 3 and 4 are
+	// the scripts' "another sync holds the lock" and "no network": the
+	// scripts write no stamp for those (nothing ran), but the whole-run
+	// stamps EmulationStation keeps per cause (last-sync-startup, -exit,
+	// -manual; fork #94) do, because under SYNC SAVES DURING STARTUP the
+	// player's question is what happened this morning, and "nothing, there
+	// was no network" answers it where FAILED would send them to a log.
+	// Commas rather than dashes inside the outcome: the line already uses a
+	// dash to separate the date from it.
 	const int code = atoi(parts[1].c_str());
 	const std::string outcome = code == 0 ? _("SUCCEEDED")
-		: code == 130 ? _("STOPPED") : _("FAILED");
+		: code == 130 ? _("STOPPED")
+		: code == 3 ? _("SKIPPED, ANOTHER SYNC WAS RUNNING")
+		: code == 4 ? _("SKIPPED, NO NETWORK")
+		: _("FAILED");
 	// The player's own date format and clock, not ours.
 	//
 	// timeToString already resolves through localtime(), so the timezone comes
@@ -4477,16 +4488,26 @@ void GuiMenu::openCloud(Window* window)
 	}
 
 	s->addGroup(_("SAVE MANAGEMENT"));
+
+	// The line under each toggle is how its sync last went, read from the
+	// whole-run stamp ThreadedCloudSync leaves per cause (fork #94). The
+	// card that shows the run is gone seconds after it ends, and a startup
+	// sync runs while the player is looking at the boot splash or not at the
+	// device at all -- so this row is where "did it run?" gets answered, and
+	// it answers whether the toggle is on now or not: a stamp is a fact about
+	// a run that happened. It replaced REQUIRES NETWORK ACCESS, which the
+	// outcome says better when it matters (SKIPPED, NO NETWORK). Two lines,
+	// never three (D-UI-023).
 	auto cloud_startup = std::make_shared<SwitchComponent>(window);
 	cloud_startup->setState(SystemConf::getInstance()->get("cloudsaves.startup") == "1");
-	s->addWithDescription(_("SYNC SAVES DURING STARTUP"), _("REQUIRES NETWORK ACCESS"), cloud_startup);
+	s->addWithDescription(_("SYNC SAVES DURING STARTUP"), cloudLastRunDetail("sync-startup"), cloud_startup);
 	cloud_startup->setOnChangedCallback([cloud_startup] {
 		SystemConf::getInstance()->set("cloudsaves.startup", cloud_startup->getState() ? "1" : "0");
 		SystemConf::getInstance()->saveSystemConf();
 	});
 	auto cloud_gameexit = std::make_shared<SwitchComponent>(window);
 	cloud_gameexit->setState(SystemConf::getInstance()->get("cloudsaves.gameexit") == "1");
-	s->addWithLabel(_("SYNC SAVES WHEN EXITING A GAME"), cloud_gameexit);
+	s->addWithDescription(_("SYNC SAVES WHEN EXITING A GAME"), cloudLastRunDetail("sync-exit"), cloud_gameexit);
 	cloud_gameexit->setOnChangedCallback([cloud_gameexit] {
 		SystemConf::getInstance()->set("cloudsaves.gameexit", cloud_gameexit->getState() ? "1" : "0");
 		SystemConf::getInstance()->saveSystemConf();
@@ -4543,7 +4564,8 @@ void GuiMenu::openCloud(Window* window)
 					{
 						ThreadedCloudSync::start(window,
 							"/usr/bin/cloud_migrate_layout --apply",
-							_("TIDY CLOUD FOLDERS"), _("TIDYING CLOUD FOLDERS"));
+							_("TIDY CLOUD FOLDERS"), _("TIDYING CLOUD FOLDERS"),
+							ThreadedCloudSync::Origin::None);
 					},
 					_("LEAVE THEM"), nullptr));
 			}, "", false, true);
@@ -4935,17 +4957,17 @@ void GuiMenu::openGamesSettings()
 			_("BOTH WAYS. NOTHING IS DELETED."), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update --saves-only && /usr/bin/cloud_backup --yes --method=copy --update --saves-only", _("SYNC SAVES"), _("SYNCING SAVES"));
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update --saves-only && /usr/bin/cloud_backup --yes --method=copy --update --saves-only", _("SYNC SAVES"), _("SYNCING SAVES"), ThreadedCloudSync::Origin::Manual);
 				}, _("NO"), nullptr));
 		});
 		cloudAddClassRow(s, window, cloudConfigured, _("BACK UP SAVES TO THE CLOUD"), "backup", [window] {
 			window->pushGui(new GuiMsgBox(window, _("BACK UP GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
-				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only", _("BACK UP SAVES"), _("BACKING UP SAVES")); },
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only", _("BACK UP SAVES"), _("BACKING UP SAVES"), ThreadedCloudSync::Origin::Manual); },
 				_("NO"), nullptr));
 		});
 		cloudAddClassRow(s, window, cloudConfigured, _("RESTORE SAVES FROM THE CLOUD"), "restore", [window] {
 			window->pushGui(new GuiMsgBox(window, _("RESTORE GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
-				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --saves-only", _("RESTORE SAVES"), _("RESTORING SAVES")); },
+				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --saves-only", _("RESTORE SAVES"), _("RESTORING SAVES"), ThreadedCloudSync::Origin::Manual); },
 				_("NO"), nullptr));
 		});
 
@@ -5639,7 +5661,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 			[window, s]
 			{
 				s->close();
-				ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACK UP SETTINGS AND SAVES"));
+				ThreadedCloudSync::start(window, "/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes && /usr/bin/cloud_backup --yes --system-only", _("BACK UP SETTINGS AND SAVES"), "", ThreadedCloudSync::Origin::None);
 			}, _("NO"), nullptr));
 	});
 
