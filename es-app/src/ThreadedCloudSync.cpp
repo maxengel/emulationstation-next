@@ -2,10 +2,12 @@
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
 #include "guis/GuiMsgBox.h"
+#include "utils/FileSystemUtil.h"
 #include "utils/Platform.h"
 #include "utils/StringUtil.h"
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <thread>
 #include <sys/wait.h>
 #include "LocaleES.h"
@@ -15,8 +17,8 @@
 ThreadedCloudSync* ThreadedCloudSync::mInstance = nullptr;
 
 ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
-	const std::string& title, const std::string& running)
-	: mWindow(window), mCommand(command), mTitle(title), mRunning(running)
+	const std::string& title, const std::string& running, Origin origin)
+	: mWindow(window), mCommand(command), mTitle(title), mRunning(running), mOrigin(origin)
 {
 	mWndNotification = mWindow->createAsyncNotificationComponent();
 	mWndNotification->updateTitle(ICONINDEX + (mRunning.empty() ? mTitle : mRunning));
@@ -58,6 +60,26 @@ void ThreadedCloudSync::run()
 					clean += c;
 
 			clean = Utils::String::trim(clean);
+
+			// ">>> " lines are the scripts talking to the UI, not to the
+			// player: ">>> unit SAVES||" names a phase for GuiCloudTransfer's
+			// per-system fold, and ">>> doing network" says the command is
+			// waiting for something before the transfer can begin. The one
+			// this card acts on is the wait: the startup sync (fork #94)
+			// gives the network up to a minute to come up after boot, and a
+			// card reading "Working..." for that minute says nothing about
+			// why. Any other keyword, and any other protocol line, is not
+			// for this card and never reaches it.
+			if (clean.rfind(">>> ", 0) == 0)
+			{
+				if (clean.rfind(">>> doing ", 0) == 0 && mWndNotification != nullptr)
+				{
+					const std::string what = Utils::String::trim(clean.substr(10));
+					if (what == "network")
+						mWndNotification->updateText(_("WAITING FOR THE NETWORK..."));
+				}
+				continue;
+			}
 
 			// The card shows progress; the title above it already says what
 			// is happening. Everything the backends print used to land here,
@@ -134,6 +156,11 @@ void ThreadedCloudSync::run()
 			ret = WEXITSTATUS(status);
 	}
 
+	// Before the card says anything: the stamp is the answer that outlives
+	// the card, so it is written first, and written whether or not there is
+	// still a card to say it on.
+	recordOutcome(mOrigin, ret);
+
 	// One surface for the whole event.
 	//
 	// The card used to vanish the instant the work ended, and the outcome
@@ -183,7 +210,7 @@ void ThreadedCloudSync::run()
 }
 
 void ThreadedCloudSync::start(Window* window, const std::string& command,
-	const std::string& title, const std::string& running)
+	const std::string& title, const std::string& running, Origin origin)
 {
 	if (ThreadedCloudSync::mInstance != nullptr)
 	{
@@ -191,5 +218,35 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 		return;
 	}
 
-	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running);
+	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
+}
+
+// /storage/.cache/cloud_sync/last-sync-<origin>: one line, "<epoch> <rc>",
+// the same shape the scripts give last-backup and last-restore so one reader
+// (GuiMenu's cloudLastRunDetail) serves all of them. Device-local, so under
+// .cache rather than .config: a stamp carried in a settings backup onto a
+// second device would describe a run that device never made.
+//
+// Written whole or not at all. A temp file and a rename: the reader is the
+// menu, on another thread and possibly at this moment, and a half-written
+// line parses as "never" -- the one thing the stamp exists to stop the row
+// saying after a run.
+void ThreadedCloudSync::recordOutcome(Origin origin, int rc)
+{
+	const char* name = origin == Origin::Startup ? "startup"
+		: origin == Origin::Exit ? "exit"
+		: origin == Origin::Manual ? "manual" : nullptr;
+	if (name == nullptr)
+		return;
+
+	const std::string dir = "/storage/.cache/cloud_sync";
+	if (!Utils::FileSystem::createDirectory(dir))
+		return;
+
+	const std::string path = dir + "/last-sync-" + name;
+	const std::string tmp = path + ".tmp";
+	Utils::FileSystem::writeAllText(tmp,
+		std::to_string(static_cast<long long>(time(nullptr))) + " " + std::to_string(rc) + "\n");
+	if (std::rename(tmp.c_str(), path.c_str()) != 0)
+		std::remove(tmp.c_str());
 }

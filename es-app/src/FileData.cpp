@@ -878,7 +878,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 		&& !ThreadedCloudSync::isRunning())
 	{
 		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent",
-			_("BACK UP SAVES"), _("BACKING UP SAVES TO THE CLOUD"));
+			_("BACK UP SAVES"), _("BACKING UP SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
 	}
 
 	if (system != nullptr && system->getTheme() != nullptr)

@@ -49,6 +49,7 @@
 #include "utils/ThreadPool.h"
 #include "utils/StringUtil.h"
 #include "LaunchCommand.h"
+#include "ThreadedCloudSync.h"
 
 #ifdef WIN32
 #include <Windows.h>
@@ -473,6 +474,61 @@ void launchStartupGame()
 	}
 }
 
+// The startup saves sync (fork #94), run from here so it is seen.
+//
+// It ran from autostart/102-cloud-saves until now: headless, beside
+// EmulationStation's start, writing a log on tmpfs and two stamps and nothing
+// on the screen. Maintainer, 2026-09-09: "How do I know if saves were synced
+// during startup? It doesn't show any foreground identifier, like when you
+// update game lists." The exit sync had a card and an outcome all along
+// (ThreadedCloudSync); this gives the startup one the same card, and moves
+// the run to the only process that can draw it. The autostart keeps the
+// capture pass and drops the sync, so this is the one place it starts.
+//
+// The command is the autostart's, kept whole so a boot behaves as it did:
+// give the network up to a minute (30 tries, 2 s apart, as before), then
+// restore, then back up, both `copy --update --saves-only` so the newest
+// copy of every save ends up on both sides and nothing is deleted. Both
+// halves run whatever the first did; the run's status is the first failure.
+// Two things are new. ">>> doing network" is printed at the first failed
+// probe so the card can say WAITING FOR THE NETWORK... instead of Working...
+// for a minute; and a network that never comes exits 4, the scripts' own
+// "no network", so the card's existing SKIPPED - NO NETWORK CONNECTION
+// covers it and no FAILED sends anyone to a log for a device that was
+// simply offline.
+//
+// Refused while it runs: FileData::launchGame declines to start a game while
+// ThreadedCloudSync::isRunning() (D-CLOUD-038/053, #87), so a save cannot
+// be opened by an emulator while rclone is writing it, and the exit sync
+// checks the same flag. Behind both, the scripts' flock answers 3 to any
+// second writer. The gate has a cost the headless run did not: with no
+// network at boot, game launches wait for the probe to give up.
+static void startStartupSavesSync(Window* window)
+{
+	if (SystemConf::getInstance()->get("cloudsaves.startup") != "1")
+		return;
+	if (!Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf")
+		|| !Utils::FileSystem::exists("/usr/bin/cloud_restore")
+		|| !Utils::FileSystem::exists("/usr/bin/cloud_backup"))
+		return;
+
+	const std::string command =
+		"_up=0; for _try in $(seq 1 30); do"
+		" ping -q -c1 -W2 google.com >/dev/null 2>&1 && _up=1 && break;"
+		" [ \"$_try\" = 1 ] && echo \">>> doing network\";"
+		" sleep 2; done;"
+		" [ \"$_up\" = 1 ] || exit 4;"
+		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?;"
+		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?;"
+		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";
+
+	// SYNC SAVES is the title the manual sync row already prints when it is
+	// done; the running line says which sync this is, since the player did
+	// not press anything to start it.
+	ThreadedCloudSync::start(window, command, _("SYNC SAVES"), _("SYNCING SAVES AT STARTUP"),
+		ThreadedCloudSync::Origin::Startup);
+}
+
 // #include "utils/MathExpr.h"
 
 int main(int argc, char* argv[])
@@ -692,7 +748,8 @@ int main(int argc, char* argv[])
 	// on top and are dealt with first; only then does the player reach
 	// the download prompt, by which time the network is back.
 	std::string journeyMarker = "/storage/.config/.cloud-journey-pending";
-	if (Utils::FileSystem::exists(journeyMarker))
+	const bool journeyPending = Utils::FileSystem::exists(journeyMarker);
+	if (journeyPending)
 	{
 		std::remove(journeyMarker.c_str());
 		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES, AND SAVES FROM THE CLOUD NOW?"), _("YES"),
@@ -710,6 +767,22 @@ int main(int argc, char* argv[])
 
 	// Create a flag in  temporary directory to signal READY state
 	ApiSystem::getInstance()->setReadyFlag();
+
+	// Here and not earlier: this is the point where the interface is up --
+	// the theme is loaded (goToStart), the splash has closed, the one-shot
+	// boot prompts above are on the stack, and the READY flag has just said
+	// so to everything outside. The main loop below draws the card from its
+	// first frame; a start any earlier would put it over the splash, or on
+	// screen before the theme it is styled by had loaded.
+	//
+	// Not after a one-touch restore. The journey prompt above offers
+	// `cloud_content_restore --all && cloud_restore --yes` on this same
+	// boot, and both take the sync lock: a startup sync already holding it
+	// would turn the player's YES into "Another cloud sync is already
+	// running. Skipped." in a console. That restore brings the saves down
+	// anyway, so nothing is lost by sitting this boot out.
+	if (!journeyPending)
+		startStartupSavesSync(&window);
 
 	// Play music
 	AudioManager::getInstance()->init();
