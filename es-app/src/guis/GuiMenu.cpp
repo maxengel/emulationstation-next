@@ -3842,7 +3842,9 @@ static std::string cloudContentMode(bool content, bool media)
 // that reason. Each row's line leads with what this run would move, since
 // that is the question a player on this page is asking (maintainer,
 // 2026-09-08: "what they'll want to know is the delta, or what's being sent
-// up, not just what's in their cloud").
+// up, not just what's in their cloud"; 2026-09-09: "instead of saying
+// 'already in your cloud,' what we're trying to address is 'not yet in your
+// cloud'" -- D-UI-027).
 // A centred, unselectable line of standard text: what a page says about
 // itself before its rows begin.
 static void cloudAddCentredLine(GuiSettings* s, Window* window, const std::string& text)
@@ -3933,24 +3935,29 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				auto sw = std::make_shared<SwitchComponent>(window);
 				sw->setState(chosen.find(f.name) != chosen.end());
 				switches->push_back({ f.name, sw });
-				// One line under the label (D-UI-023), and it answers the
-				// question this page asks: what would this run move? It used
-				// to read "<this side's total>  -  IN YOUR CLOUD", which the
-				// maintainer found confusing on the backup page, since what is
-				// backed up is on the device (2026-09-08). So the line leads
-				// with the delta -- the bytes a copy in this direction would
-				// send, and how many files -- and only when nothing would move
-				// does it name the total, in parentheses, after ALREADY IN YOUR
-				// CLOUD / ALREADY ON THIS DEVICE. Sizes are the transfer page's
-				// (GuiCloudTransfer::sizeLabel): a whole KB below a megabyte,
-				// rounded up so a one-byte difference never reads "0 KB", and
-				// no decimals that could only ever be zero -- the old
-				// kiloBytesToString of a KB-rounded size read "200.00 KB"
+				// One line under the label (D-UI-023), and it answers the one
+				// question this page asks: is there anything not yet on the
+				// far side, and how much? "253.9 MB NOT YET IN YOUR CLOUD . 14
+				// FILES" when there is, NOTHING NEW TO BACK UP when there is
+				// not; the restore page reads NOT YET ON THIS DEVICE / NOTHING
+				// NEW TO RESTORE. No total anywhere on the row (D-UI-027): the
+				// zero case used to read ALREADY IN YOUR CLOUD (253.9 MB), and
+				// a size beside a system reads as an amount about to move --
+				// "does that mean I'm backing up 253.9 MB?" (maintainer,
+				// 2026-09-09). The count stays because a delta of many tiny
+				// files is a different job from one big file. Sizes are the
+				// transfer page's (GuiCloudTransfer::sizeLabel): a whole KB
+				// below a megabyte, rounded up so a one-byte difference never
+				// reads "0 KB", and no decimals that could only ever be zero
 				// (#85). A difference of only empty files is carried by the
 				// count instead.
 				const unsigned long total = backup ? f.localBytes : f.cloudBytes;
 				const unsigned long other = backup ? f.cloudBytes : f.localBytes;
-				unsigned long delta = backup ? f.hereNotCloudBytes : f.cloudNotHereBytes;
+				// The bytes a copy in this direction would send. A six-field
+				// scan, from scripts older than this page, has no such figure:
+				// its row is carried by the count alone rather than by a total
+				// that says nothing about what moves.
+				unsigned long delta = !f.sized ? 0 : backup ? f.hereNotCloudBytes : f.cloudNotHereBytes;
 				const int count = backup ? f.hereNotCloud : f.cloudNotHere;
 				// Nothing on the far side means all of it moves. That is true
 				// by construction, needs no byte fields, and is the only true
@@ -3958,42 +3965,29 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 				// layout, which the script lists for size alone).
 				if (other == 0)
 					delta = total;
-				const auto sizeOf = [](unsigned long bytes) { return GuiCloudTransfer::sizeLabel(bytes); };
 				std::string note;
-				if (f.sized || other == 0)
+				if (delta > 0 || count > 0)
 				{
-					if (delta > 0 || count > 0)
-					{
-						// The size leads when there is one. A file the far side
-						// lacks can be empty -- pico-8 ships a 0-byte Splore.png --
-						// and a copy sends it all the same, so when the bytes are
-						// 0 the count carries the line ("1 FILE TO BACK UP") rather
-						// than the row reading ALREADY IN YOUR CLOUD over a file
-						// that would move, or "0.00 KB" beside it. Beside THIS
-						// DEVICE CANNOT RUN IT the count is noise, and size, count
-						// and suffix together run a 640px row to a third line
-						// (D-UI-023), so the count is dropped there.
-						const std::string verb  = backup ? _("TO BACK UP") : _("TO RESTORE");
-						const std::string files = std::to_string(count) + " " + (count == 1 ? _("FILE") : _("FILES"));
-						if (delta == 0)
-							note = files + " " + verb;
-						else if (count > 0 && f.supported)
-							note = sizeOf(delta) + " " + verb + " · " + files;
-						else
-							note = sizeOf(delta) + " " + verb;
-					}
+					// The size leads when there is one. A file the far side
+					// lacks can be empty -- pico-8 ships a 0-byte Splore.png --
+					// and a copy sends it all the same, so when the bytes are
+					// 0 the count carries the line ("1 FILE NOT YET IN YOUR
+					// CLOUD") rather than the row reading NOTHING NEW over a
+					// file that would move, or "0.00 KB" beside it. Beside THIS
+					// DEVICE CANNOT RUN IT the count is noise, and size, count
+					// and suffix together run a 640px row to a third line
+					// (D-UI-023), so the count is dropped there.
+					const std::string where = backup ? _("NOT YET IN YOUR CLOUD") : _("NOT YET ON THIS DEVICE");
+					const std::string files = std::to_string(count) + " " + (count == 1 ? _("FILE") : _("FILES"));
+					if (delta == 0)
+						note = files + " " + where;
+					else if (count > 0 && f.supported)
+						note = GuiCloudTransfer::sizeLabel(delta) + " " + where + " · " + files;
 					else
-						note = std::string(backup ? _("ALREADY IN YOUR CLOUD") : _("ALREADY ON THIS DEVICE")) + " (" + sizeOf(total) + ")";
+						note = GuiCloudTransfer::sizeLabel(delta) + " " + where;
 				}
 				else
-				{
-					// A six-field scan, from scripts older than this page: the
-					// verdict by name count, with this side's total in front.
-					std::string verdict = backup
-						? (f.hereNotCloud > 0 ? std::to_string(f.hereNotCloud) + " " + (f.hereNotCloud == 1 ? _("FILE NOT IN YOUR CLOUD YET") : _("FILES NOT IN YOUR CLOUD YET")) : _("IN YOUR CLOUD"))
-						: (f.cloudNotHere > 0 ? std::to_string(f.cloudNotHere) + " " + (f.cloudNotHere == 1 ? _("FILE NOT ON THIS DEVICE") : _("FILES NOT ON THIS DEVICE")) : _("ON THIS DEVICE"));
-					note = sizeOf(total) + " · " + verdict;
-				}
+					note = backup ? _("NOTHING NEW TO BACK UP") : _("NOTHING NEW TO RESTORE");
 				if (!f.supported)
 					note += " · " + _("THIS DEVICE CANNOT RUN IT");
 				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
@@ -4282,8 +4276,34 @@ static void cloudOpenTransfer(Window* window, bool backup)
 			add((backup ? std::string("/usr/bin/cloud_content_backup --selected")
 			            : std::string("/usr/bin/cloud_content_restore --selected"))
 			    + cloudContentMode(wantContent, wantMedia));
+		// The settings item announces itself before backuptool runs, and says
+		// what it is doing while the archive is written: backuptool prints
+		// nothing the page can use, and without these two lines the item sat
+		// on PREPARING... over a spinner while every other item showed its
+		// files (maintainer, 2026-09-09, D-UI-026). cloud_backup announces
+		// ">>> unit SETTINGS||" again when its turn comes; the same label, so
+		// the page does not count it twice.
 		if (backup && wantSettings)
-			add("/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
+			add("echo '>>> unit SETTINGS||' ; echo '>>> doing archive' ; /usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
+
+		// How many items the page should expect (ITEM i OF n, D-UI-026): one
+		// for saves, one per system the picker left ticked, one for settings.
+		// The selection is the file cloud_content_restore --set-systems wrote
+		// as the picker closed -- read here rather than asked for through the
+		// script, whose startup runs rclone listremotes: a process on the UI
+		// thread for a number the content script corrects anyway when it
+		// announces its own count (it adds bios to what was ticked). The
+		// settings item comes after the content phase, so that correction is
+		// told to keep counting it.
+		int items = (wantSaves ? 1 : 0) + (backup && wantSettings ? 1 : 0);
+		int itemsAfterContent = 0;
+		if (wantContent || wantMedia)
+		{
+			for (auto& line : Utils::String::split(Utils::FileSystem::readAllText("/storage/.cache/cloud_sync/content-systems"), '\n', true))
+				if (!Utils::String::trim(line).empty())
+					items++;
+			itemsAfterContent = backup && wantSettings ? 1 : 0;
+		}
 
 		// A screen, not a card. This is the flow that moves gigabytes, and the
 		// card closes itself the moment the job ends -- so a restore somebody
@@ -4294,7 +4314,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 
 		s->close();
 		window->pushGui(new GuiCloudTransfer(window, cmd,
-			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD")));
+			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD"), items, itemsAfterContent));
 	};
 
 	// Which systems is a question only the per-system classes raise -- ROMS AND

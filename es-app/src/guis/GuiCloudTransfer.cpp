@@ -14,9 +14,12 @@
 #include <cstdlib>
 #include <sys/wait.h>
 
-GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, const std::string& title)
+GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, const std::string& title,
+	int itemsExpected, int itemsAfterContent)
 	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
 	  mCommand(command), mTitleText(title),
+	  mItemIndex(0), mItemCount(itemsExpected > 0 ? itemsExpected : 0),
+	  mTrailing(itemsAfterContent > 0 ? itemsAfterContent : 0), mScriptBase(0), mLastScriptIndex(0),
 	  mUnitBytes(0), mUnitFiles(0), mRunBytes(0), mRunFiles(0), mRunSized(false),
 	  mRemovedFiles(0), mRemovedBytes(0), mAnyTransferred(false),
 	  mFilesThisBlock(0), mSeenBlock(false),
@@ -39,9 +42,9 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	mSmallFont = theme->TextSmall.font;
 	mTitle    = std::make_shared<TextComponent>(window, Utils::String::toUpper(title), theme->Title.font, theme->Title.color, ALIGN_CENTER);
 	mStatus   = std::make_shared<TextComponent>(window, _("PREPARING..."), mTextFont,  theme->Text.color,      ALIGN_CENTER);
-	mFileLine = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
-	mUnit     = std::make_shared<TextComponent>(window, "",                mTextFont,  theme->Text.color,      ALIGN_CENTER);
-	mUnitLine = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
+	mCounter  = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
+	mActivity = std::make_shared<TextComponent>(window, "",                mTextFont,  theme->Text.color,      ALIGN_CENTER);
+	mDetail   = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 	mNote     = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 	mElapsed  = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 	mFooter   = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
@@ -54,7 +57,7 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	const float cx = SW * 0.5f;
 	const float x  = cx - w / 2.0f;
 	mLineWidth = w;
-	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mNote, mElapsed, mFooter })
+	for (auto& t : { mTitle, mStatus, mCounter, mActivity, mDetail, mNote, mElapsed, mFooter })
 		t->setSize(w, 0);
 
 	// Rows are stacked from the fonts' own heights, not from a table of
@@ -73,10 +76,10 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	//
 	//   title                          hT
 	//   1.5 gap
-	//   1 the file    2 its line       hM + hS   a tight pair
+	//   1 the item    2 ITEM i OF n    hM + hS   a tight pair
 	//   gap
-	//   3 the system  4 its line       hM + hS   a tight pair
-	//   0.5 gap                                  the bar is the system's, so it sits close
+	//   3 the doing   4 its totals     hM + hS   a tight pair
+	//   0.5 gap                                  the bar is the item's, so it sits close
 	//   5 bar / spinner / done-note    hM        one row, whichever of the three is showing
 	//   1.5 gap                                  elapsed is the whole run's, so the gap opens beneath the bar
 	//   6 elapsed                      hS
@@ -111,16 +114,16 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	float y = top + pad;
 	mTitle   ->setPosition(x, y);
 	y += rT + 1.5f * gap;
-	mStatus  ->setPosition(x, y);          // 1. the file
-	mFileLine->setPosition(x, y + rM);     // 2. its transfer
+	mStatus  ->setPosition(x, y);          // 1. the item
+	mCounter ->setPosition(x, y + rM);     // 2. ITEM i OF n
 	y += rM + rS + gap;
-	mUnit    ->setPosition(x, y);          // 3. the system
-	mUnitLine->setPosition(x, y + rM);     // 4. the system's transfer
+	mActivity->setPosition(x, y);          // 3. what it is doing on it
+	mDetail  ->setPosition(x, y + rM);     // 4. that item's files and bytes
 	y += rM + rS + 0.5f * gap;
 	// 5. The bar, the spinner and the done-note share one row, centred on it.
 	// The bar used to be drawn a row below the spinner it replaced, so the
 	// page's centre of gravity moved every time the percentage came and went.
-	// No caption on the spinner: line 1 already says WORKING..., and the
+	// No caption on the spinner: line 3 already says WORKING..., and the
 	// caption is set at construction because BusyComponent::setText("") is a
 	// no-op against its empty initial state -- the default WORKING... showed
 	// beside the spinner, twice on one screen (maintainer, 2026-09-06).
@@ -204,7 +207,7 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 	// in the app that has one.
 	mBackground.render(trans);
 
-	for (auto& t : { mTitle, mStatus, mFileLine, mUnit, mUnitLine, mNote, mElapsed, mFooter })
+	for (auto& t : { mTitle, mStatus, mCounter, mActivity, mDetail, mNote, mElapsed, mFooter })
 		t->render(trans);
 
 	// The bar is drawn from the snapshot update() took under the lock, along
@@ -387,35 +390,13 @@ void GuiCloudTransfer::update(int deltaTime)
 	char elapsed[32];
 	snprintf(elapsed, sizeof(elapsed), "%d:%02d", mins, secs);
 
-	// 3 and 4: the system (or phase) and its totals -- shown in both states.
-	std::string unit = Utils::String::toUpper(mUnitLabel);
-	if (!unit.empty() && !mUnitIndex.empty() && !mUnitCount.empty())
-		unit += "   " + mUnitIndex + " " + std::string(_("OF")) + " " + mUnitCount;
-	std::string unitLine;
-	if (!mFilesTotals.empty())
-	{
-		// "12 / 45, 27%" -> "12 OF 45 FILES . 27%"
-		auto pct = mFilesTotals.find(", ");
-		unitLine = Utils::String::replace(mFilesTotals.substr(0, pct), " / ", " " + std::string(_("OF")) + " ") + " " + std::string(_("FILES"));
-		if (pct != std::string::npos)
-			unitLine += " · " + mFilesTotals.substr(pct + 2);
-	}
-	// "0 B / 0 B, -, 0 B/s, ETA -" is the byte line while nothing is queued
-	// to move -- the whole of a run that only compares -- and it is true of
-	// nothing anybody asked about. Line 2 says what such a run is doing;
-	// this line stays blank rather than read "0 B OF 0 B . 0 B/S".
-	if (!mTotals.empty() && mTotals.rfind("0 B / 0 B", 0) != 0)
-		unitLine += (unitLine.empty() ? "" : "   ") + prettyRclone(mTotals);
-	mUnit    ->setText(fitOneLine(mTextFont,  unit,     mLineWidth));
-	mUnitLine->setText(fitOneLine(mSmallFont, unitLine, mLineWidth));
-
 	if (mFinished)
 	{
 		mStatus->setText(mExit == 0 ? _("COMPLETED SUCCESSFULLY")
 			: mExit == 130 ? _("STOPPED")
 			: mExit == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
 			: _("FAILED"));
-		mFileLine->setText("");
+		mCounter->setText("");
 		const bool restore = mCommand.find("restore") != std::string::npos;
 		if (mRemovedFiles > 0)
 		{
@@ -426,13 +407,13 @@ void GuiCloudTransfer::update(int deltaTime)
 				+ std::string(mRemovedFiles == 1 ? _("FILE FROM THIS DEVICE") : _("FILES FROM THIS DEVICE"));
 			if (mRemovedBytes > 0)
 				removed += " · " + sizeLabel(mRemovedBytes);
-			mUnit->setText(fitOneLine(mTextFont, removed, mLineWidth));
+			mActivity->setText(fitOneLine(mTextFont, removed, mLineWidth));
 			std::string detail;
 			for (auto& d : mRemovedDetail)
 				detail += (detail.empty() ? "" : "   ") + d;
-			mUnitLine->setText(fitOneLine(mSmallFont, detail, mLineWidth));
+			mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
 			if (mAnyTransferred)
-				mFileLine->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DID NOT WERE DOWNLOADED TOO."), mLineWidth));
+				mCounter->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DID NOT WERE DOWNLOADED TOO."), mLineWidth));
 		}
 		else
 		{
@@ -476,8 +457,8 @@ void GuiCloudTransfer::update(int deltaTime)
 				if (mTextFont && mTextFont->sizeText(summary).x() > mLineWidth)
 					summary = restore ? _("NOTHING NEW TO RECEIVE") : _("NOTHING NEW TO SEND");
 			}
-			mUnit    ->setText(fitOneLine(mTextFont, summary, mLineWidth));
-			mUnitLine->setText("");
+			mActivity->setText(fitOneLine(mTextFont, summary, mLineWidth));
+			mDetail  ->setText("");
 		}
 		// The ROMs on this device changed: the game lists do not know until
 		// they are rebuilt. Says where, in the words of the row that does it.
@@ -489,22 +470,54 @@ void GuiCloudTransfer::update(int deltaTime)
 	}
 	else
 	{
-		// 1 and 2: the file it is on right now is the line that says it is
-		// alive -- a thousand small BIOS files spend minutes between percentage
+		// 1 and 2: the item, and which of how many. The item is the row that
+		// changes when the run moves on, so it leads; the file in flight used
+		// to, and the page read bottom-up -- a file, its percentage, and only
+		// then what they belonged to (maintainer, 2026-09-09, D-UI-026). The
+		// count is the whole run's (handleLine), so settings, saves and two
+		// systems read ITEM 1 OF 4 through ITEM 4 OF 4 whichever script is
+		// speaking. Never an OF with nothing on either side: while the count
+		// is unknown the row reads ITEM i alone.
+		if (mItemIndex == 0)
+		{
+			mStatus ->setText(_("PREPARING..."));
+			mCounter->setText("");
+		}
+		else
+		{
+			const std::string item = Utils::String::toUpper(mUnitLabel);
+			mStatus->setText(item.empty() ? _("WORKING...") : fitOneLine(mTextFont, item, mLineWidth));
+			std::string counter = std::string(_("ITEM")) + " " + std::to_string(mItemIndex);
+			if (mItemCount > 0)
+				counter += " " + std::string(_("OF")) + " " + std::to_string(mItemCount);
+			mCounter->setText(counter);
+		}
+
+		// 3: what it is doing on this item -- the line that says it is alive.
+		// A thousand small BIOS files spend minutes between percentage
 		// changes, and a frozen percentage is indistinguishable from a hang.
+		std::string doing;
 		if (!mCurrent.empty())
 		{
-			mStatus->setText(fitOneLine(mTextFont, mCurrent, mLineWidth));
-			// "TRANSFERRING 45% OF 2.5 MB . 300 KB/S . AND 3 MORE FILES": a
-			// single space inside a segment and " . " between them, the same
-			// as every other row. Two spaces read as a gap twice the width of
-			// the word gaps beside it (#85).
-			std::string fl = std::string(_("TRANSFERRING"));
-			if (!mFileProgress.empty())
-				fl += " " + prettyRclone(mFileProgress);
-			if (mFilesThisBlock > 1)
-				fl += " · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES"));
-			mFileLine->setText(fitOneLine(mSmallFont, fl, mLineWidth));
+			// "TRANSFERRING name.zip . 45% OF 2.5 MB . 300 KB/S . AND 3 MORE
+			// FILES": a single space inside a segment and " . " between them,
+			// the same as every other row (#85). The name is the part that
+			// has to show; the rest is shed a segment at a time, least useful
+			// first, until the line fits this font: the AND N MORE count goes
+			// before the file's own progress, and last the name alone is
+			// clipped -- half a percentage after an ellipsis says nothing,
+			// and line 4 carries the item's percentage regardless.
+			const std::string head     = std::string(_("TRANSFERRING")) + " " + mCurrent;
+			const std::string progress = mFileProgress.empty() ? "" : " · " + prettyRclone(mFileProgress);
+			const std::string more     = mFilesThisBlock > 1
+				? " · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES")) : "";
+			const auto fits = [this](const std::string& t) { return mTextFont && mTextFont->sizeText(t).x() <= mLineWidth; };
+			if (fits(head + progress + more))
+				doing = head + progress + more;
+			else if (fits(head + progress))
+				doing = head + progress;
+			else
+				doing = fitOneLine(mTextFont, head, mLineWidth);   // unchanged when it fits, clipped when it does not
 		}
 		else if (mChecksTotal > 0 || mListed > 0)
 		{
@@ -512,27 +525,57 @@ void GuiCloudTransfer::update(int deltaTime)
 			// is here with what is there, and for a device whose saves are
 			// all in the cloud already that is the whole run. It prints no
 			// per-file line for a comparison, so this is the count it does
-			// print -- and the name, when it caught one mid-comparison. A
-			// run that showed neither looked hung until it said COMPLETED
-			// (maintainer, 2026-09-08). Before anything is queued to compare
-			// the only count is what rclone has listed, and that counts both
-			// sides -- 40 saves list as 80 -- so it is not shown as a number
-			// the player would try to reconcile with their files; the spinner
-			// on row 5 is the sign of life until the first check is queued.
-			mStatus->setText(mChecking.empty() ? _("WORKING...") : fitOneLine(mTextFont, mChecking, mLineWidth));
-			std::string fl;
+			// print -- and the name, when it caught one mid-comparison and
+			// there is room beside the count. A run that showed neither
+			// looked hung until it said COMPLETED (maintainer, 2026-09-08).
+			// Before anything is queued to compare the only count is what
+			// rclone has listed, and that counts both sides -- 40 saves list
+			// as 80 -- so it is not shown as a number the player would try
+			// to reconcile with their files; the spinner on row 5 is the sign
+			// of life until the first check is queued.
 			if (mChecksTotal > 0)
-				fl = std::string(_("CHECKING")) + " " + std::to_string(mChecksDone) + " " + std::string(_("OF")) + " "
+				doing = std::string(_("CHECKING")) + " " + std::to_string(mChecksDone) + " " + std::string(_("OF")) + " "
 					+ std::to_string(mChecksTotal) + " " + std::string(_("FILES"));
 			else
-				fl = _("CHECKING FILES...");
-			mFileLine->setText(fitOneLine(mSmallFont, fl, mLineWidth));
+				doing = _("CHECKING FILES...");
+			// the name is the line's one optional segment, and the first to go
+			if (!mChecking.empty())
+			{
+				const std::string named = doing + " · " + mChecking;
+				if (mTextFont && mTextFont->sizeText(named).x() <= mLineWidth)
+					doing = named;
+			}
 		}
-		else
+		else if (mDoing == "archive")
 		{
-			mStatus  ->setText(mUnitLabel.empty() ? _("PREPARING...") : _("WORKING..."));
-			mFileLine->setText("");
+			// backuptool is writing the settings archive and prints nothing
+			// this page can use, so ES announces it (">>> doing archive") and
+			// the settings item says what it is doing like every other item,
+			// rather than sitting on a spinner (maintainer, 2026-09-09).
+			doing = _("WRITING THE SETTINGS ARCHIVE...");
 		}
+		else if (mItemIndex > 0)
+			doing = _("WORKING...");
+		mActivity->setText(doing);
+
+		// 4: this item's totals -- the count line and the byte line of the
+		// last stats block. "12 / 45, 27%" -> "12 OF 45 FILES . 27%".
+		std::string totals;
+		if (!mFilesTotals.empty())
+		{
+			auto pct = mFilesTotals.find(", ");
+			totals = Utils::String::replace(mFilesTotals.substr(0, pct), " / ", " " + std::string(_("OF")) + " ") + " " + std::string(_("FILES"));
+			if (pct != std::string::npos)
+				totals += " · " + mFilesTotals.substr(pct + 2);
+		}
+		// "0 B / 0 B, -, 0 B/s, ETA -" is the byte line while nothing is queued
+		// to move -- the whole of a run that only compares -- and it is true of
+		// nothing anybody asked about. Line 3 says what such a run is doing;
+		// this line stays blank rather than read "0 B OF 0 B . 0 B/S".
+		if (!mTotals.empty() && mTotals.rfind("0 B / 0 B", 0) != 0)
+			totals += (totals.empty() ? "" : "   ") + prettyRclone(mTotals);
+		mDetail->setText(fitOneLine(mSmallFont, totals, mLineWidth));
+
 		mElapsed->setText(std::string(_("ELAPSED")) + " " + elapsed);
 		mFooter ->setText(_("THIS CAN TAKE A WHILE. YOU CAN LEAVE IT RUNNING."));
 	}
@@ -548,8 +591,32 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	// ("0 / 6, 0%"). The byte one is the one carrying a unit, which is also
 	// the one somebody wants -- a count of files says nothing about how long
 	// this will take when the files are a save game and a disc image.
-	// ">>> unit nes|2|5" -- the script announces each system (or phase) as it
-	// starts. Everything per-block is reset with it; the label survives.
+	//
+	// The scripts talk to this page through three ">>> " markers on stdout:
+	//
+	//   ">>> unit <label>|<i>|<n>" -- an item starts: a system ("nes|2|5")
+	//     or a phase ("SAVES||", "SETTINGS||"). Everything per-block is reset
+	//     with it; the label survives. The page numbers items across the
+	//     whole run itself (row 2, ITEM i OF n; D-UI-026), because one run
+	//     chains several scripts and each counts only its own units: a label
+	//     that differs from the current one is the next item, the same label
+	//     again is a re-announcement and does not advance (ES announces
+	//     SETTINGS before backuptool runs, then cloud_backup announces it
+	//     again). The script's own i|n are read for one thing: an
+	//     announcement carrying n says how many units that script has, so
+	//     n = the items counted before that script's first announcement
+	//     + its n + the single-item phases ES chained after it (mTrailing).
+	//     Until a script says, n is ES's estimate from the constructor; 0 is
+	//     unknown and row 2 reads ITEM i alone. i never exceeds n on the
+	//     page. A script whose i starts over, or that carries a count after
+	//     one that did not, is a new script.
+	//   ">>> doing <keyword>" -- what the item is busy with while rclone is
+	//     not running yet. "archive": backuptool is writing the settings
+	//     archive (its own output is discarded), and row 3 says so until the
+	//     next per-file, checks or totals line, or the next unit. Any other
+	//     keyword is a newer script's and is ignored rather than shown raw.
+	//   ">>> removed <files>|<bytes>|<per-system>" -- a match's summary, for
+	//     the done page (below).
 	if (line.rfind(">>> removed ", 0) == 0)
 	{
 		auto parts = Utils::String::split(line.substr(12), '|', false);
@@ -577,20 +644,47 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	{
 		foldUnit();   // the unit that just ended: its last totals are the run's now
 		auto parts = Utils::String::split(line.substr(9), '|', false);
-		mUnitLabel = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
-		mUnitIndex = parts.size() > 1 ? Utils::String::trim(parts[1]) : "";
-		mUnitCount = parts.size() > 2 ? Utils::String::trim(parts[2]) : "";
+		const std::string label = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
+		const int scriptIndex   = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : 0;
+		const int scriptCount   = parts.size() > 2 ? atoi(Utils::String::trim(parts[2]).c_str()) : 0;
+		// The next item, unless it is the current one announced again. The
+		// first announcement is an item whatever its label says.
+		if (mItemIndex == 0 || label != mUnitLabel)
+		{
+			if (scriptCount > 0 && (mLastScriptIndex == 0 || scriptIndex <= mLastScriptIndex))
+				mScriptBase = mItemIndex;   // a script's first announcement: what came before it is its base
+			mItemIndex++;
+		}
+		mLastScriptIndex = scriptCount > 0 ? scriptIndex : 0;
+		if (scriptCount > 0)
+			mItemCount = mScriptBase + scriptCount + mTrailing;
+		// Never ITEM 5 OF 4: a script that announced more than anybody
+		// expected grows the count rather than overrun it.
+		if (mItemCount > 0 && mItemIndex > mItemCount)
+			mItemCount = mItemIndex;
+		mUnitLabel = label;
+		mDoing.clear();
 		mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear(); mChecking.clear();
 		mFilesThisBlock = 0; mChecksThisBlock = 0; mSeenBlock = false;
 		mChecksDone = 0; mChecksTotal = 0; mListed = 0;
 		mBytePercent = -1; mFilePercent = -1; mCheckPercent = -1; mPercent = -1;
 		return;
 	}
+	if (line.rfind(">>> doing ", 0) == 0)
+	{
+		const std::string what = Utils::String::trim(line.substr(10));
+		if (what == "archive")
+			mDoing = what;
+		return;
+	}
+	// From here on the line is rclone's, so whatever the item was busy with
+	// before rclone ran is over.
 	if (line.rfind("Transferred:", 0) == 0)
 	{
 		std::string body = Utils::String::trim(line.substr(12));
 		if (body.find('/') == std::string::npos)
 			return;
+		mDoing.clear();
 		if (body.find("iB") == std::string::npos && body.find(" B") == std::string::npos)
 		{
 			mFilesTotals = body;   // the count line of the block: "12 / 45, 27%"
@@ -662,6 +756,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 		auto slash = body.find(" / ");
 		if (slash == std::string::npos)
 			return;
+		mDoing.clear();
 		mChecksDone  = atol(body.substr(0, slash).c_str());
 		mChecksTotal = atol(body.substr(slash + 3).c_str());
 		auto listed = body.find("Listed ");
@@ -678,6 +773,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	// looks stalled on one file and one that is saturating the link.
 	if (!line.empty() && line[0] == '*')
 	{
+		mDoing.clear();
 		std::string body = Utils::String::trim(line.substr(1));
 
 		// " *   name: checking" -- a file rclone caught mid-comparison, under
