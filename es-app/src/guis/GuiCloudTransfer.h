@@ -23,7 +23,15 @@
 class GuiCloudTransfer : public GuiComponent
 {
 public:
-	GuiCloudTransfer(Window* window, const std::string& command, const std::string& title);
+	// itemsExpected: how many items ES chained into this run -- one for saves,
+	// one per system the picker left ticked, one for settings -- so row 2 can
+	// read ITEM 1 OF 4 before the first script has said anything. 0 means
+	// unknown, and row 2 shows ITEM i alone until a script says. A content
+	// script announces its own count and corrects it (it may add bios to
+	// what was ticked); itemsAfterContent is how many single-item phases ES
+	// chained after the content phase, so that correction still counts them.
+	GuiCloudTransfer(Window* window, const std::string& command, const std::string& title,
+		int itemsExpected = 0, int itemsAfterContent = 0);
 	virtual ~GuiCloudTransfer();
 
 	void render(const Transform4x4f& parentTrans) override;
@@ -50,14 +58,16 @@ private:
 	NinePatchComponent mBackground;
 
 	std::shared_ptr<TextComponent> mTitle;
-	// Seven lines under the title (maintainer's layout, 2026-09-06): the ROM,
-	// its transfer, the system, the system's transfer, the bar, elapsed, and
-	// the notice. Each is one line, fitted to the width, so nothing wraps into
-	// the line below.
-	std::shared_ptr<TextComponent> mStatus;    // 1. the file being moved right now
-	std::shared_ptr<TextComponent> mFileLine;  // 2. that file's own progress
-	std::shared_ptr<TextComponent> mUnit;      // 3. the system (or phase) being copied
-	std::shared_ptr<TextComponent> mUnitLine;  // 4. its files and bytes so far
+	// Seven lines under the title (maintainer's layout, 2026-09-06, D-UI-024;
+	// the item first and numbered across the run, 2026-09-09, D-UI-026): the
+	// item, ITEM i OF n, what it is doing on it, that item's files and bytes,
+	// the bar, elapsed, and the notice. Each is one line, fitted to the
+	// width, so nothing wraps into the line below. Once the run is over the
+	// same four rows carry the outcome, the run's summary and its detail.
+	std::shared_ptr<TextComponent> mStatus;    // 1. the item (BIOS, NES, SAVES, SETTINGS); the outcome, once done
+	std::shared_ptr<TextComponent> mCounter;   // 2. ITEM i OF n, counted across the whole run
+	std::shared_ptr<TextComponent> mActivity;  // 3. what it is doing on that item; the run's summary, once done
+	std::shared_ptr<TextComponent> mDetail;    // 4. that item's files and bytes so far; the summary's detail, once done
 	std::shared_ptr<TextComponent> mNote;      // 5. where the bar was: what to do next, once done
 	std::shared_ptr<TextComponent> mElapsed;   // 6. elapsed
 	std::shared_ptr<TextComponent> mFooter;    // 7. the notice / press any button
@@ -84,7 +94,18 @@ private:
 	std::string mTotals;        // "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"
 	std::string mFilesTotals;   // "12 / 45, 27%" -- the count line of the same block
 	std::string mUnitLabel;     // ">>> unit nes|2|5" from the script: what is being copied
-	std::string mUnitIndex, mUnitCount;
+	std::string mDoing;         // ">>> doing archive": what the item is busy with before rclone runs
+	// ITEM i OF n across the whole run (D-UI-026). One run chains several
+	// scripts and each numbers only its own units, so the page counts: a
+	// ">>> unit" whose label differs from the current one is the next item,
+	// the same label again is a re-announcement and is not. mItemCount
+	// starts as ES's estimate (0 = unknown) and is corrected by a script
+	// that announces its own count: items counted before that script's
+	// first announcement (mScriptBase) + its count + the single-item phases
+	// ES chained after it (mTrailing). mLastScriptIndex is the last
+	// announcement's own index, 0 when it carried none, so a count that
+	// starts over is a new script.
+	int mItemIndex, mItemCount, mTrailing, mScriptBase, mLastScriptIndex;
 	// What this unit's rclone has moved so far, as its last "Transferred:"
 	// pair read: the bytes line's first field and the count line's first
 	// number. Folded into the run's totals when the next unit starts and

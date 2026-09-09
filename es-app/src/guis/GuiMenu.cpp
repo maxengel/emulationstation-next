@@ -4276,8 +4276,34 @@ static void cloudOpenTransfer(Window* window, bool backup)
 			add((backup ? std::string("/usr/bin/cloud_content_backup --selected")
 			            : std::string("/usr/bin/cloud_content_restore --selected"))
 			    + cloudContentMode(wantContent, wantMedia));
+		// The settings item announces itself before backuptool runs, and says
+		// what it is doing while the archive is written: backuptool prints
+		// nothing the page can use, and without these two lines the item sat
+		// on PREPARING... over a spinner while every other item showed its
+		// files (maintainer, 2026-09-09, D-UI-026). cloud_backup announces
+		// ">>> unit SETTINGS||" again when its turn comes; the same label, so
+		// the page does not count it twice.
 		if (backup && wantSettings)
-			add("/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
+			add("echo '>>> unit SETTINGS||' ; echo '>>> doing archive' ; /usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
+
+		// How many items the page should expect (ITEM i OF n, D-UI-026): one
+		// for saves, one per system the picker left ticked, one for settings.
+		// The selection is the file cloud_content_restore --set-systems wrote
+		// as the picker closed -- read here rather than asked for through the
+		// script, whose startup runs rclone listremotes: a process on the UI
+		// thread for a number the content script corrects anyway when it
+		// announces its own count (it adds bios to what was ticked). The
+		// settings item comes after the content phase, so that correction is
+		// told to keep counting it.
+		int items = (wantSaves ? 1 : 0) + (backup && wantSettings ? 1 : 0);
+		int itemsAfterContent = 0;
+		if (wantContent || wantMedia)
+		{
+			for (auto& line : Utils::String::split(Utils::FileSystem::readAllText("/storage/.cache/cloud_sync/content-systems"), '\n', true))
+				if (!Utils::String::trim(line).empty())
+					items++;
+			itemsAfterContent = backup && wantSettings ? 1 : 0;
+		}
 
 		// A screen, not a card. This is the flow that moves gigabytes, and the
 		// card closes itself the moment the job ends -- so a restore somebody
@@ -4288,7 +4314,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 
 		s->close();
 		window->pushGui(new GuiCloudTransfer(window, cmd,
-			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD")));
+			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD"), items, itemsAfterContent));
 	};
 
 	// Which systems is a question only the per-system classes raise -- ROMS AND
