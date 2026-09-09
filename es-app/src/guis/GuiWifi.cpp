@@ -23,11 +23,15 @@ GuiWifi::GuiWifi(Window* window, const std::string title, std::string data, cons
 
 	addChild(&mMenu);
 
-	std::vector<std::string> ssids = ApiSystem::getInstance()->getWifiNetworks();
-	if (ssids.empty())
-		mWindow->postToUiThread([this]() { onRefresh(); });		
-	else
-		load(ssids);
+	// Fetched off the interface thread. wifictl list is itself a rescan --
+	// it waits for the adapter, asks NetworkManager to scan, sleeps, then
+	// lists -- so this constructor used to run up to twenty seconds of
+	// nmcli with nothing drawn, and with NetworkManager unresponsive (fork
+	// #102) nothing bounded it at all. The spinner REFRESH has always used
+	// runs it now. Posted rather than pushed here, because the page has to
+	// be on the stack before anything can go over it; an empty first answer
+	// still turns into the full scan it always did.
+	mWindow->postToUiThread([this]() { onRefresh(false); });
 
 	mMenu.addButton(_("REFRESH"), "refresh", [&] { onRefresh(); });
 	mMenu.addButton(_("INPUT MANUALLY"), "manual input", [&] { onManualInput(); });
@@ -44,7 +48,7 @@ void GuiWifi::load(std::vector<std::string> ssids)
 	mMenu.clear();
 
 	if (ssids.size() == 0)
-		mMenu.addEntry(_("NO WI-FI NETWORKS FOUND"), false, std::bind(&GuiWifi::onRefresh, this));
+		mMenu.addEntry(_("NO WI-FI NETWORKS FOUND"), false, [this] { onRefresh(); });
 	else
 	{
 		for (auto ssid : ssids)
@@ -99,19 +103,28 @@ std::vector<HelpPrompt> GuiWifi::getHelpPrompts()
 	return prompts;
 }
 
-void GuiWifi::onRefresh()
+// rescan: ask NetworkManager for a fresh scan first (REFRESH, and an empty
+// first list); false lists what it already knows, which is what the page
+// opens with. Either way the wait happens behind the spinner, time-boxed in
+// ApiSystem::getWifiNetworks.
+void GuiWifi::onRefresh(bool rescan)
 {		
 	Window* window = mWindow;
 
 	mWindow->pushGui(new GuiLoading<std::vector<std::string>>(mWindow, _("SEARCHING WI-FI NETWORKS"), 
-		[this, window](auto gui)
+		[this, window, rescan](auto gui)
 		{
 			mWaitingLoad = true;
-			return ApiSystem::getInstance()->getWifiNetworks(true);
+			return ApiSystem::getInstance()->getWifiNetworks(rescan);
 		},
-		[this, window](std::vector<std::string> ssids)
+		[this, window, rescan](std::vector<std::string> ssids)
 		{
 			mWaitingLoad = false;
+			if (ssids.empty() && !rescan)
+			{
+				onRefresh(true);
+				return;
+			}
 			load(ssids);
 		}));	
 }

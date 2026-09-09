@@ -326,20 +326,18 @@ std::pair<std::string, int> ApiSystem::scrape(BusyComponent* ui)
 	return std::pair<std::string, int>(std::string(line), exitCode);
 }
 
-bool ApiSystem::ping() 
+bool ApiSystem::ping()
 {
-    // Google DNS
-    if (!executeScript("ping -c 1 -W 2 -t 255 8.8.8.8"))
-    {
-        // Cloudflare DNS
-        if (!executeScript("ping -c 1 -W 2 -t 255 1.1.1.1"))
-        {
-            // Quad9 DNS
-            return executeScript("ping -c 1 -W 2 -t 255 9.9.9.9");
-        }
-    }
-
-    return true;
+	// Google, Cloudflare and Quad9 DNS, stopping at the first answer as this
+	// always did -- in one shell, inside one time-box. Each ping bounds its
+	// own wait at two seconds, but only while the stack is healthy: a Wi-Fi
+	// driver that has wedged (fork #102) can leave ping sitting in sendto
+	// with nothing to time out, and the three-probe sequence with it. Five
+	// seconds is the whole sequence's budget whatever the kernel is doing.
+	// GNU timeout signals its entire process group when the box closes, so
+	// a ping still running goes with the shell rather than lingering on
+	// the pipe.
+	return executeScript("timeout 5 sh -c 'ping -c 1 -W 2 -t 255 8.8.8.8 || ping -c 1 -W 2 -t 255 1.1.1.1 || ping -c 1 -W 2 -t 255 9.9.9.9' >/dev/null 2>&1");
 }
 
 bool ApiSystem::torrentIsReadyForUpdate() {
@@ -583,7 +581,14 @@ bool ApiSystem::enableWifi(std::string ssid, std::string key, std::string countr
 {
 	bool ret;
 
-	ret = executeScript("wifictl enable");
+	// Time-boxed, because both go through nmcli to NetworkManager and the
+	// caller is a menu callback. wifictl connect waits up to 90 s for the
+	// association on a healthy stack and settles ten status polls and two
+	// sleeps before that; with NetworkManager itself unresponsive each
+	// nmcli call has only D-Bus's own timeout, and nothing above added up
+	// to a bound. 150 s covers the healthy worst case with room; enable is
+	// an rfkill call that should take no time at all.
+	ret = executeScript("timeout 30 wifictl enable");
 	if (!ret)
 		return ret;
 	
@@ -591,7 +596,7 @@ bool ApiSystem::enableWifi(std::string ssid, std::string key, std::string countr
 	// passphrase have to be quoted as literals. Double quotes are not enough:
 	// they still let the shell expand $, ` and \, which silently corrupts any
 	// passphrase containing them (and lets a crafted SSID run commands).
-	return executeScript("wifictl connect " + Utils::String::shellQuote(ssid) +
+	return executeScript("timeout 150 wifictl connect " + Utils::String::shellQuote(ssid) +
 			     " " + Utils::String::shellQuote(key) +
 			     " " + Utils::String::shellQuote(country));
 }
@@ -605,7 +610,7 @@ bool ApiSystem::enableWifi(std::string ssid, std::string key)
 
 bool ApiSystem::disableWifi() 
 {
-	return executeScript("wifictl disable");
+	return executeScript("timeout 30 wifictl disable");
 }
 
 std::string ApiSystem::getIpAddress()
@@ -623,7 +628,11 @@ bool ApiSystem::isWifiAPModeSupported()
 {
 	LOG(LogDebug) << "ApiSystem::isWifiAPModeSupported";
 
-	return executeScript("wifictl has_ap_mode");
+	// Bounded, not asynchronous: NETWORK SETTINGS asks this in its
+	// constructor. It is iwd over D-Bus, after a wait of up to five seconds
+	// for the adapter to appear -- no packets, but a Wi-Fi driver that has
+	// wedged can hold it, and the page should open regardless (fork #103).
+	return executeScript("timeout 10 wifictl has_ap_mode");
 }
 
 bool ApiSystem::enableBluetooth()
@@ -905,7 +914,9 @@ std::vector<std::string> ApiSystem::getAvailableAudioOutputDevices()
 
 std::vector<std::string> ApiSystem::getAvailableChannels()
 {
-	return executeEnumerationScript("/usr/bin/sh -lc \"/usr/bin/wifictl channels\"");
+	// `iw list`, an nl80211 query the same constructor makes; bounded for
+	// the same reason as isWifiAPModeSupported.
+	return executeEnumerationScript("timeout 5 /usr/bin/sh -lc \"/usr/bin/wifictl channels\"");
 }
 
 std::vector<std::string> ApiSystem::getAvailableCpuGovernors()
@@ -2070,7 +2081,13 @@ bool ApiSystem::isLEDMonochrome()
 
 std::vector<std::string> ApiSystem::getWifiNetworks(bool scan)
 {
-	return executeEnumerationScript(scan ? "wifictl scanlist" : "wifictl list");
+	// Both are rescans: wifictl list waits for the adapter (up to 5 s), asks
+	// NetworkManager to rescan (-w 15), sleeps, then lists; scanlist adds a
+	// second rescan and sleep in front. The boxes sit past the healthy worst
+	// case so they only ever close on a NetworkManager that has stopped
+	// answering -- where, without them, each nmcli call would wait out
+	// D-Bus on its own and the caller would wait for all of them.
+	return executeEnumerationScript(scan ? "timeout 45 wifictl scanlist" : "timeout 30 wifictl list");
 }
 
 std::vector<std::string> ApiSystem::executeEnumerationScript(const std::string command)

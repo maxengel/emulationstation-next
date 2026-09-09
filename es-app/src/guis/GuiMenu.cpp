@@ -80,6 +80,7 @@
 #include <memory>
 #include <sstream>
 #include <cstdio>
+#include <thread>
 #endif
 
 #if WIN32
@@ -4454,6 +4455,63 @@ static void cloudOpenMatch(Window* window)
 		}));
 }
 
+// What cloud_migrate_layout --check would move, shown for confirmation. The
+// listing is the same remote round trip the row's arrival waited on, so it
+// runs behind GuiLoading rather than in the row's callback; a minute is the
+// box, and past it the dialog shows whatever the script had said by then.
+static void cloudPreviewTidyFolders(Window* window)
+{
+	window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("CHECKING..."),
+		[](IGuiLoadingHandler*)
+		{
+			return Utils::Platform::GetShOutputLines("timeout 60 /usr/bin/cloud_migrate_layout --check");
+		},
+		[window](std::vector<std::string> lines)
+		{
+			std::string detail;
+			for (auto& line : lines)
+				detail += line + "\n";
+
+			window->pushGui(new GuiMsgBox(window,
+				detail + "\n" + _("MOVE THEM?"),
+				_("MOVE"), [window]
+				{
+					ThreadedCloudSync::start(window,
+						"/usr/bin/cloud_migrate_layout --apply",
+						_("TIDY CLOUD FOLDERS"), _("TIDYING CLOUD FOLDERS"),
+						ThreadedCloudSync::Origin::None);
+				},
+				_("LEAVE THEM"), nullptr));
+		}));
+}
+
+// The TIDY UP YOUR CLOUD FOLDERS row, added to the CLOUD page once
+// cloud_migrate_layout --check has said there is something to move; openCloud
+// says why it is asked on a worker. Thirty seconds is the box -- the check
+// is a handful of rclone listings -- and past it the answer is "not now":
+// the row is withheld, never guessed at, since a press on it runs the same
+// check against the same network. The page's token says whether there is
+// still a page to add the row to when the answer comes back.
+static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
+{
+	std::weak_ptr<void> alive = s->lifeToken();
+	std::thread([window, s, alive]
+	{
+		const int rc = ApiSystem::executeScriptLegacy("timeout 30 /usr/bin/cloud_migrate_layout --check",
+			[](const std::string&) {}).second;
+		if (rc != 0)
+			return;
+		window->postToUiThread([window, s, alive]
+		{
+			if (alive.expired())
+				return;
+			s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
+				_("MOVE SAVES AND SETTINGS BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
+				nullptr, [window] { cloudPreviewTidyFolders(window); }, "", false, true);
+		});
+	}).detach();
+}
+
 // The cloud hub. One page, reachable from one place.
 //
 // Cloud used to live in two menus: saves and content under GAME SETTINGS,
@@ -4545,33 +4603,17 @@ void GuiMenu::openCloud(Window* window)
 	// "Already on the current layout. MOVE THEM?" (maintainer, 2026-09-06).
 	// executeScriptLegacy's pair form carries the real exit code: 0 means
 	// something to move, 3 means already current.
-	if (configured
-		&& Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout")
-		&& ApiSystem::executeScriptLegacy("/usr/bin/cloud_migrate_layout --check",
-			[](const std::string&) {}).second == 0)
-	{
-		s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
-			_("MOVE SAVES AND SETTINGS BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
-			nullptr, [window]
-			{
-				auto lines = Utils::Platform::GetShOutputLines(
-					"/usr/bin/cloud_migrate_layout --check");
-				std::string detail;
-				for (auto& line : lines)
-					detail += line + "\n";
-
-				window->pushGui(new GuiMsgBox(window,
-					detail + "\n" + _("MOVE THEM?"),
-					_("MOVE"), [window]
-					{
-						ThreadedCloudSync::start(window,
-							"/usr/bin/cloud_migrate_layout --apply",
-							_("TIDY CLOUD FOLDERS"), _("TIDYING CLOUD FOLDERS"),
-							ThreadedCloudSync::Origin::None);
-					},
-					_("LEAVE THEM"), nullptr));
-			}, "", false, true);
-	}
+	//
+	// Asked off the interface thread (fork #103). --check answers 3 from
+	// the config alone when the device is already current, but on one that
+	// is not it lists the remote to say what would move -- a network round
+	// trip this page used to make in its constructor, with rclone's default
+	// timeouts (a minute to connect, five for I/O) as the only bound. The
+	// page opens without the row and the row arrives with the answer, which
+	// puts it at the end of the group rather than ahead of CONNECT OR
+	// REPAIR; on a device that is already tidy it never arrives at all.
+	if (configured && Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout"))
+		cloudOfferTidyFolders(window, s);
 
 	s->addWithDescription(_("CONNECT OR REPAIR CLOUD STORAGE"),
 		configured ? _("CHANGE THE FOLDER, ADD A PROVIDER, OR RENEW A SIGN-IN.")
@@ -5067,7 +5109,11 @@ static std::map<std::string, std::string> cloudSetupInfo()
 	std::map<std::string, std::string> info;
 	// executeScriptLegacy keeps line boundaries; GetShOutput joins all
 	// output lines together, which breaks the key=value parse.
-	for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --info"))
+	// Local -- `ip route get`, systemctl, rclone listremotes -- and read
+	// while pages are being built, so bounded: the route lookup is a
+	// netlink call a wedged Wi-Fi driver can hold (fork #103), and rclone's
+	// start-up is the rest of the cost.
+	for (auto& line : ApiSystem::executeScriptLegacy("timeout 10 /usr/bin/cloud_setup --info"))
 	{
 		auto pos = line.find('=');
 		if (pos != std::string::npos)
@@ -5330,27 +5376,43 @@ static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& curr
 		// script's paragraphs into "thefolder" and "nameshave" (VM frame,
 		// 2026-09-07). rclone's own log line -- the one starting with a date
 		// -- is for the log, not the screen; the script's sentences are.
-		std::string why, rc;
-		for (auto& line : Utils::Platform::GetShOutputLines(
-			"/usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\" 2>&1; echo \"RC=$?\""))
-		{
-			const std::string l = Utils::String::trim(line);
-			if (Utils::String::startsWith(l, "RC="))
-				rc = l.substr(3);
-			else if (l.size() > 10 && isdigit((unsigned char) l[0]) && l[4] == '/' && l[7] == '/')
-				LOG(LogWarning) << "cloud_setup wizard: " << l;
-			else if (!l.empty())
-				why += (why.empty() ? "" : "\n") + l;
-		}
-		if (rc != "0")
-		{
-			LOG(LogWarning) << "cloud_setup wizard: the folder was refused: " << why;
-			window->pushGui(new GuiMsgBox(window,
-				_("THE CLOUD FOLDER WAS NOT CHANGED") + (why.empty() ? "" : "\n\n" + why), _("OK"), nullptr));
-			return;
-		}
-		if (onDone != nullptr)
-			onDone();
+		//
+		// Behind GuiLoading: asking the provider is an rclone listing with
+		// no timeout of its own, and it ran in this callback on the
+		// interface thread (fork #103). Thirty seconds is the box; when it
+		// closes the exit code is timeout's 124, which reads as refused,
+		// and the setting is left as it was.
+		window->pushGui(new GuiLoading<std::pair<std::string, std::string>>(window, _("CHECKING..."),
+			[trimmed](IGuiLoadingHandler*)
+			{
+				std::string why, rc;
+				for (auto& line : Utils::Platform::GetShOutputLines(
+					"timeout 30 /usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\" 2>&1; echo \"RC=$?\""))
+				{
+					const std::string l = Utils::String::trim(line);
+					if (Utils::String::startsWith(l, "RC="))
+						rc = l.substr(3);
+					else if (l.size() > 10 && isdigit((unsigned char) l[0]) && l[4] == '/' && l[7] == '/')
+						LOG(LogWarning) << "cloud_setup wizard: " << l;
+					else if (!l.empty())
+						why += (why.empty() ? "" : "\n") + l;
+				}
+				return std::make_pair(rc, why);
+			},
+			[window, onDone](std::pair<std::string, std::string> result)
+			{
+				const std::string& rc = result.first;
+				const std::string& why = result.second;
+				if (rc != "0")
+				{
+					LOG(LogWarning) << "cloud_setup wizard: the folder was refused: " << why;
+					window->pushGui(new GuiMsgBox(window,
+						_("THE CLOUD FOLDER WAS NOT CHANGED") + (why.empty() ? "" : "\n\n" + why), _("OK"), nullptr));
+					return;
+				}
+				if (onDone != nullptr)
+					onDone();
+			}));
 	};
 	if (Settings::getInstance()->getBool("UseOSK"))
 		window->pushGui(new GuiTextEditPopupKeyboard(window, _("CLOUD FOLDER"), current, save, false));
@@ -5607,8 +5669,9 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 }
 
 // Completion page: confirmation, the cloud-folder setting, and a
-// clearly-optional immediate backup.
-static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev)
+// clearly-optional immediate backup. `seeded` is what --seed-folders
+// printed; cloudSetupShowDoneStep ran it.
+static void cloudSetupBuildDoneStep(Window* window, const std::string& remote, GuiSettings* prev, const std::vector<std::string>& seeded)
 {
 	auto info = cloudSetupInfo();
 	LOG(LogInfo) << "cloud_setup wizard: complete, remote=" << remote << " saves_remote=" << info["SAVES_REMOTE"];
@@ -5640,7 +5703,7 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	// should never be silent -- the choice is ours to make, the fact is
 	// theirs to know.
 	cloudSetupAddInfoRow(s, window, _("SET UP FOR YOU IN YOUR CLOUD ACCOUNT, IF NOT ALREADY THERE:"));
-	for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --seed-folders"))
+	for (auto& line : seeded)
 	{
 		auto text = Utils::String::trim(line);
 		if (text.rfind("OK ", 0) == 0)
@@ -5671,6 +5734,28 @@ static void cloudSetupShowDoneStep(Window* window, const std::string& remote, Gu
 	s->getMenu().addButton(_("FINISH"), _("finish"), [s] { s->close(); });
 
 	cloudSetupPresent(window, s, prev);
+}
+
+// Seed the folders first, behind a spinner, then build the page from what
+// the seeding said. --seed-folders is up to two dozen rclone calls against
+// the remote -- a mkdir, a listing and a README per folder -- and this page
+// used to run them while it was being built, on the interface thread, with
+// rclone's default timeouts as the only bound: on a link that had just
+// dropped, a screen that stopped drawing at the moment the wizard said it
+// was done (fork #103). Ninety seconds is the box; a run that outlives it
+// reports the folders it did manage to create. prev stays under the
+// spinner untouched, so the page built afterwards can still replace it.
+static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev)
+{
+	window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("SETTING UP YOUR CLOUD FOLDERS"),
+		[](IGuiLoadingHandler*)
+		{
+			return ApiSystem::executeScriptLegacy("timeout 90 /usr/bin/cloud_setup --seed-folders");
+		},
+		[window, remote, prev](std::vector<std::string> seeded)
+		{
+			cloudSetupBuildDoneStep(window, remote, prev, seeded);
+		}));
 }
 
 // Wizard entry point: network is a hard precondition; then branch on the
@@ -5994,25 +6079,37 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 			_("CONNECT TO THIS PROVIDER NOW?\n\nTHE REMOTE IS ONLY SAVED IF IT ANSWERS."),
 			_("YES"), [window, cmd, s]
 			{
-				// cloud_remote verifies the remote and removes it again if it
-				// cannot be reached, so a failure here leaves nothing behind.
-				std::string out = Utils::Platform::GetShOutput(
-					"/usr/bin/cloud_remote " + cmd + " 2>&1");
-				LOG(LogInfo) << "cloud_remote create: " << out;
-
-				if (out.find("OK=") != std::string::npos)
-				{
-					window->pushGui(new GuiMsgBox(window,
-						_("THE REMOTE IS CONFIGURED AND WORKING.\n\nGAME SETTINGS > CLOUD SETTINGS IS NOW AVAILABLE."),
-						_("OK"), [s] { s->close(); }));
-					return;
-				}
-				// Show what actually went wrong. The player can fix a typo in
-				// a key far more easily than they can act on "it failed".
-				window->pushGui(new GuiMsgBox(window,
-					_("THE REMOTE COULD NOT BE SAVED.") + std::string("\n\n") +
-						Utils::String::trim(out),
-					_("OK"), nullptr));
+				// cloud_remote verifies the remote -- an rclone listing it
+				// bounds at 10 s to connect and 20 s to answer -- and removes
+				// it again if it cannot be reached, so a failure here leaves
+				// nothing behind. Behind GuiLoading, because that round trip
+				// ran in this callback on the interface thread (fork #103);
+				// the outer box is for an rclone that outlives its own flags.
+				window->pushGui(new GuiLoading<std::string>(window, _("CONNECTING..."),
+					[cmd](IGuiLoadingHandler*)
+					{
+						std::string out = Utils::Platform::GetShOutput(
+							"timeout 60 /usr/bin/cloud_remote " + cmd + " 2>&1");
+						LOG(LogInfo) << "cloud_remote create: " << out;
+						return out;
+					},
+					[window, s](std::string out)
+					{
+						if (out.find("OK=") != std::string::npos)
+						{
+							window->pushGui(new GuiMsgBox(window,
+								_("THE REMOTE IS CONFIGURED AND WORKING.\n\nGAME SETTINGS > CLOUD SETTINGS IS NOW AVAILABLE."),
+								_("OK"), [s] { s->close(); }));
+							return;
+						}
+						// Show what actually went wrong. The player can fix a
+						// typo in a key far more easily than they can act on
+						// "it failed".
+						window->pushGui(new GuiMsgBox(window,
+							_("THE REMOTE COULD NOT BE SAVED.") + std::string("\n\n") +
+								Utils::String::trim(out),
+							_("OK"), nullptr));
+					}));
 			},
 			_("NO"), nullptr));
 	});
@@ -8071,6 +8168,82 @@ void GuiMenu::openWifiSettings(Window* win, std::string title, std::string data,
 	win->pushGui(new GuiWifi(win, title, data, onsave));
 }
 
+// NETWORK SETTINGS' two facts, filled in from worker threads.
+//
+// The page used to compute them in its constructor: getifaddrs, then up to
+// three pings of two seconds each. Six seconds of a frozen menu on a device
+// that is routed but offline -- and with a Wi-Fi driver wedged (fork #102)
+// no bound at all, because getifaddrs is a netlink dump that waits on the
+// lock the driver is holding, and ping sits in sendto. So the page opens
+// with CHECKING... where the answer will go and each row fills in when its
+// worker has one. Two workers rather than one, so a kernel that never
+// answers the address query cannot keep the status row from giving up on
+// schedule: ping is time-boxed in ApiSystem::ping (five seconds for the
+// whole sequence); the address query has nothing to put a box around, and
+// if it never returns the row stays blank, which is the truth.
+//
+// Everything the workers touch on the page is held weakly. Closing the page
+// destroys its rows and its list, and a result that arrives afterwards
+// finds nothing to write to. The strings are looked up here, on the
+// interface thread, so the workers carry text and nothing else.
+static void networkSettingsFillIn(Window* window, GuiSettings* s,
+	const std::shared_ptr<TextComponent>& ipRow, const std::shared_ptr<TextComponent>& statusRow)
+{
+	std::weak_ptr<ComponentList> list = s->getMenu().getList();
+	std::weak_ptr<TextComponent> ip = ipRow;
+	std::weak_ptr<TextComponent> status = statusRow;
+	const std::string connected = _("CONNECTED");
+	const std::string notConnected = _("NOT CONNECTED");
+
+	// A value that changes width after its row was laid out has to be laid
+	// out again, or an address arriving into an empty slot runs off the
+	// right edge of the row: the list positions a row's elements once, when
+	// the row is added, and again only when its size changes.
+	auto fill = [list](const std::weak_ptr<TextComponent>& row, const std::string& text)
+	{
+		auto component = row.lock();
+		auto rows = list.lock();
+		if (component == nullptr || rows == nullptr)
+			return;
+		component->setText(text);
+		rows->onSizeChanged();
+	};
+
+	std::thread([window, ip, fill]
+	{
+		const std::string address = ApiSystem::getInstance()->getIpAddress();
+		window->postToUiThread([ip, address, fill] { fill(ip, address); });
+	}).detach();
+
+	std::thread([window, status, connected, notConnected, fill]
+	{
+		const bool online = ApiSystem::getInstance()->ping();
+		window->postToUiThread([status, online, connected, notConnected, fill]
+		{
+			fill(status, online ? connected : notConnected);
+		});
+	}).detach();
+}
+
+// Connect or disconnect Wi-Fi off the interface thread. wifictl connect can
+// take the better part of two minutes on a healthy stack (ApiSystem::
+// enableWifi says why), and every caller of this is a menu callback: the
+// screen froze for the whole association, which on a handheld reads as a
+// crash. GuiLoading keeps a spinner drawing and hands the result back on
+// the interface thread; nothing reaches the page beneath it meanwhile, so a
+// caller that captured the page still has it when onDone runs.
+static void networkApplyWifi(Window* window, const std::string& title,
+	const std::function<bool()>& apply, const std::function<void(bool)>& onDone)
+{
+	window->pushGui(new GuiLoading<bool>(window, title,
+		[apply](IGuiLoadingHandler*) { return apply(); },
+		[onDone](bool ok)
+		{
+			if (onDone != nullptr)
+				onDone(ok);
+		}));
+}
+
 void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 {
 	bool baseWifiEnabled = SystemConf::getInstance()->getBool("wifi.enabled");
@@ -8085,11 +8258,14 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	auto s = new GuiSettings(mWindow, _("NETWORK SETTINGS").c_str());
 	s->addGroup(_("INFORMATION"));
 
-	auto ip = std::make_shared<TextComponent>(mWindow, ApiSystem::getInstance()->getIpAddress(), font, color);
+	// Both arrive later; see networkSettingsFillIn.
+	auto ip = std::make_shared<TextComponent>(mWindow, "", font, color);
 	s->addWithLabel(_("IP ADDRESS"), ip);
 
-	auto status = std::make_shared<TextComponent>(mWindow, ApiSystem::getInstance()->ping() ? _("CONNECTED") : _("NOT CONNECTED"), font, color);
+	auto status = std::make_shared<TextComponent>(mWindow, _("CHECKING..."), font, color);
 	s->addWithLabel(_("INTERNET STATUS"), status);
+
+	networkSettingsFillIn(window, s, ip, status);
 
 	// Network Indicator
 	auto networkIndicator = std::make_shared<SwitchComponent>(mWindow);
@@ -8222,26 +8398,25 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 
 			if (baseSSID != newSSID || baseKEY != newKey || baseCountry != newCountry || !baseWifiEnabled)
 			{
-				if (ApiSystem::getInstance()->enableWifi(newSSID, newKey, newCountry))
-					window->pushGui(new GuiMsgBox(window, _("WI-FI ENABLED")));
-				else
-					window->pushGui(new GuiMsgBox(window, _("WI-FI CONFIGURATION ERROR")));
-			}
+				auto apply = [newSSID, newKey, newCountry] { return ApiSystem::getInstance()->enableWifi(newSSID, newKey, newCountry); };
 #else
 			if (baseSSID != newSSID || baseKEY != newKey || !baseWifiEnabled)
 			{
-				if (ApiSystem::getInstance()->enableWifi(newSSID, newKey))
-					window->pushGui(new GuiMsgBox(window, _("WI-FI ENABLED")));
-				else
-					window->pushGui(new GuiMsgBox(window, _("WI-FI CONFIGURATION ERROR")));
-			}
+				auto apply = [newSSID, newKey] { return ApiSystem::getInstance()->enableWifi(newSSID, newKey); };
 #endif
+				// This runs as the page closes, so the spinner and then the
+				// verdict appear over whatever the page returns to.
+				networkApplyWifi(window, _("CONNECTING TO WI-FI"), apply, [window](bool ok)
+				{
+					window->pushGui(new GuiMsgBox(window, ok ? _("WI-FI ENABLED") : _("WI-FI CONFIGURATION ERROR")));
+				});
+			}
 		}
 		else if (baseWifiEnabled)
-			ApiSystem::getInstance()->disableWifi();
+			networkApplyWifi(window, _("TURNING WI-FI OFF"), [] { return ApiSystem::getInstance()->disableWifi(); }, nullptr);
 	});
 
-	enable_wifi->setOnChangedCallback([this, s, baseWifiEnabled, enable_wifi, baseAdhocEnabled, enable_adhoc]()
+	enable_wifi->setOnChangedCallback([this, s, window, baseWifiEnabled, enable_wifi, baseAdhocEnabled, enable_adhoc]()
 	{
 		bool wifienabled = enable_wifi->getState();
 		bool adhocenabled = enable_adhoc->getState();
@@ -8249,24 +8424,35 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		{
 			SystemConf::getInstance()->setBool("wifi.enabled", wifienabled);
 
-			if (wifienabled)
-			{
+			const std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
+			const std::string key = SystemConf::getInstance()->get("wifi.key");
 #if !WIN32
-				std::string country = SystemConf::getInstance()->get("wifi.country");
-				ApiSystem::getInstance()->enableWifi(SystemConf::getInstance()->get("wifi.ssid"), SystemConf::getInstance()->get("wifi.key"), country);
+			const std::string country = SystemConf::getInstance()->get("wifi.country");
+			auto apply = [wifienabled, ssid, key, country]
+			{
+				return wifienabled ? ApiSystem::getInstance()->enableWifi(ssid, key, country)
+				                   : ApiSystem::getInstance()->disableWifi();
+			};
 #else
-				ApiSystem::getInstance()->enableWifi(SystemConf::getInstance()->get("wifi.ssid"), SystemConf::getInstance()->get("wifi.key"));
+			auto apply = [wifienabled, ssid, key]
+			{
+				return wifienabled ? ApiSystem::getInstance()->enableWifi(ssid, key)
+				                   : ApiSystem::getInstance()->disableWifi();
+			};
 #endif
-			}
-			else
-				ApiSystem::getInstance()->disableWifi();
-
-			delete s;
-			openNetworkSettings(true);
+			// Rebuilt once the change has been applied, so every row re-reads
+			// the state it produced. The spinner shields the page meanwhile,
+			// so s is still here when the result arrives.
+			networkApplyWifi(window, wifienabled ? _("CONNECTING TO WI-FI") : _("TURNING WI-FI OFF"), apply,
+				[this, s](bool)
+				{
+					delete s;
+					openNetworkSettings(true);
+				});
 		}
 	});
 
-	enable_adhoc->setOnChangedCallback([this, s, baseAdhocEnabled, baseWifiEnabled, enable_wifi, enable_adhoc, optionsAdhocID, selectedAdhocID, optionsChannels, selectedChannel]
+	enable_adhoc->setOnChangedCallback([this, s, window, baseAdhocEnabled, baseWifiEnabled, enable_wifi, enable_adhoc, optionsAdhocID, selectedAdhocID, optionsChannels, selectedChannel]
 	{
 		bool wifienabled = enable_wifi->getState();
 		bool adhocenabled = enable_adhoc->getState();
@@ -8281,18 +8467,32 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		SystemConf::getInstance()->setBool("wifi.adhoc.enabled", adhocenabled);
 		SystemConf::getInstance()->saveSystemConf();
 
-		if (wifienabled)
+		// Rebuilt once the mode has been applied; see the ENABLE WI-FI
+		// callback for why s survives the wait.
+		auto reopen = [this, s] { delete s; openNetworkSettings(false, true); };
+		if (!wifienabled)
 		{
-			ApiSystem::getInstance()->disableWifi();
-#if !WIN32
-			ApiSystem::getInstance()->enableWifi(SystemConf::getInstance()->get("wifi.ssid"), SystemConf::getInstance()->get("wifi.key"), SystemConf::getInstance()->get("wifi.country"));
-#else
-			ApiSystem::getInstance()->enableWifi(SystemConf::getInstance()->get("wifi.ssid"), SystemConf::getInstance()->get("wifi.key"));
-#endif
+			reopen();
+			return;
 		}
 
-		delete s;
-		openNetworkSettings(false, true);
+		const std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
+		const std::string key = SystemConf::getInstance()->get("wifi.key");
+#if !WIN32
+		const std::string country = SystemConf::getInstance()->get("wifi.country");
+		auto apply = [ssid, key, country]
+		{
+			ApiSystem::getInstance()->disableWifi();
+			return ApiSystem::getInstance()->enableWifi(ssid, key, country);
+		};
+#else
+		auto apply = [ssid, key]
+		{
+			ApiSystem::getInstance()->disableWifi();
+			return ApiSystem::getInstance()->enableWifi(ssid, key);
+		};
+#endif
+		networkApplyWifi(window, _("CONNECTING TO WI-FI"), apply, [reopen](bool) { reopen(); });
 	});
 
 	// NETWORK SERVICES
