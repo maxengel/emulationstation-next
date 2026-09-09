@@ -707,24 +707,29 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 {
 	LOG(LogInfo) << "Attempting to launch game...";
 
-	// Not while saves are moving. A cloud sync reads and writes the same save
-	// files the emulator is about to open, and the archive step tars up
-	// /storage while it runs -- starting a game in the middle of that can
-	// upload a half-written save or restore over one the game has already
-	// loaded. ThreadedCloudSync has always known whether it was running;
-	// nothing ever asked.
+	// Not while saves are moving -- unless the sync is one EmulationStation
+	// started on its own. A cloud sync reads and writes the same save files
+	// the emulator is about to open, and the archive step tars up /storage
+	// while it runs: starting a game in the middle of that can upload a
+	// half-written save or restore over one the game has already loaded.
 	//
-	// Unless nothing is moving yet. The startup sync (fork #94) can spend
-	// up to a minute after boot waiting for the network, and a device booted
-	// offline that refuses to start a game for that minute is a regression
-	// on the headless run it replaced, which never blocked anything (#84
-	// turned down a 15 s boot cost as too much to ask). While the sync is
-	// only waiting, no save has been read or written and there is nothing
-	// for this gate to protect, so the launch cancels the wait and goes
-	// ahead; the card says SKIPPED - A GAME WAS STARTED. Once a transfer is
-	// under way the refusal below stands, and behind it the scripts' own
-	// flock refuses a second writer.
-	if (ThreadedCloudSync::isRunning() && !ThreadedCloudSync::cancelIfWaitingForNetwork())
+	// The startup sync and the after-a-game backup run without a press, and
+	// a player who picks a game has made a choice over them (#101,
+	// maintainer's decision, 2026-09-09): the launch cancels the sync in
+	// whatever phase it is in, waits for it to be gone, and goes ahead; the
+	// card says SKIPPED - A GAME WAS STARTED. Safe because the scripts are
+	// rclone copy -- each file written under a temporary name and renamed
+	// when complete, nothing deleted -- so a copy cut short leaves no
+	// partial file and the next run finishes it; the wait is what keeps a
+	// rename from landing after the emulator has the save open. Before
+	// #101 only the network wait could be cancelled (fork #94), and a
+	// transfer that had lost its link was refused for as long as rclone's
+	// own timeouts let it run (#103).
+	//
+	// A sync the player asked for keeps this refusal: they pressed it, and
+	// can wait for it or stop it themselves. Behind the refusal the scripts'
+	// own flock refuses a second writer.
+	if (ThreadedCloudSync::isRunning() && !ThreadedCloudSync::cancelForLaunch())
 	{
 		window->pushGui(new GuiMsgBox(window,
 			_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE STARTING A GAME - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));

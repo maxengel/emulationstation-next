@@ -49,7 +49,18 @@ void ThreadedCloudSync::run()
 	// Stream the backend's output into the notification card so the user
 	// sees live status (rclone --stats-one-line lines, phase banners, ...).
 	int ret = -1;
-	FILE* pipe = popen((mCommand + " 2>&1").c_str(), "r");
+
+	// Every command runs in a session of its own and says so on its first
+	// line: setsid makes the shell a process group leader, and ">>> pid N"
+	// tells cancelForLaunch which group to signal, so the shell, the
+	// scripts and their rclone children go together. Done here rather than
+	// by each caller because the one caller that wrapped its own command
+	// (the startup sync) was the only one that could be cancelled -- the
+	// after-a-game backup ran bare, with no group to send a signal to.
+	// shellQuote, so a command with a quote in it survives the trip.
+	const std::string wrapped = "setsid sh -c "
+		+ Utils::String::shellQuote("echo \">>> pid $$\"; " + mCommand) + " 2>&1";
+	FILE* pipe = popen(wrapped.c_str(), "r");
 	if (pipe != nullptr)
 	{
 		char line[512];
@@ -67,8 +78,8 @@ void ThreadedCloudSync::run()
 
 			// ">>> " lines are the scripts talking to the UI, not to the
 			// player: ">>> unit SAVES||" names a phase for GuiCloudTransfer's
-			// per-system fold, ">>> pid N" is the command saying which
-			// process group it is (for cancelIfWaitingForNetwork), and
+			// per-system fold, ">>> pid N" is the wrapper above saying which
+			// process group the command is (for cancelForLaunch), and
 			// ">>> doing network" says it is waiting for something before
 			// the transfer can begin. The one this card shows is the wait:
 			// the startup sync (fork #94) gives the network up to a minute
@@ -219,7 +230,7 @@ void ThreadedCloudSync::run()
 		// Nothing is running any more, so stop claiming otherwise: somebody
 		// who wants to start another sync while the card is still up should
 		// not be told one is already going. Under the lock, so a
-		// cancelIfWaitingForNetwork that has just taken the pointer finishes
+		// cancelForLaunch that has just taken the pointer finishes
 		// with it before it goes -- and the delete below is a linger later.
 		{
 			std::lock_guard<std::mutex> lock(sInstanceLock);
@@ -253,31 +264,74 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
 }
 
-bool ThreadedCloudSync::cancelIfWaitingForNetwork()
+bool ThreadedCloudSync::cancelForLaunch()
 {
-	std::lock_guard<std::mutex> lock(sInstanceLock);
-	ThreadedCloudSync* sync = ThreadedCloudSync::mInstance;
-	if (sync == nullptr || !sync->mWaitingForNetwork)
-		return false;
-	const pid_t pid = sync->mPid;
-	if (pid <= 0)
-		return false;
+	ThreadedCloudSync* sync = nullptr;
+	pid_t pid = 0;
+	{
+		std::lock_guard<std::mutex> lock(sInstanceLock);
+		sync = ThreadedCloudSync::mInstance;
+		if (sync == nullptr)
+			return false;
+		// The player pressed this one; the launch does not override it.
+		if (sync->mOrigin != Origin::Startup && sync->mOrigin != Origin::Exit)
+			return false;
 
-	// Cancelled before the signal, so run() finds it set however quickly
-	// pclose returns. The whole group: the command runs under setsid, so its
-	// pid is its process group, and ping and sleep are in it.
+		// Cancelled before the signal, so run() finds it set however quickly
+		// pclose returns. The whole group: the command runs under setsid, so
+		// its pid is its process group, and the scripts, their rclone and any
+		// ping or sleep are in it.
+		sync->mCancelled = true;
+		sync->mWaitingForNetwork = false;
+		pid = sync->mPid;
+		if (pid > 0)
+			::kill(-pid, SIGTERM);
+	}
+
+	// Now wait for it to be gone, and only then let the launch go ahead.
 	//
-	// There is a race, and it is accepted: the network can come up at the
-	// instant of the launch, the shell moves on to cloud_restore, and the
-	// SIGTERM lands on that instead of on a sleep. The restore is an rclone
-	// copy -- each file written under a temporary name and renamed when
-	// complete, nothing deleted -- so a copy cut short leaves no partial
-	// file, and the next run finishes what this one started. The card and
-	// the stamp still say a game was started, which is what happened.
-	sync->mCancelled = true;
-	sync->mWaitingForNetwork = false;
-	::kill(-pid, SIGTERM);
-	return true;
+	// The signal is not the end of the sync; the process ending is. rclone
+	// copy writes each file under a temporary name and renames it into
+	// place when complete, and a rename that lands after the emulator has
+	// opened that save is the one thing this gate exists to prevent -- a
+	// game about to write a save must not have a restore rename over it
+	// underneath. So the launch waits for run() to report the process gone:
+	// it clears mInstance under the lock once pclose has returned, which
+	// is once every writer to the pipe has exited. Two seconds is the
+	// budget; at one and a half the group is sent SIGKILL, for an rclone
+	// that is slow to act on SIGTERM. Past the budget the answer is no, and
+	// the caller refuses the launch as it always did -- a sync that will
+	// not die is not one to start a game over.
+	const auto started = std::chrono::steady_clock::now();
+	bool killed = false;
+	for (;;)
+	{
+		{
+			std::lock_guard<std::mutex> lock(sInstanceLock);
+			if (ThreadedCloudSync::mInstance != sync)
+				return true;
+			// Its first line had not arrived when we looked -- the command
+			// was only just started. Signal it as soon as it says who it is.
+			// Safe to read: mInstance still names it, so it is not deleted.
+			if (pid <= 0)
+			{
+				pid = sync->mPid;
+				if (pid > 0)
+					::kill(-pid, SIGTERM);
+			}
+		}
+
+		const long elapsed = (long) std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now() - started).count();
+		if (elapsed >= 2000)
+			return false;
+		if (!killed && elapsed >= 1500 && pid > 0)
+		{
+			::kill(-pid, SIGKILL);
+			killed = true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
 }
 
 // /storage/.cache/cloud_sync/last-sync-<origin>: one line, "<epoch> <rc>",

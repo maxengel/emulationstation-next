@@ -38,24 +38,31 @@ public:
 	                  Origin origin = Origin::None);
 	static bool isRunning() { return mInstance != nullptr; }
 
-	// A game launch while the sync is still waiting for the network cancels
-	// the sync rather than being refused (fork #94). The startup sync can
-	// spend up to a minute waiting after boot, and for that minute nothing
-	// has been read or written, so there is nothing for the launch gate to
-	// protect -- while a device booted offline that will not start a game
-	// for a minute is a regression on the headless run it replaced (#84
-	// turned down a 15 s boot cost). True means the sync was waiting and is
-	// now being stopped: go ahead and launch. False means it was not
-	// waiting -- nothing running, or a transfer under way -- and the caller
-	// decides as before.
+	// A game launch during a sync EmulationStation started on its own -- the
+	// startup sync, the after-a-game backup -- cancels the sync in whatever
+	// phase it is in and waits for it to be gone before the launch goes
+	// ahead (#101, maintainer's decision, 2026-09-09). It used to cancel
+	// only while the sync was still waiting for the network (fork #94); a
+	// transfer under way was refused, and with rclone's own timeouts as the
+	// only bound on a link that had dropped, that refusal could stand for
+	// many minutes (#103). A sync the player asked for keeps the refusal:
+	// Origin::Manual, and Origin::None -- the wizard's first backup and the
+	// folder tidy -- since they pressed it and can wait for it or stop it
+	// themselves.
 	//
-	// Works on the protocol the command speaks: ">>> pid N" on its first
-	// line (the command runs under setsid, so N is also its process group),
-	// ">>> doing network" while it probes, and any later line -- a script's
-	// first words, another ">>> unit" -- to say the wait is over. The
-	// process group is sent SIGTERM, so the shell, its ping and its sleep go
-	// together.
-	static bool cancelIfWaitingForNetwork();
+	// True means the launch may proceed: the sync was one of ours and has
+	// ended. False means it may not: nothing running, the player's own
+	// sync, or one that had not ended within the budget (two seconds, with
+	// SIGKILL to the group at one and a half). The caller refuses on false
+	// exactly as it always did.
+	//
+	// Works on the protocol run() gives every command: it runs under setsid,
+	// so its pid is its process group, and its first line is ">>> pid N".
+	// The group is sent SIGTERM, so the shell, the scripts and their rclone
+	// go together; the scripts' trap exits CloudExit::Stopped, the card says
+	// SKIPPED - A GAME WAS STARTED and the stamp records the same, as the
+	// network-wait cancel always did.
+	static bool cancelForLaunch();
 
 private:
 	void run();
@@ -72,7 +79,8 @@ private:
 	Origin						mOrigin;
 
 	// Set and read across the worker and the main thread; see
-	// cancelIfWaitingForNetwork.
+	// cancelForLaunch. mWaitingForNetwork is what the card reads to say
+	// WAITING FOR THE NETWORK...; it no longer gates the cancel.
 	std::atomic<pid_t>			mPid{0};
 	std::atomic<bool>			mWaitingForNetwork{false};
 	std::atomic<bool>			mCancelled{false};
@@ -82,9 +90,9 @@ private:
 
 	std::thread*				mHandle;
 	static ThreadedCloudSync*	mInstance;
-	// Holds mInstance steady while cancelIfWaitingForNetwork dereferences
-	// it: run() clears the pointer from the worker thread, and deletes the
-	// object after the card's linger, so a caller that took the pointer
-	// under this lock has an object that outlives the call.
+	// Holds mInstance steady while cancelForLaunch dereferences it: run()
+	// clears the pointer from the worker thread, and deletes the object
+	// after the card's linger, so a caller that took the pointer under this
+	// lock has an object that outlives the call.
 	static std::mutex			sInstanceLock;
 };

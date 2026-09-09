@@ -489,34 +489,38 @@ void launchStartupGame()
 // The transfer is the autostart's: restore, then back up, both
 // `copy --update --saves-only`, so the newest copy of every save ends up on
 // both sides and nothing is deleted; both halves run whatever the first
-// did, and the run's status is the first failure. Around it, four things
-// the autostart did not do, each because a card and a launch gate now hang
-// on this command where nothing hung on the old one:
+// did, and the run's status is the first failure. Around it, what the
+// autostart did not do, each because a card and a launch gate now hang on
+// this command where nothing hung on the old one:
 //
-// - ">>> pid $$" first, under setsid: the shell is its own process group,
-//   and ThreadedCloudSync can stop the whole group -- shell, ping, sleep --
-//   if a game is launched while it is still waiting (see there).
 // - No default route, no wait. `ip route show default`, the same test
 //   cloud_backup's check_network_link makes, and exit CloudExit::NoNetwork
 //   at once -- the scripts' own "no network", so the card says SKIPPED -
 //   NO NETWORK CONNECTION within a second and the launch gate is never
-//   held on a device booted offline. The probe loop is for the other case:
-//   a link that is up while the internet behind it is not yet reachable.
-// - ">>> doing network" at the first failed probe, so the card can say
-//   WAITING FOR THE NETWORK... rather than Working... for that time.
-// - A cap of 60 s of wall clock on the wait, checked before each sleep.
-//   The autostart's `seq 1 30` was described as a minute but was not one:
-//   each failed probe is ping's own -W2 plus the 2 s sleep, 4 s, so thirty
-//   of them are two minutes -- longer when the resolver, which -W does not
-//   bound, hangs on a link with no DNS behind it. `timeout 4` bounds the
-//   probe, the clock bounds the loop, and the wait ends within 60 s plus
-//   at most one probe.
+//   held on a device booted offline. The wait is for the other case: a
+//   link that is up while the connection behind it has not settled.
+// - The wait itself is cloud_net_ready's (fork #103): NetworkManager's
+//   `connected`, held for a short grace, rather than the first ping that
+//   gets through -- which on an SDIO Wi-Fi module is seconds after
+//   association and the least stable moment there is (#102). It prints
+//   ">>> doing network" once when it starts waiting, so the card can say
+//   WAITING FOR THE NETWORK... rather than Working... for that time, and
+//   gives up at 60 s with the no-network code. An image without it falls
+//   back to the route check and probe loop, which prints the same line at
+//   the first failed probe and keeps the same 60 s of wall clock, checked
+//   before each sleep: the autostart's `seq 1 30` was described as a
+//   minute but was not one -- each failed probe is ping's own -W2 plus the
+//   2 s sleep, 4 s, so thirty of them are two minutes, longer when the
+//   resolver, which -W does not bound, hangs on a link with no DNS behind
+//   it. `timeout 4` bounds the probe, the clock bounds the loop.
 //
-// While a transfer runs, FileData::launchGame declines to start a game
-// (D-CLOUD-038/053, #87), so a save cannot be opened by an emulator while
-// rclone is writing it; while only the wait runs, a launch cancels the sync
-// instead, since nothing has been touched. Behind both, the scripts' flock
-// answers CloudExit::LockHeld to any second writer.
+// The command runs under setsid with a ">>> pid" first line, which
+// ThreadedCloudSync gives every command (see there). A game launched while
+// this sync runs cancels it in whatever phase it is in, waits for it to be
+// gone, and goes ahead (#101, maintainer's decision, superseding the
+// refusal of D-CLOUD-038/053 and #87 for the syncs EmulationStation starts
+// on its own; FileData::launchGame has the reasoning). Behind it, the
+// scripts' flock answers CloudExit::LockHeld to any second writer.
 static void startStartupSavesSync(Window* window)
 {
 	if (SystemConf::getInstance()->get("cloudsaves.startup") != "1")
@@ -526,7 +530,8 @@ static void startStartupSavesSync(Window* window)
 		|| !Utils::FileSystem::exists("/usr/bin/cloud_backup"))
 		return;
 
-	// No single quotes in here: the whole script rides inside one pair.
+	// ThreadedCloudSync runs this under setsid and prints the ">>> pid" line
+	// itself, for every command; it used to be done here, for this one.
 	// The early exits are the scripts' own no-network code, spelled from
 	// the constant so this shell cannot drift from what the card reads.
 	//
@@ -547,9 +552,8 @@ static void startStartupSavesSync(Window* window)
 	// without cloud_net_ready, so this and the script can ship in either
 	// order.
 	const std::string noNetwork = std::to_string(CloudExit::NoNetwork);
-	const std::string script =
-		"echo \">>> pid $$\";"
-		" if [ -x /usr/bin/cloud_net_ready ]; then"
+	const std::string command =
+		"if [ -x /usr/bin/cloud_net_ready ]; then"
 		" /usr/bin/cloud_net_ready --wait 60; _w=$?; [ \"$_w\" = 0 ] || exit \"$_w\";"
 		" else"
 		" if ! ip -4 route show default 2>/dev/null | grep -q ."
@@ -566,7 +570,6 @@ static void startStartupSavesSync(Window* window)
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?;"
 		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?;"
 		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";
-	const std::string command = "setsid sh -c '" + script + "'";
 
 	// SYNC SAVES is the title the manual sync row already prints when it is
 	// done; the running line says which sync this is, since the player did
