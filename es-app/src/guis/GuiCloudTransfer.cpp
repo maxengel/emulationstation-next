@@ -242,9 +242,11 @@ std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std:
 
 // rclone's size units, once: how each is spelt in its output (the torn
 // "Ki"/"Mi"/"Gi" is a per-file line cut at 80 columns), what the page calls
-// it, and how many bytes it is. prettyRclone renames by this table and
-// parseBytes reads by it, so a unit the page can show is a unit it can add
-// up. Longest spelling first: "GiB" must be matched before "Gi".
+// it, and how many bytes it is. roundSizes finds a size by this table,
+// parseBytes reads it and sizeLabel re-renders it; prettyRclone's rename by
+// the same table is the fallback for a token that did not parse. So a unit
+// the page can show is a unit it can add up. Longest spelling first: "GiB"
+// must be matched before "Gi".
 namespace
 {
 	struct RcloneUnit { const char* rclone; const char* shown; double bytes; };
@@ -303,6 +305,53 @@ long GuiCloudTransfer::parseBytes(const std::string& field)
 	return -1;
 }
 
+// Every size and speed in an rclone fragment at sizeLabel's precision:
+// "16.521 MiB / 16.521 MiB, 100%, 519.844 KiB/s" -> "16.5 MB / 16.5 MB,
+// 100%, 520 KB/s". rclone prints three decimals of whatever unit it lands
+// on, and on a 640px panel the totals row ran past its width and lost the
+// time left to the ellipsis (VM frames, 2026-09-09). Each number-and-unit is
+// parsed (parseBytes) and re-rendered (sizeLabel) rather than trimmed, so
+// the page prints one precision for every size it shows, live or summed.
+// A "/s" after the unit stays: a speed is a size per second. Percentages
+// and times carry no unit from the table and pass through untouched; so
+// does a number whose unit did not parse.
+std::string GuiCloudTransfer::roundSizes(const std::string& f)
+{
+	std::string out;
+	size_t i = 0;
+	while (i < f.size())
+	{
+		// a number starts at a digit that does not continue a token ("3m2s")
+		const bool starts = isdigit((unsigned char) f[i]) && (i == 0 || !(isalnum((unsigned char) f[i - 1]) || f[i - 1] == '.'));
+		if (!starts)
+		{
+			out += f[i++];
+			continue;
+		}
+		size_t j = i;
+		while (j < f.size() && (isdigit((unsigned char) f[j]) || f[j] == '.'))
+			j++;
+		size_t k = j;
+		while (k < f.size() && f[k] == ' ')
+			k++;
+		const RcloneUnit* unit = nullptr;
+		for (const auto& u : RCLONE_UNITS)
+		{
+			const std::string spelt = u.rclone;
+			if (f.compare(k, spelt.size(), spelt) == 0 && (k + spelt.size() == f.size() || !isalpha((unsigned char) f[k + spelt.size()])))
+			{
+				unit = &u;
+				break;
+			}
+		}
+		const size_t end = unit == nullptr ? j : k + std::string(unit->rclone).size();
+		const long bytes = unit == nullptr ? -1 : parseBytes(f.substr(i, end - i));
+		out += bytes < 0 ? f.substr(i, end - i) : sizeLabel((unsigned long) bytes);
+		i = end;
+	}
+	return out;
+}
+
 // The unit's last "Transferred:" pair becomes the run's. Called with mMutex
 // held: at the next ">>> unit", when the command exits, and when the byte
 // counter drops -- rclone's never does within one invocation, so a drop
@@ -320,9 +369,10 @@ void GuiCloudTransfer::foldUnit()
 	mUnitFiles = 0;
 }
 
-// rclone's fragments in the player's units and separators:
-//   "45% /2.5Mi, 300Ki/s, 5s"                      -> "45% OF 2.5 MB . 300 KB/S . 5S LEFT"
-//   "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"  -> "1.4 GB OF 2.0 GB . 70% . 2.5 MB/S . 3M2S LEFT"
+// rclone's fragments in the player's units, precision and separators:
+//   "45% /2.5Mi, 300Ki/s, 5s"                            -> "45% OF 2.5 MB . 300 KB/S . 5S LEFT"
+//   "1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"        -> "1.40 GB OF 2.00 GB . 70% . 2.5 MB/S . 3M2S LEFT"
+//   "16.521 MiB / 16.521 MiB, 100%, 519.844 KiB/s, ETA 0s" -> "16.5 MB OF 16.5 MB . 100% . 520 KB/S . 0S LEFT"
 std::string GuiCloudTransfer::prettyRclone(std::string f)
 {
 	// Piped -- there is no terminal here -- rclone cuts every per-file line
@@ -357,6 +407,7 @@ std::string GuiCloudTransfer::prettyRclone(std::string f)
 		for (size_t i = 0; i < kept.size(); i++)
 			f += (i ? ", " : "") + kept[i];
 	}
+	f = roundSizes(f);
 	auto rep = [&f](const std::string& from, const std::string& to) { f = Utils::String::replace(f, from, to); };
 	for (const auto& u : RCLONE_UNITS)
 		if (std::string(u.rclone) != u.shown)
@@ -365,9 +416,13 @@ std::string GuiCloudTransfer::prettyRclone(std::string f)
 	rep(" / ", " OF "); rep(" /", " OF ");
 	rep(", ", " · ");
 	f = Utils::String::toUpper(f);
-	// a trailing duration -- digits then a unit letter, no percent, no bytes -- is time left
-	size_t sep = f.rfind(" · ");
-	std::string last = sep == std::string::npos ? f : f.substr(sep + 3);
+	// a trailing duration -- digits then a unit letter, no percent, no bytes --
+	// is time left. The separator is four bytes, not three: the middle dot is
+	// two in UTF-8, and skipping three left a space on the front of the last
+	// segment that isdigit() refused, so LEFT was never appended (2026-09-09).
+	static const std::string SEP = " · ";
+	size_t sep = f.rfind(SEP);
+	std::string last = sep == std::string::npos ? f : f.substr(sep + SEP.size());
 	if (!last.empty() && isdigit((unsigned char) last[0]) && last.find('%') == std::string::npos
 		&& last.find('B') == std::string::npos && !isdigit((unsigned char) last.back()))
 		f += " " + std::string(_("LEFT"));

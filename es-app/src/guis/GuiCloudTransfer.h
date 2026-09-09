@@ -76,6 +76,7 @@ private:
 	float mLineWidth;
 	static std::string fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width);
 	static std::string prettyRclone(std::string fragment);
+	static std::string roundSizes(const std::string& fragment);
 
 	std::string mCommand;
 	std::string mTitleText;
