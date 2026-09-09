@@ -1,4 +1,5 @@
 #include "ThreadedCloudSync.h"
+#include "CloudExit.h"
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
 #include "guis/GuiMsgBox.h"
@@ -170,12 +171,12 @@ void ThreadedCloudSync::run()
 
 	// A cancelled run ends by SIGTERM, which pclose reports as a signal or,
 	// when a shell sat between us and the group, as 143. Neither is what
-	// happened. 130 is what the scripts' own trap exits with when somebody
-	// stops them, and what cloudLastRunDetail already reads as STOPPED: the
-	// same word for the same thing, whoever did the stopping.
+	// happened. CloudExit::Stopped is what the scripts' own trap exits with
+	// when somebody stops them, and what cloudLastRunDetail already reads as
+	// STOPPED: the same word for the same thing, whoever did the stopping.
 	const bool cancelled = mCancelled;
 	if (cancelled)
-		ret = 130;
+		ret = CloudExit::Stopped;
 
 	// Before the card says anything: the stamp is the answer that outlives
 	// the card, so it is written first, and written whether or not there is
@@ -196,17 +197,18 @@ void ThreadedCloudSync::run()
 	if (mWndNotification != nullptr)
 	{
 		mWndNotification->updateTitle(ICONINDEX + mTitle);
-		// 3 is the scripts' "another cloud sync holds the lock"; 4 is "no
-		// network". Neither is a failure: the boot-time sync was already
-		// doing this work, or there was nothing to sync to -- and FAILED
-		// would send somebody to a log to find out nothing went wrong.
+		// LockHeld is the scripts' "another cloud sync holds the lock";
+		// NoNetwork is their "no network" (CloudExit.h has the values and
+		// why). Neither is a failure: the boot-time sync was already doing
+		// this work, or there was nothing to sync to -- and FAILED would
+		// send somebody to a log to find out nothing went wrong.
 		// A cancel is not a failure either: the player chose a game over a
 		// wait, and the saves were never touched.
 		mWndNotification->updateText(cancelled
 			? _("SKIPPED - A GAME WAS STARTED")
 			: ret == 0 ? _("COMPLETED SUCCESSFULLY")
-			: ret == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
-			: ret == 4 ? _("SKIPPED - NO NETWORK CONNECTION")
+			: ret == CloudExit::LockHeld ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
+			: ret == CloudExit::NoNetwork ? _("SKIPPED - NO NETWORK CONNECTION")
 			: _("FAILED - SEE /var/log/cloud_sync.log"));
 
 		// A full bar on success; on failure the bar goes, because a

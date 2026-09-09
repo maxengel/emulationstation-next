@@ -48,6 +48,7 @@ set(ES_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedHasher.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedBluetooth.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedCloudSync.h
+	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudExit.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/SystemRandomPlaylist.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/LangParser.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/KeyboardMapping.h	
