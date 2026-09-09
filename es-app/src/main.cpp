@@ -527,11 +527,31 @@ static void startStartupSavesSync(Window* window)
 		return;
 
 	// No single quotes in here: the whole script rides inside one pair.
-	// The two early exits are the scripts' own no-network code, spelled from
+	// The early exits are the scripts' own no-network code, spelled from
 	// the constant so this shell cannot drift from what the card reads.
+	//
+	// Whether the network is ready is cloud_net_ready's question (fork
+	// #103). It exits 0 once NetworkManager has reported connected and held
+	// it for a short grace, and prints ">>> doing network" once if it has to
+	// wait -- the line the probe loop printed, so the card and the launch
+	// gate read it unchanged. The loop it replaces started the sync on the
+	// first ping that got through, which on an SDIO Wi-Fi module is seconds
+	// after association and the least stable moment there is (#102); one
+	// ping is not a settled connection either, only a packet that once made
+	// it. Its exit code passes through: 69 is the no-network sentinel by
+	// contract, at once when there is no default route and at the deadline
+	// when the connection never settled, and anything else is a failure the
+	// card should call one.
+	//
+	// The route check and probe loop stay as the fallback for an image
+	// without cloud_net_ready, so this and the script can ship in either
+	// order.
 	const std::string noNetwork = std::to_string(CloudExit::NoNetwork);
 	const std::string script =
 		"echo \">>> pid $$\";"
+		" if [ -x /usr/bin/cloud_net_ready ]; then"
+		" /usr/bin/cloud_net_ready --wait 60; _w=$?; [ \"$_w\" = 0 ] || exit \"$_w\";"
+		" else"
 		" if ! ip -4 route show default 2>/dev/null | grep -q ."
 		" && ! ip -6 route show default 2>/dev/null | grep -q .; then exit " + noNetwork + "; fi;"
 		" _t0=$(date +%s); _up=0; _n=0;"
@@ -542,6 +562,7 @@ static void startStartupSavesSync(Window* window)
 		" sleep 2;"
 		" done;"
 		" [ \"$_up\" = 1 ] || exit " + noNetwork + ";"
+		" fi;"
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?;"
 		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?;"
 		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";
