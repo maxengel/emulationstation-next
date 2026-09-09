@@ -628,7 +628,11 @@ bool ApiSystem::isWifiAPModeSupported()
 {
 	LOG(LogDebug) << "ApiSystem::isWifiAPModeSupported";
 
-	return executeScript("wifictl has_ap_mode");
+	// Bounded, not asynchronous: NETWORK SETTINGS asks this in its
+	// constructor. It is iwd over D-Bus, after a wait of up to five seconds
+	// for the adapter to appear -- no packets, but a Wi-Fi driver that has
+	// wedged can hold it, and the page should open regardless (fork #103).
+	return executeScript("timeout 10 wifictl has_ap_mode");
 }
 
 bool ApiSystem::enableBluetooth()
@@ -910,7 +914,9 @@ std::vector<std::string> ApiSystem::getAvailableAudioOutputDevices()
 
 std::vector<std::string> ApiSystem::getAvailableChannels()
 {
-	return executeEnumerationScript("/usr/bin/sh -lc \"/usr/bin/wifictl channels\"");
+	// `iw list`, an nl80211 query the same constructor makes; bounded for
+	// the same reason as isWifiAPModeSupported.
+	return executeEnumerationScript("timeout 5 /usr/bin/sh -lc \"/usr/bin/wifictl channels\"");
 }
 
 std::vector<std::string> ApiSystem::getAvailableCpuGovernors()

@@ -5109,7 +5109,11 @@ static std::map<std::string, std::string> cloudSetupInfo()
 	std::map<std::string, std::string> info;
 	// executeScriptLegacy keeps line boundaries; GetShOutput joins all
 	// output lines together, which breaks the key=value parse.
-	for (auto& line : ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --info"))
+	// Local -- `ip route get`, systemctl, rclone listremotes -- and read
+	// while pages are being built, so bounded: the route lookup is a
+	// netlink call a wedged Wi-Fi driver can hold (fork #103), and rclone's
+	// start-up is the rest of the cost.
+	for (auto& line : ApiSystem::executeScriptLegacy("timeout 10 /usr/bin/cloud_setup --info"))
 	{
 		auto pos = line.find('=');
 		if (pos != std::string::npos)
