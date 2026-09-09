@@ -20,10 +20,10 @@ public:
 	// it run this morning?" from a screen that still exists.
 	//
 	// The scripts' own stamps (last-backup, last-restore) are per direction
-	// and skip the runs that did nothing (exit 3, 4); this one is per cause
-	// and records the whole run, skips included, because the question under
-	// the toggle is "what happened at startup", and "nothing, no network" is
-	// an answer to it.
+	// and skip the runs that did nothing (CloudExit::LockHeld, NoNetwork);
+	// this one is per cause and records the whole run, skips included,
+	// because the question under the toggle is "what happened at startup",
+	// and "nothing, no network" is an answer to it.
 	//
 	// None is for jobs that are not a saves sync -- tidying folders, the
 	// wizard's first backup -- which have no toggle to report to.

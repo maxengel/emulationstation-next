@@ -18,6 +18,7 @@
 #include "guis/GuiImageViewer.h"
 #include "guis/GuiMoonlight.h"
 #include "ThreadedCloudSync.h"
+#include "CloudExit.h"
 #include "guis/GuiCloudTransfer.h"
 #include "guis/GuiLoading.h"
 #include "guis/GuiNetPlaySettings.h"
@@ -4075,10 +4076,11 @@ static std::string cloudLastRunDetail(const std::string& name)
 	time_t when = (time_t) atoll(parts[0].c_str());
 	if (when <= 0)
 		return never;
-	// 130 is the interrupt the backends' trap exits with: somebody stopped it,
-	// which is not a failure and should not be reported as one. 3 and 4 are
-	// the scripts' "another sync holds the lock" and "no network": the
-	// scripts write no stamp for those (nothing ran), but the whole-run
+	// Stopped is the interrupt the backends' trap exits with: somebody
+	// stopped it, which is not a failure and should not be reported as one.
+	// LockHeld and NoNetwork are the scripts' "another sync holds the lock"
+	// and "no network" (CloudExit.h has the values and why): the scripts
+	// write no stamp for those (nothing ran), but the whole-run
 	// stamps EmulationStation keeps per cause (last-sync-startup, -exit,
 	// -manual; fork #94) do, because under SYNC SAVES DURING STARTUP the
 	// player's question is what happened this morning, and "nothing, there
@@ -4087,9 +4089,9 @@ static std::string cloudLastRunDetail(const std::string& name)
 	// dash to separate the date from it.
 	const int code = atoi(parts[1].c_str());
 	const std::string outcome = code == 0 ? _("SUCCEEDED")
-		: code == 130 ? _("STOPPED")
-		: code == 3 ? _("SKIPPED, ANOTHER SYNC WAS RUNNING")
-		: code == 4 ? _("SKIPPED, NO NETWORK")
+		: code == CloudExit::Stopped ? _("STOPPED")
+		: code == CloudExit::LockHeld ? _("SKIPPED, ANOTHER SYNC WAS RUNNING")
+		: code == CloudExit::NoNetwork ? _("SKIPPED, NO NETWORK")
 		: _("FAILED");
 	// The player's own date format and clock, not ours.
 	//

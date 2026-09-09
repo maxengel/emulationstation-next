@@ -50,6 +50,7 @@
 #include "utils/StringUtil.h"
 #include "LaunchCommand.h"
 #include "ThreadedCloudSync.h"
+#include "CloudExit.h"
 
 #ifdef WIN32
 #include <Windows.h>
@@ -496,11 +497,11 @@ void launchStartupGame()
 //   and ThreadedCloudSync can stop the whole group -- shell, ping, sleep --
 //   if a game is launched while it is still waiting (see there).
 // - No default route, no wait. `ip route show default`, the same test
-//   cloud_backup's check_network_link makes, and exit 4 at once -- the
-//   scripts' own "no network", so the card says SKIPPED - NO NETWORK
-//   CONNECTION within a second and the launch gate is never held on a
-//   device booted offline. The probe loop is for the other case: a link
-//   that is up while the internet behind it is not yet reachable.
+//   cloud_backup's check_network_link makes, and exit CloudExit::NoNetwork
+//   at once -- the scripts' own "no network", so the card says SKIPPED -
+//   NO NETWORK CONNECTION within a second and the launch gate is never
+//   held on a device booted offline. The probe loop is for the other case:
+//   a link that is up while the internet behind it is not yet reachable.
 // - ">>> doing network" at the first failed probe, so the card can say
 //   WAITING FOR THE NETWORK... rather than Working... for that time.
 // - A cap of 60 s of wall clock on the wait, checked before each sleep.
@@ -515,7 +516,7 @@ void launchStartupGame()
 // (D-CLOUD-038/053, #87), so a save cannot be opened by an emulator while
 // rclone is writing it; while only the wait runs, a launch cancels the sync
 // instead, since nothing has been touched. Behind both, the scripts' flock
-// answers 3 to any second writer.
+// answers CloudExit::LockHeld to any second writer.
 static void startStartupSavesSync(Window* window)
 {
 	if (SystemConf::getInstance()->get("cloudsaves.startup") != "1")
@@ -526,10 +527,13 @@ static void startStartupSavesSync(Window* window)
 		return;
 
 	// No single quotes in here: the whole script rides inside one pair.
+	// The two early exits are the scripts' own no-network code, spelled from
+	// the constant so this shell cannot drift from what the card reads.
+	const std::string noNetwork = std::to_string(CloudExit::NoNetwork);
 	const std::string script =
 		"echo \">>> pid $$\";"
 		" if ! ip -4 route show default 2>/dev/null | grep -q ."
-		" && ! ip -6 route show default 2>/dev/null | grep -q .; then exit 4; fi;"
+		" && ! ip -6 route show default 2>/dev/null | grep -q .; then exit " + noNetwork + "; fi;"
 		" _t0=$(date +%s); _up=0; _n=0;"
 		" while :; do"
 		" timeout 4 ping -q -c1 -W2 google.com >/dev/null 2>&1 && _up=1 && break;"
@@ -537,7 +541,7 @@ static void startStartupSavesSync(Window* window)
 		" [ $(( $(date +%s) - _t0 )) -lt 60 ] || break;"
 		" sleep 2;"
 		" done;"
-		" [ \"$_up\" = 1 ] || exit 4;"
+		" [ \"$_up\" = 1 ] || exit " + noNetwork + ";"
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?;"
 		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?;"
 		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";

@@ -882,8 +882,9 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// occasional job and has its own row. Comparing every save on the device
 	// against the cloud was 18 seconds of somebody's time to move nothing,
 	// most of it remote round trips that had nothing to do with the game
-	// just played. With no network, cloud_backup answers exit 4 at once
-	// rather than waiting for a probe to time out.
+	// just played. With no network, cloud_backup answers
+	// CloudExit::NoNetwork at once rather than waiting for a probe to time
+	// out.
 	if (SystemConf::getInstance()->get("cloudsaves.gameexit") == "1"
 		&& Utils::FileSystem::exists("/usr/bin/cloud_backup")
 		&& !ThreadedCloudSync::isRunning())

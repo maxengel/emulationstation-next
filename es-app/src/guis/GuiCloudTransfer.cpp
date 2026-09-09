@@ -1,5 +1,6 @@
 #include "guis/GuiCloudTransfer.h"
 
+#include "CloudExit.h"
 #include "Window.h"
 #include "ThemeData.h"
 #include "LocaleES.h"
@@ -447,9 +448,13 @@ void GuiCloudTransfer::update(int deltaTime)
 
 	if (mFinished)
 	{
+		// The two skips are named here as the card names them: a run the
+		// scripts declined before touching anything is not a failure, and
+		// FAILED would send somebody to a log to find nothing wrong.
 		mStatus->setText(mExit == 0 ? _("COMPLETED SUCCESSFULLY")
-			: mExit == 130 ? _("STOPPED")
-			: mExit == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
+			: mExit == CloudExit::Stopped ? _("STOPPED")
+			: mExit == CloudExit::LockHeld ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
+			: mExit == CloudExit::NoNetwork ? _("SKIPPED - NO NETWORK CONNECTION")
 			: _("FAILED"));
 		mCounter->setText("");
 		const bool restore = mCommand.find("restore") != std::string::npos;
