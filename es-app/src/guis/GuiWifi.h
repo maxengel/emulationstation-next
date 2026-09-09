@@ -18,7 +18,7 @@ private:
 
 	void	onSave(const std::string& value);
 	void	onManualInput();
-	void	onRefresh();
+	void	onRefresh(bool rescan = true);
 
 	MenuComponent mMenu;
 
