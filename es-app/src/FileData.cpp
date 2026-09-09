@@ -713,7 +713,18 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// upload a half-written save or restore over one the game has already
 	// loaded. ThreadedCloudSync has always known whether it was running;
 	// nothing ever asked.
-	if (ThreadedCloudSync::isRunning())
+	//
+	// Unless nothing is moving yet. The startup sync (fork #94) can spend
+	// up to a minute after boot waiting for the network, and a device booted
+	// offline that refuses to start a game for that minute is a regression
+	// on the headless run it replaced, which never blocked anything (#84
+	// turned down a 15 s boot cost as too much to ask). While the sync is
+	// only waiting, no save has been read or written and there is nothing
+	// for this gate to protect, so the launch cancels the wait and goes
+	// ahead; the card says SKIPPED - A GAME WAS STARTED. Once a transfer is
+	// under way the refusal below stands, and behind it the scripts' own
+	// flock refuses a second writer.
+	if (ThreadedCloudSync::isRunning() && !ThreadedCloudSync::cancelIfWaitingForNetwork())
 	{
 		window->pushGui(new GuiMsgBox(window,
 			_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE STARTING A GAME - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));

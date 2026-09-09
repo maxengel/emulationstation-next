@@ -1,7 +1,10 @@
 #pragma once
 
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <sys/types.h>
 #include "components/AsyncNotificationComponent.h"
 
 // Runs a headless cloud sync command in the background with a native
@@ -35,6 +38,25 @@ public:
 	                  Origin origin = Origin::None);
 	static bool isRunning() { return mInstance != nullptr; }
 
+	// A game launch while the sync is still waiting for the network cancels
+	// the sync rather than being refused (fork #94). The startup sync can
+	// spend up to a minute waiting after boot, and for that minute nothing
+	// has been read or written, so there is nothing for the launch gate to
+	// protect -- while a device booted offline that will not start a game
+	// for a minute is a regression on the headless run it replaced (#84
+	// turned down a 15 s boot cost). True means the sync was waiting and is
+	// now being stopped: go ahead and launch. False means it was not
+	// waiting -- nothing running, or a transfer under way -- and the caller
+	// decides as before.
+	//
+	// Works on the protocol the command speaks: ">>> pid N" on its first
+	// line (the command runs under setsid, so N is also its process group),
+	// ">>> doing network" while it probes, and any later line -- a script's
+	// first words, another ">>> unit" -- to say the wait is over. The
+	// process group is sent SIGTERM, so the shell, its ping and its sleep go
+	// together.
+	static bool cancelIfWaitingForNetwork();
+
 private:
 	void run();
 	static void recordOutcome(Origin origin, int rc);
@@ -49,9 +71,20 @@ private:
 	std::string					mRunning;
 	Origin						mOrigin;
 
+	// Set and read across the worker and the main thread; see
+	// cancelIfWaitingForNetwork.
+	std::atomic<pid_t>			mPid{0};
+	std::atomic<bool>			mWaitingForNetwork{false};
+	std::atomic<bool>			mCancelled{false};
+
 	Window*						mWindow;
 	AsyncNotificationComponent* mWndNotification;
 
 	std::thread*				mHandle;
 	static ThreadedCloudSync*	mInstance;
+	// Holds mInstance steady while cancelIfWaitingForNetwork dereferences
+	// it: run() clears the pointer from the worker thread, and deletes the
+	// object after the card's linger, so a caller that took the pointer
+	// under this lock has an object that outlives the call.
+	static std::mutex			sInstanceLock;
 };

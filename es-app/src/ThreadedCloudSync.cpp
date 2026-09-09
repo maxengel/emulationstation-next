@@ -8,13 +8,16 @@
 #include <chrono>
 #include <cstdio>
 #include <ctime>
+#include <mutex>
 #include <thread>
+#include <signal.h>
 #include <sys/wait.h>
 #include "LocaleES.h"
 
 #define ICONINDEX _U("\uF0C2 ")
 
 ThreadedCloudSync* ThreadedCloudSync::mInstance = nullptr;
+std::mutex ThreadedCloudSync::sInstanceLock;
 
 ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
 	const std::string& title, const std::string& running, Origin origin)
@@ -63,23 +66,32 @@ void ThreadedCloudSync::run()
 
 			// ">>> " lines are the scripts talking to the UI, not to the
 			// player: ">>> unit SAVES||" names a phase for GuiCloudTransfer's
-			// per-system fold, and ">>> doing network" says the command is
-			// waiting for something before the transfer can begin. The one
-			// this card acts on is the wait: the startup sync (fork #94)
-			// gives the network up to a minute to come up after boot, and a
-			// card reading "Working..." for that minute says nothing about
-			// why. Any other keyword, and any other protocol line, is not
-			// for this card and never reaches it.
+			// per-system fold, ">>> pid N" is the command saying which
+			// process group it is (for cancelIfWaitingForNetwork), and
+			// ">>> doing network" says it is waiting for something before
+			// the transfer can begin. The one this card shows is the wait:
+			// the startup sync (fork #94) gives the network up to a minute
+			// to come up after boot, and a card reading "Working..." for
+			// that minute says nothing about why. Any other keyword, and any
+			// other protocol line, is not for this card and never reaches
+			// it -- but each one says the wait is over, as does the first
+			// word any script prints.
 			if (clean.rfind(">>> ", 0) == 0)
 			{
-				if (clean.rfind(">>> doing ", 0) == 0 && mWndNotification != nullptr)
+				if (clean.rfind(">>> pid ", 0) == 0)
+					mPid = atoi(clean.substr(8).c_str());
+				else if (clean.rfind(">>> doing ", 0) == 0)
 				{
 					const std::string what = Utils::String::trim(clean.substr(10));
-					if (what == "network")
+					mWaitingForNetwork = (what == "network");
+					if (what == "network" && mWndNotification != nullptr)
 						mWndNotification->updateText(_("WAITING FOR THE NETWORK..."));
 				}
+				else
+					mWaitingForNetwork = false;
 				continue;
 			}
+			mWaitingForNetwork = false;
 
 			// The card shows progress; the title above it already says what
 			// is happening. Everything the backends print used to land here,
@@ -156,6 +168,15 @@ void ThreadedCloudSync::run()
 			ret = WEXITSTATUS(status);
 	}
 
+	// A cancelled run ends by SIGTERM, which pclose reports as a signal or,
+	// when a shell sat between us and the group, as 143. Neither is what
+	// happened. 130 is what the scripts' own trap exits with when somebody
+	// stops them, and what cloudLastRunDetail already reads as STOPPED: the
+	// same word for the same thing, whoever did the stopping.
+	const bool cancelled = mCancelled;
+	if (cancelled)
+		ret = 130;
+
 	// Before the card says anything: the stamp is the answer that outlives
 	// the card, so it is written first, and written whether or not there is
 	// still a card to say it on.
@@ -179,8 +200,11 @@ void ThreadedCloudSync::run()
 		// network". Neither is a failure: the boot-time sync was already
 		// doing this work, or there was nothing to sync to -- and FAILED
 		// would send somebody to a log to find out nothing went wrong.
-		mWndNotification->updateText(ret == 0
-			? _("COMPLETED SUCCESSFULLY")
+		// A cancel is not a failure either: the player chose a game over a
+		// wait, and the saves were never touched.
+		mWndNotification->updateText(cancelled
+			? _("SKIPPED - A GAME WAS STARTED")
+			: ret == 0 ? _("COMPLETED SUCCESSFULLY")
 			: ret == 3 ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
 			: ret == 4 ? _("SKIPPED - NO NETWORK CONNECTION")
 			: _("FAILED - SEE /var/log/cloud_sync.log"));
@@ -192,9 +216,14 @@ void ThreadedCloudSync::run()
 
 		// Nothing is running any more, so stop claiming otherwise: somebody
 		// who wants to start another sync while the card is still up should
-		// not be told one is already going.
-		if (ThreadedCloudSync::mInstance == this)
-			ThreadedCloudSync::mInstance = nullptr;
+		// not be told one is already going. Under the lock, so a
+		// cancelIfWaitingForNetwork that has just taken the pointer finishes
+		// with it before it goes -- and the delete below is a linger later.
+		{
+			std::lock_guard<std::mutex> lock(sInstanceLock);
+			if (ThreadedCloudSync::mInstance == this)
+				ThreadedCloudSync::mInstance = nullptr;
+		}
 
 		// Hold the outcome long enough to read, then let the card fade.
 		// Success is two words and a full bar, and somebody who just exited
@@ -218,7 +247,35 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 		return;
 	}
 
+	std::lock_guard<std::mutex> lock(sInstanceLock);
 	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
+}
+
+bool ThreadedCloudSync::cancelIfWaitingForNetwork()
+{
+	std::lock_guard<std::mutex> lock(sInstanceLock);
+	ThreadedCloudSync* sync = ThreadedCloudSync::mInstance;
+	if (sync == nullptr || !sync->mWaitingForNetwork)
+		return false;
+	const pid_t pid = sync->mPid;
+	if (pid <= 0)
+		return false;
+
+	// Cancelled before the signal, so run() finds it set however quickly
+	// pclose returns. The whole group: the command runs under setsid, so its
+	// pid is its process group, and ping and sleep are in it.
+	//
+	// There is a race, and it is accepted: the network can come up at the
+	// instant of the launch, the shell moves on to cloud_restore, and the
+	// SIGTERM lands on that instead of on a sleep. The restore is an rclone
+	// copy -- each file written under a temporary name and renamed when
+	// complete, nothing deleted -- so a copy cut short leaves no partial
+	// file, and the next run finishes what this one started. The card and
+	// the stamp still say a game was started, which is what happened.
+	sync->mCancelled = true;
+	sync->mWaitingForNetwork = false;
+	::kill(-pid, SIGTERM);
+	return true;
 }
 
 // /storage/.cache/cloud_sync/last-sync-<origin>: one line, "<epoch> <rc>",
