@@ -502,17 +502,22 @@ void GuiCloudTransfer::update(int deltaTime)
 			// "TRANSFERRING name.zip . 45% OF 2.5 MB . 300 KB/S . AND 3 MORE
 			// FILES": a single space inside a segment and " . " between them,
 			// the same as every other row (#85). The name is the part that
-			// has to show; the rest rides along only when the whole line fits
-			// this font, and otherwise the name alone is clipped -- half a
-			// percentage after an ellipsis says nothing, and line 4 carries
-			// the item's percentage regardless.
-			const std::string head = std::string(_("TRANSFERRING")) + " " + mCurrent;
-			std::string full = head;
-			if (!mFileProgress.empty())
-				full += " · " + prettyRclone(mFileProgress);
-			if (mFilesThisBlock > 1)
-				full += " · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES"));
-			doing = (mTextFont && mTextFont->sizeText(full).x() <= mLineWidth) ? full : fitOneLine(mTextFont, head, mLineWidth);
+			// has to show; the rest is shed a segment at a time, least useful
+			// first, until the line fits this font: the AND N MORE count goes
+			// before the file's own progress, and last the name alone is
+			// clipped -- half a percentage after an ellipsis says nothing,
+			// and line 4 carries the item's percentage regardless.
+			const std::string head     = std::string(_("TRANSFERRING")) + " " + mCurrent;
+			const std::string progress = mFileProgress.empty() ? "" : " · " + prettyRclone(mFileProgress);
+			const std::string more     = mFilesThisBlock > 1
+				? " · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES")) : "";
+			const auto fits = [this](const std::string& t) { return mTextFont && mTextFont->sizeText(t).x() <= mLineWidth; };
+			if (fits(head + progress + more))
+				doing = head + progress + more;
+			else if (fits(head + progress))
+				doing = head + progress;
+			else
+				doing = fitOneLine(mTextFont, head, mLineWidth);   // unchanged when it fits, clipped when it does not
 		}
 		else if (mChecksTotal > 0 || mListed > 0)
 		{
@@ -533,6 +538,7 @@ void GuiCloudTransfer::update(int deltaTime)
 					+ std::to_string(mChecksTotal) + " " + std::string(_("FILES"));
 			else
 				doing = _("CHECKING FILES...");
+			// the name is the line's one optional segment, and the first to go
 			if (!mChecking.empty())
 			{
 				const std::string named = doing + " · " + mChecking;
