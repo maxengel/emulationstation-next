@@ -416,9 +416,13 @@ std::string GuiCloudTransfer::prettyRclone(std::string f)
 	rep(" / ", " OF "); rep(" /", " OF ");
 	rep(", ", " · ");
 	f = Utils::String::toUpper(f);
-	// a trailing duration -- digits then a unit letter, no percent, no bytes -- is time left
-	size_t sep = f.rfind(" · ");
-	std::string last = sep == std::string::npos ? f : f.substr(sep + 3);
+	// a trailing duration -- digits then a unit letter, no percent, no bytes --
+	// is time left. The separator is four bytes, not three: the middle dot is
+	// two in UTF-8, and skipping three left a space on the front of the last
+	// segment that isdigit() refused, so LEFT was never appended (2026-09-09).
+	static const std::string SEP = " · ";
+	size_t sep = f.rfind(SEP);
+	std::string last = sep == std::string::npos ? f : f.substr(sep + SEP.size());
 	if (!last.empty() && isdigit((unsigned char) last[0]) && last.find('%') == std::string::npos
 		&& last.find('B') == std::string::npos && !isdigit((unsigned char) last.back()))
 		f += " " + std::string(_("LEFT"));
