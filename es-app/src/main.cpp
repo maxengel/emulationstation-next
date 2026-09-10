@@ -525,7 +525,7 @@ static void startStartupSavesSync(Window* window)
 {
 	if (SystemConf::getInstance()->get("cloudsaves.startup") != "1")
 		return;
-	if (!Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf")
+	if (!Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false)
 		|| !Utils::FileSystem::exists("/usr/bin/cloud_restore")
 		|| !Utils::FileSystem::exists("/usr/bin/cloud_backup"))
 		return;

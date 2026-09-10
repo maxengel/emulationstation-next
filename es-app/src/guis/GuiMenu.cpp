@@ -4115,7 +4115,14 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 {
 	CloudLastRun r;
 	const std::string path = "/storage/.cache/cloud_sync/last-" + name;
-	if (!Utils::FileSystem::exists(path))
+	// Uncached: the stamps are written by the scripts and by
+	// ThreadedCloudSync while this process runs, and Utils::FileSystem::exists
+	// remembers a miss (UseFileCache) until a game launch or a restart clears
+	// it. A page opened once before a run read NOT DONE ON THIS DEVICE YET
+	// after it, stamp on disk or not (guest d, 2026-09-10). The same goes for
+	// every file another process writes: rclone.conf below, once the wizard
+	// has made it.
+	if (!Utils::FileSystem::exists(path, false))
 		return r;
 	auto parts = Utils::String::split(Utils::String::trim(Utils::FileSystem::readAllText(path)), ' ', true);
 	if (parts.size() < 2)
@@ -4255,7 +4262,7 @@ static void cloudAddClassRow(GuiSettings* s, Window* window, bool configured,
 // page states a selection and the action happens once.
 static void cloudOpenTransfer(Window* window, bool backup)
 {
-	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 	auto s = new GuiSettings(window, backup ? _("BACK UP TO THE CLOUD") : _("RESTORE FROM THE CLOUD"));
 	s->addGroup(backup ? _("WHAT WOULD YOU LIKE TO BACK UP?") : _("WHAT WOULD YOU LIKE TO RESTORE?"));
 
@@ -4699,7 +4706,7 @@ static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 // the one the player is shown.
 void GuiMenu::openCloud(Window* window)
 {
-	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 	auto s = new GuiSettings(window, _("CLOUD"));
 
 	s->addGroup(_("BACKUP AND RESTORE"));
@@ -5169,7 +5176,7 @@ void GuiMenu::openGamesSettings()
 	// occasional things.
 	if (Utils::FileSystem::exists("/usr/bin/cloud_backup") && Utils::FileSystem::exists("/usr/bin/cloud_restore"))
 	{
-		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 		s->addGroup(_("CLOUD SETTINGS"));
 
 		// The line under it is how it last went (last-sync-manual, D-UI-023),
@@ -7098,7 +7105,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 		// then told their remote "needs attention", implying a fault where
 		// there was simply nothing to check. cloudAddGatedEntry greys the
 		// row and offers to set one up instead.
-		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
+		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 		// Checked on demand rather than at page build: it is a network
 		// round-trip to the provider and would stall this page.
 		cloudAddGatedEntry(s, window, cloudConfigured, _("CHECK CLOUD REMOTE"),
