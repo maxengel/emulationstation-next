@@ -2,6 +2,8 @@
 
 #include <mutex>
 #include "GuiComponent.h"
+#include <string>
+#include <vector>
 
 class ComponentGrid;
 class NinePatchComponent;
@@ -22,6 +24,14 @@ public:
 
 	void updateTitle(const std::string text);
 	void updateText(const std::string text, const std::string action = "");
+	// The action row from a list of candidates, longest first: the first
+	// that fits the row's width is the one shown, else the last. Measured
+	// in render(), on the interface thread, with the row's own font --
+	// callers on a worker thread have no safe way to size text, and the
+	// fonts' glyph atlas is a GL resource. Written for the cloud sync
+	// card's outcome line (D-UI-028): what is in place plus how to recover
+	// where both fit, the recovery alone where they do not.
+	void updateText(const std::string text, const std::vector<std::string>& actionCandidates);
 	void updatePercent(int percent);
 
 	float getFading() { return mFadeOut; }
@@ -38,7 +48,8 @@ private:
 
 	std::string mNextGameName;
 	std::string mNextTitle;
-	std::string mNextAction;
+	std::vector<std::string> mNextAction;   // candidates, longest first
+	std::string mAppliedAction;             // the candidates the row was last chosen from, joined
 
 	ComponentGrid* mGrid;
 	NinePatchComponent* mFrame;

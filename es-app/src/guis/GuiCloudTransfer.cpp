@@ -1,6 +1,7 @@
 #include "guis/GuiCloudTransfer.h"
 
 #include "CloudExit.h"
+#include "ThreadedCloudSync.h"
 #include "Window.h"
 #include "ThemeData.h"
 #include "LocaleES.h"
@@ -9,6 +10,7 @@
 #include "Log.h"
 #include "SystemData.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -19,16 +21,11 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	int itemsExpected, int itemsAfterContent)
 	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
 	  mCommand(command), mTitleText(title),
-	  mItemIndex(0), mItemCount(itemsExpected > 0 ? itemsExpected : 0),
-	  mTrailing(itemsAfterContent > 0 ? itemsAfterContent : 0), mScriptBase(0), mLastScriptIndex(0),
-	  mUnitBytes(0), mUnitFiles(0), mRunBytes(0), mRunFiles(0), mRunSized(false),
-	  mRemovedFiles(0), mRemovedBytes(0), mAnyTransferred(false),
-	  mFilesThisBlock(0), mSeenBlock(false),
-	  mChecksDone(0), mChecksTotal(0), mListed(0), mChecksThisBlock(0),
-	  mBytePercent(-1), mFilePercent(-1), mCheckPercent(-1), mPercent(-1),
-	  mFinished(false), mExit(-1), mShownFinished(false), mShownPercent(-1),
-	  mElapsedMs(0), mHandle(nullptr)
+	  mItemsExpected(itemsExpected > 0 ? itemsExpected : 0), mItemsAfterContent(itemsAfterContent > 0 ? itemsAfterContent : 0),
+	  mHandle(nullptr)
 {
+	reset();
+
 	auto theme = ThemeData::getMenuTheme();
 	mBackground.setImagePath(theme->Background.path);
 	mBackground.setEdgeColor(theme->Background.color);
@@ -162,19 +159,69 @@ GuiCloudTransfer::~GuiCloudTransfer()
 	}
 }
 
+// The run's starting state. Called from the constructor, and again from
+// input() for TRY AGAIN once the finished worker has been joined -- so no
+// other thread reads these while they are set. The rows that only the done
+// state writes are cleared here too, since the running state never touches
+// them and a retry would otherwise start under last time's note.
+void GuiCloudTransfer::reset()
+{
+	mItemIndex = 0; mItemCount = mItemsExpected; mTrailing = mItemsAfterContent; mScriptBase = 0; mLastScriptIndex = 0;
+	mUnitBytes = 0; mUnitFiles = 0; mRunBytes = 0; mRunFiles = 0; mRunSized = false;
+	mRemovedFiles = 0; mRemovedBytes = 0; mRemovedDetail.clear(); mAnyTransferred = false;
+	mFilesThisBlock = 0; mSeenBlock = false;
+	mChecksDone = 0; mChecksTotal = 0; mListed = 0; mChecksThisBlock = 0;
+	mBytePercent = -1; mFilePercent = -1; mCheckPercent = -1; mPercent = -1;
+	mFinished = false; mExit = -1; mShownFinished = false; mShownPercent = -1;
+	mElapsedMs = 0;
+	mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear(); mUnitLabel.clear(); mDoing.clear(); mChecking.clear();
+	mTiers.clear(); mFailed.clear(); mPendingWhys.clear(); mUnitsSinceTier.clear(); mWhy.clear();
+	if (mNote) mNote->setText("");
+	if (mCounter) mCounter->setText("");
+	if (mDetail) mDetail->setText("");
+}
+
 // Input is refused while the transfer runs -- there is nothing to choose, and
 // a stray press should not close a page somebody is waiting on. Once it has
-// finished any button dismisses it, which is the whole point: the result waits
-// for the person rather than the other way round.
+// finished the page waits for the person rather than the other way round: any
+// button dismisses it, and when the run did not complete, A runs the same
+// command again from this page -- the surface that reported the failure
+// carries the retry (D-CLOUD-077, D-UI-028).
 bool GuiCloudTransfer::input(InputConfig* config, Input input)
 {
 	std::unique_lock<std::mutex> lock(mMutex);
 	if (!mFinished || !input.value)
 		return true;
+	const Outcome o = outcome();
+	if (!o.completed && config->isMappedTo("a", input))
+	{
+		// The worker has set mFinished and is about to return, or has; join
+		// it before the counters it wrote are reset under it. mCommand is
+		// unchanged, so a backup that includes the settings archive
+		// re-archives on retry -- rotation keeps three, and stripping the
+		// parts that finished is not worth the complexity.
+		lock.unlock();
+		if (mHandle != nullptr)
+		{
+			if (mHandle->joinable())
+				mHandle->join();
+			delete mHandle;
+			mHandle = nullptr;
+		}
+		reset();
+		mHandle = new std::thread(&GuiCloudTransfer::threadRun, this);
+		return true;
+	}
 	// A restore may have brought files into folders the lists scanned at
 	// boot -- screenshots in particular (#82). Re-read what changed once this
-	// page is gone.
-	const bool restored = mExit == 0 && mCommand.find("restore") != std::string::npos;
+	// page is gone -- when any part of the run finished, not only when all
+	// of it did: a saves restore that landed under a ROMs restore that did
+	// not still put screenshots where the lists cannot see them.
+	bool anyTierOk = false;
+	for (auto& t : mTiers)
+		if (t.rc == 0 || t.rc == 9)
+			anyTierOk = true;
+	const bool restored = (o.completed || anyTierOk) && mCommand.find("restore") != std::string::npos;
 	lock.unlock();
 	Window* window = mWindow;
 	delete this;
@@ -188,8 +235,60 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 	std::vector<HelpPrompt> prompts;
 	std::unique_lock<std::mutex> lock(mMutex);
 	if (mFinished)
+	{
+		if (!outcome().completed)
+			prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
 		prompts.push_back(HelpPrompt("b", _("CLOSE")));
+	}
 	return prompts;
+}
+
+// The word for the run (D-UI-028; es-native-ui.md "Outcome vocabulary").
+//
+// COMPLETED when every part did -- rclone's 9, nothing needed moving,
+// counts. COMPLETED WITH GAPS when the parts disagree: a tier that finished
+// beside one that did not, a unit that finished inside a tier that did not
+// (its later units failed with a why of their own), or a match cut off
+// after it had already removed files. SKIPPED for the two sentinels the
+// scripts exit before touching anything (CloudExit.h), when that is all
+// the run has to report; they are not failures, and FAILED would send
+// somebody to a log to find nothing wrong. COULDN'T FINISH for everything
+// else; the why goes on line 4 with the items it stopped. A run with no
+// tier lines -- the match, or a command composed before they existed -- is
+// read from its exit code alone, as it always was.
+GuiCloudTransfer::Outcome GuiCloudTransfer::outcome() const
+{
+	Outcome o;
+	o.completed = completed();
+	bool anyOk = false, anyBad = false, anyUnitOk = false;
+	int onlyCode = -2;   // the one code every failed tier shares, or -1 when they differ
+	for (auto& t : mTiers)
+	{
+		const bool ok = t.rc == 0 || t.rc == 9;
+		anyOk = anyOk || ok;
+		anyBad = anyBad || !ok;
+		if (!ok)
+		{
+			if (!t.tierLevelFail && t.unitsFailed > 0 && t.unitsAnnounced > t.unitsFailed)
+				anyUnitOk = true;
+			onlyCode = onlyCode == -2 ? t.rc : onlyCode == t.rc ? onlyCode : -1;
+		}
+	}
+	const bool match = mCommand.find("--match") != std::string::npos;
+	o.gaps = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && mRemovedFiles > 0));
+	const int code = mTiers.empty() ? mExit : onlyCode;
+	o.skipped = !o.completed && !o.gaps && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
+	if (o.completed)
+		o.word = _("COMPLETED");
+	else if (o.gaps)
+		o.word = _("COMPLETED WITH GAPS");
+	else if (code == CloudExit::LockHeld)
+		o.word = _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING");
+	else if (code == CloudExit::NoNetwork)
+		o.word = _("SKIPPED - NO NETWORK CONNECTION");
+	else
+		o.word = _("COULDN'T FINISH");
+	return o;
 }
 
 void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
@@ -239,6 +338,24 @@ std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std:
 	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
 		text.pop_back();
 	return text + "...";
+}
+
+std::string GuiCloudTransfer::fitSentences(const std::shared_ptr<Font>& font, std::string text, float width)
+{
+	if (!font)
+		return text;
+	while (font->sizeText(text).x() > width)
+	{
+		// the last sentence boundary before the end: ". " with something after it
+		const size_t end = text.find_last_not_of(" .");
+		if (end == std::string::npos)
+			break;
+		const size_t cut = text.rfind(". ", end);
+		if (cut == std::string::npos)
+			break;
+		text = text.substr(0, cut + 1);
+	}
+	return fitOneLine(font, text, width);
 }
 
 // rclone's size units, once: how each is spelt in its output (the torn
@@ -448,55 +565,73 @@ void GuiCloudTransfer::update(int deltaTime)
 
 	if (mFinished)
 	{
-		// The two skips are named here as the card names them: a run the
-		// scripts declined before touching anything is not a failure, and
-		// FAILED would send somebody to a log to find nothing wrong.
-		mStatus->setText(mExit == 0 ? _("COMPLETED SUCCESSFULLY")
-			: mExit == CloudExit::Stopped ? _("STOPPED")
-			: mExit == CloudExit::LockHeld ? _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING")
-			: mExit == CloudExit::NoNetwork ? _("SKIPPED - NO NETWORK CONNECTION")
-			: _("FAILED"));
-		mCounter->setText("");
+		// Seven lines, the same rows as the run (D-UI-024/026), now carrying
+		// the outcome (D-UI-028): 1 the word; 2 how many items did not finish,
+		// on gaps; 3 what moved; 4 the items that did not finish and why; 5
+		// what is in place, or what to do next; 6 elapsed; 7 the buttons.
+		const Outcome o = outcome();
 		const bool restore = mCommand.find("restore") != std::string::npos;
+		const bool match = mCommand.find("--match") != std::string::npos;
+		mStatus->setText(fitOneLine(mTextFont, o.word, mLineWidth));
+
+		// 2. On gaps, the count: N distinct items that did not finish of the
+		// run's M -- the run's count when a script announced it, else what
+		// was reached, never fewer than N.
+		std::string counter;
+		if (o.gaps)
+		{
+			std::vector<std::string> names;
+			for (auto& f : mFailed)
+				if (std::find(names.begin(), names.end(), f.label) == names.end())
+					names.push_back(f.label);
+			const int n = (int) names.size();
+			const int m = std::max(std::max(mItemCount, mItemIndex), n);
+			counter = std::to_string(n) + " " + std::string(_("OF")) + " " + std::to_string(m) + " "
+				+ std::string(n == 1 && m == 1 ? _("ITEM DID NOT FINISH") : _("ITEMS DID NOT FINISH"));
+		}
+		mCounter->setText(fitOneLine(mSmallFont, counter, mLineWidth));
+
+		// 3 and 4: what moved, and what did not.
 		if (mRemovedFiles > 0)
 		{
 			// A match is mostly deletion, and rclone's totals for a deletion
-			// are "0 B / 0 B" -- true and useless. Lines 3 and 4 carry what the
-			// confirmation showed instead: what went, per system.
+			// are "0 B / 0 B" -- true and useless. Line 3 carries what the
+			// confirmation showed instead: what went. Line 4 is per system
+			// when the match completed, and the items it did not reach when
+			// it was cut (below).
 			std::string removed = std::string(_("REMOVED")) + " " + std::to_string(mRemovedFiles) + " "
 				+ std::string(mRemovedFiles == 1 ? _("FILE FROM THIS DEVICE") : _("FILES FROM THIS DEVICE"));
 			if (mRemovedBytes > 0)
 				removed += " · " + sizeLabel(mRemovedBytes);
 			mActivity->setText(fitOneLine(mTextFont, removed, mLineWidth));
-			std::string detail;
-			for (auto& d : mRemovedDetail)
-				detail += (detail.empty() ? "" : "   ") + d;
-			mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
-			if (mAnyTransferred)
-				mCounter->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DID NOT WERE DOWNLOADED TOO."), mLineWidth));
+			if (o.completed)
+			{
+				std::string detail;
+				for (auto& d : mRemovedDetail)
+					detail += (detail.empty() ? "" : "   ") + d;
+				mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
+				if (mAnyTransferred)
+					mCounter->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DID NOT WERE DOWNLOADED TOO."), mLineWidth));
+			}
 		}
 		else
 		{
-			// Lines 3 and 4 answer for the whole run, not its last unit: the
-			// page used to end on "SNES  3 OF 3" over that unit's totals, or
-			// over nothing when the last unit only compared (#85). Line 3
-			// carries the sum of every unit's final "Transferred:" pair, in
-			// the run's own verb -- the row and the font the match branch
-			// above gives its own summary, so the run's answer to "did that
-			// work?" is not the smallest text on the page under a blank row
-			// (review, 2026-09-08). Line 4 is left clear: a system's name
-			// over a run-wide number would claim the number was its. Only
-			// what rclone printed: a run that never printed a byte line says
-			// COMPLETED SUCCESSFULLY and nothing more.
+			// Line 3 answers for the whole run, not its last unit: the page
+			// used to end on "SNES  3 OF 3" over that unit's totals, or over
+			// nothing when the last unit only compared (#85). It carries the
+			// sum of every unit's final "Transferred:" pair, in the run's own
+			// verb -- shown on gaps too, because what moved is the half of
+			// the answer that is good news. Only what rclone printed: a run
+			// that never printed a byte line says the word and nothing more.
 			//
 			// The count is of finished files. The bytes are rclone's
 			// bytes-read counter, and on a run that stopped or failed that
 			// includes what the transfers in flight had read when it died
-			// and never completed -- so a run that did not exit 0 names its
-			// files and no size, rather than claim as BACKED UP bytes that
-			// were not.
+			// and never completed -- so a run that did not complete names
+			// its files and no size, rather than claim as BACKED UP bytes
+			// that were not.
 			std::string summary;
-			const bool sized = mExit == 0 && mRunBytes > 0;
+			const bool sized = o.completed && mRunBytes > 0;
 			if (mRunSized && (mRunFiles > 0 || sized))
 			{
 				if (mRunFiles > 0)
@@ -505,7 +640,7 @@ void GuiCloudTransfer::update(int deltaTime)
 					summary += (summary.empty() ? "" : " · ") + sizeLabel((unsigned long) mRunBytes);
 				summary += " " + std::string(restore ? _("RESTORED") : _("BACKED UP"));
 			}
-			else if (mRunSized && mExit == 0)
+			else if (mRunSized && o.completed)
 			{
 				// Nothing moved and the run succeeded: everything was there
 				// already. On a failure the same zero means something else,
@@ -520,13 +655,70 @@ void GuiCloudTransfer::update(int deltaTime)
 			mActivity->setText(fitOneLine(mTextFont, summary, mLineWidth));
 			mDetail  ->setText("");
 		}
-		// The ROMs on this device changed: the game lists do not know until
-		// they are rebuilt. Says where, in the words of the row that does it.
+		if (!o.completed && !o.skipped)
+		{
+			// 4. The items that did not finish, and why: "NES, SETTINGS - YOUR
+			// CLOUD STOPPED ANSWERING". Items sharing a why share the line's
+			// one dash; a second why gets its own group. A why with no item
+			// (the scripts spoke before any unit, and no tier line followed)
+			// stands alone. Not on a skip: line 1 has said the one thing
+			// there is to say about every part, and a list of them under it
+			// would read as a list of failures.
+			std::vector<std::pair<std::string, std::vector<std::string>>> groups;
+			for (auto& f : mFailed)
+			{
+				auto g = groups.begin();
+				for (; g != groups.end(); ++g)
+					if (g->first == f.why)
+						break;
+				if (g == groups.end())
+					g = groups.insert(groups.end(), std::make_pair(f.why, std::vector<std::string>()));
+				if (!f.label.empty() && std::find(g->second.begin(), g->second.end(), f.label) == g->second.end())
+					g->second.push_back(f.label);
+			}
+			std::string detail;
+			for (auto& g : groups)
+			{
+				std::string names;
+				for (size_t i = 0; i < g.second.size(); i++)
+					names += (i ? ", " : "") + g.second[i];
+				detail += (detail.empty() ? "" : "  ·  ") + names + (names.empty() ? "" : " - ") + g.first;
+			}
+			mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
+		}
+
+		// 5. What is in place -- one clause per verb, true because rclone
+		// renames each file into place when it is complete and the content
+		// scripts delete nothing outside a match (D-CLOUD-077) -- when the
+		// run did not complete. When it did, the one thing left to do: a
+		// content run that changed the ROMs on this device is not visible in
+		// the game lists until they are rebuilt, and nobody should have to
+		// know that (maintainer, 2026-09-07).
 		const bool contentRun = mCommand.find("cloud_content_restore") != std::string::npos;
-		if (mExit == 0 && contentRun && (mRemovedFiles > 0 || mAnyTransferred))
-			mNote->setText(fitOneLine(mSmallFont, _("UPDATE GAMELISTS UNDER GAME SETTINGS TO SEE THE CHANGE."), mLineWidth));
+		std::string note;
+		if (!o.completed)
+		{
+			const bool moved = mAnyTransferred || mRunFiles > 0;
+			if (match)
+				note = mRemovedFiles == 0 ? _("NOTHING WAS REMOVED.")
+					: mRemovedFiles == 1 ? _("1 FILE WAS REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS IT.")
+					: std::to_string(mRemovedFiles) + " " + std::string(_("FILES WERE REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS THEM."));
+			else if (restore)
+				note = moved ? _("WHAT ARRIVED IS ON THIS DEVICE. THE REST IS AS IT WAS.") : _("NOTHING ARRIVED. THIS DEVICE IS AS IT WAS.");
+			else
+				note = moved ? _("WHAT WAS SENT IS IN YOUR CLOUD. THE REST IS STILL ON THIS DEVICE.") : _("NOTHING WAS SENT. YOUR CLOUD IS AS IT WAS.");
+		}
+		else if (contentRun && (mRemovedFiles > 0 || mAnyTransferred))
+			note = _("UPDATE GAMELISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
+		// Two sentences on a 640px panel do not fit the small font; the
+		// first alone says what is in place, so it is what survives.
+		mNote->setText(fitSentences(mSmallFont, note, mLineWidth));
+
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		mFooter  ->setText(_("PRESS ANY BUTTON TO CLOSE"));
+		// 7. The retry lives on the surface that reported the failure: A runs
+		// the same command again (input), B closes; the help bar carries the
+		// same two. A run that completed has nothing to retry.
+		mFooter  ->setText(o.completed ? _("PRESS ANY BUTTON TO CLOSE") : _("A  TRY AGAIN     B  CLOSE"));
 	}
 	else
 	{
@@ -676,7 +868,75 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	//     next per-file, checks or totals line, or the next unit. Any other
 	//     keyword is a newer script's and is ignored rather than shown raw.
 	//   ">>> removed <files>|<bytes>|<per-system>" -- a match's summary, for
-	//     the done page (below).
+	//     the done page (below). A match cut off by the network prints it
+	//     before exiting 69, so the page can say what had already gone.
+	//   ">>> why <sentence>" -- a script saying, at the point of failure and
+	//     in the player's words, what went wrong (D-UI-028). Attached to the
+	//     unit it arrived under; before any unit, to the tier that reports
+	//     next. The last one is the run's why for a command with no tiers.
+	//   ">>> tier <label>|<rc>" -- GuiMenu's run composition reporting each
+	//     of its parts as it ends (SAVES, ROMS AND BIOS, SETTINGS), so the
+	//     done page can say which finished and which did not.
+	if (line.rfind(">>> why ", 0) == 0)
+	{
+		std::string why = Utils::String::toUpper(Utils::String::trim(line.substr(8)));
+		// Line 4 supplies its own punctuation; a full stop after the dash
+		// reads as a typo.
+		while (!why.empty() && why.back() == '.')
+			why.pop_back();
+		if (why.empty())
+			return;
+		mWhy = why;
+		mPendingWhys.push_back({ Utils::String::toUpper(mUnitLabel), why });
+		return;
+	}
+	if (line.rfind(">>> tier ", 0) == 0)
+	{
+		auto parts = Utils::String::split(line.substr(9), '|', false);
+		Tier t;
+		t.label = Utils::String::toUpper(parts.size() > 0 ? Utils::String::trim(parts[0]) : "");
+		t.rc = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : -1;
+		t.unitsAnnounced = (int) mUnitsSinceTier.size();
+		t.unitsFailed = 0;
+		t.tierLevelFail = false;
+		if (t.label.empty())
+			return;
+		const bool ok = t.rc == 0 || t.rc == 9;
+		if (!ok)
+		{
+			std::vector<std::string> named;
+			for (auto& w : mPendingWhys)
+			{
+				// A why printed before any unit is the tier's own; the tier
+				// as a whole is the item that did not finish.
+				const std::string label = w.label.empty() ? t.label : w.label;
+				if (w.label.empty())
+					t.tierLevelFail = true;
+				else if (std::find(named.begin(), named.end(), w.label) == named.end())
+					named.push_back(w.label);
+				// The last why for an item wins; the scripts may say more
+				// than one thing about the same unit as they give up on it.
+				bool seen = false;
+				for (auto& f : mFailed)
+					if (f.label == label) { f.why = w.why; seen = true; }
+				if (!seen)
+					mFailed.push_back({ label, w.why });
+			}
+			t.unitsFailed = (int) named.size();
+			// A part that failed without a word: the part is the item, and
+			// the code supplies the why. Its units are not presumed to have
+			// finished, because nothing said they did.
+			if (mPendingWhys.empty())
+			{
+				t.tierLevelFail = true;
+				mFailed.push_back({ t.label, ThreadedCloudSync::whyForCode(t.rc) });
+			}
+		}
+		mTiers.push_back(t);
+		mPendingWhys.clear();
+		mUnitsSinceTier.clear();
+		return;
+	}
 	if (line.rfind(">>> removed ", 0) == 0)
 	{
 		auto parts = Utils::String::split(line.substr(12), '|', false);
@@ -714,6 +974,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 			if (scriptCount > 0 && (mLastScriptIndex == 0 || scriptIndex <= mLastScriptIndex))
 				mScriptBase = mItemIndex;   // a script's first announcement: what came before it is its base
 			mItemIndex++;
+			mUnitsSinceTier.push_back(Utils::String::toUpper(label));
 		}
 		mLastScriptIndex = scriptCount > 0 ? scriptIndex : 0;
 		if (scriptCount > 0)
@@ -992,6 +1253,18 @@ void GuiCloudTransfer::threadRun()
 	std::unique_lock<std::mutex> lock(mMutex);
 	foldUnit();   // the last unit: no ">>> unit" follows it
 	mExit = ret;
+	// A command with no tier lines (the match; anything composed before
+	// them) that did not complete: what it said is its failed item -- the
+	// unit the why arrived under, or the why alone -- and with no why at
+	// all, the code's phrase for the unit that was running, if one was.
+	if (ret != 0 && ret != 9 && mFailed.empty())
+	{
+		for (auto& w : mPendingWhys)
+			mFailed.push_back(w);
+		if (mFailed.empty() && ret != CloudExit::LockHeld && ret != CloudExit::NoNetwork)
+			mFailed.push_back({ Utils::String::toUpper(mUnitLabel), ThreadedCloudSync::whyForCode(ret) });
+	}
+	mPendingWhys.clear();
 	mFinished = true;
 }
 

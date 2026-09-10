@@ -50,6 +50,21 @@ private:
 	void handleLine(const std::string& line);
 	void refreshPercent();
 	void foldUnit();
+	// Every counter the constructor set, back to its starting value, and the
+	// done-state rows cleared: TRY AGAIN (input) re-runs the same command
+	// from here once the finished worker has been joined.
+	void reset();
+	// The done page's word and what follows it (D-UI-028), from the tiers,
+	// the failed items and the exit code. Called with mMutex held.
+	struct Outcome
+	{
+		bool completed;   // every part finished (0 or 9)
+		bool gaps;        // some finished and some did not
+		bool skipped;     // a sentinel, and nothing else to report
+		std::string word; // line 1
+	};
+	Outcome outcome() const;
+	bool completed() const { return mExit == 0 || mExit == 9; }
 	static std::string cleanLine(const std::string& raw);
 	static int parsePercent(const std::string& body);
 	static long parseBytes(const std::string& field);
@@ -75,11 +90,17 @@ private:
 	std::shared_ptr<Font> mSmallFont;
 	float mLineWidth;
 	static std::string fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width);
+	// Drop whole sentences from the end before clipping: "WHAT WAS SENT IS IN
+	// YOUR CLOUD. THE REST IS STILL ON THIS DEVICE." keeps its first sentence
+	// on a panel too narrow for both, rather than ending mid-word in an
+	// ellipsis. The last sentence standing is clipped if even it does not fit.
+	static std::string fitSentences(const std::shared_ptr<Font>& font, std::string text, float width);
 	static std::string prettyRclone(std::string fragment);
 	static std::string roundSizes(const std::string& fragment);
 
 	std::string mCommand;
 	std::string mTitleText;
+	int mItemsExpected, mItemsAfterContent;   // the constructor's estimate, kept for reset()
 
 	// Panel geometry, decided once in the constructor and never re-derived:
 	// fitTo() is given this rectangle, the text rows are stacked inside it,
@@ -139,6 +160,22 @@ private:
 	int mPercent;               // -1 until a block has produced a real number
 	bool mFinished;
 	int mExit;
+	// What each part of a composed run reported as it ended (">>> tier
+	// <label>|<rc>", echoed by GuiMenu's run composition after each part),
+	// and which items did not finish, with why (D-UI-028). A ">>> why
+	// <sentence>" from a script is attached to the unit it arrived under --
+	// or, printed before any unit, to the tier that reports next -- so the
+	// done page can name NES and SETTINGS and say what stopped them. A tier
+	// that fails with no why under it is itself the item that did not
+	// finish, with the code's phrase; its units are not presumed to have
+	// finished, because nothing said they did.
+	struct Tier { std::string label; int rc; int unitsAnnounced; int unitsFailed; bool tierLevelFail; };
+	struct Failed { std::string label; std::string why; };
+	std::vector<Tier> mTiers;
+	std::vector<Failed> mFailed;
+	std::vector<Failed> mPendingWhys;          // since the last tier line; label "" before any unit
+	std::vector<std::string> mUnitsSinceTier;  // items announced since the last tier line
+	std::string mWhy;                          // the last why of the run, for a command with no tiers
 	// The frame's copy of (mFinished, mPercent), taken in update() under the
 	// lock that also reads the text -- render() draws the bar from these, so
 	// the bar and the eight rows are always the same stats block. Reading

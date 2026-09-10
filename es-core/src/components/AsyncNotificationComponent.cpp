@@ -127,7 +127,18 @@ void AsyncNotificationComponent::updateText(const std::string text, const std::s
 	std::unique_lock<std::mutex> lock(mMutex);
 
 	mNextGameName = text;
-	mNextAction = action;
+	mNextAction.clear();
+	mNextAction.push_back(action);
+}
+
+void AsyncNotificationComponent::updateText(const std::string text, const std::vector<std::string>& actionCandidates)
+{
+	std::unique_lock<std::mutex> lock(mMutex);
+
+	mNextGameName = text;
+	mNextAction = actionCandidates;
+	if (mNextAction.empty())
+		mNextAction.push_back("");
 }
 
 void AsyncNotificationComponent::updatePercent(int percent)
@@ -153,8 +164,26 @@ void AsyncNotificationComponent::render(const Transform4x4f& parentTrans)
 	if (mGameName != nullptr && mNextGameName != mGameName->getText())
 		mGameName->setText(mNextGameName);
 
-	if (mAction != nullptr && mNextAction != mAction->getText())
-		mAction->setText(mNextAction);
+	if (mAction != nullptr)
+	{
+		// Re-chosen only when the candidates change: sizing text is a glyph
+		// lookup per character, and this runs every frame.
+		std::string key;
+		for (auto& c : mNextAction)
+			key += c + "\n";
+		if (key != mAppliedAction)
+		{
+			mAppliedAction = key;
+			std::string shown;
+			for (auto& c : mNextAction)
+			{
+				shown = c;
+				if (mAction->getFont() == nullptr || mAction->getFont()->sizeText(c).x() <= mAction->getSize().x())
+					break;
+			}
+			mAction->setText(shown);
+		}
+	}
 
 	if (mTitle != nullptr && mNextTitle != mTitle->getText())
 		mTitle->setText(mNextTitle);

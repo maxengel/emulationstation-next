@@ -6,11 +6,14 @@
 #include "utils/Platform.h"
 #include <pugixml/src/pugixml.hpp>
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 #include "utils/StringUtil.h"
+#include "utils/AtomicFileUtil.h"
 #include "Paths.h"
 
 Settings* Settings::sInstance = NULL;
+bool Settings::sRecovered = false;
 static std::string mEmptyString = "";
 Delegate<ISettingsChangedEvent> Settings::settingChanged;
 
@@ -495,7 +498,31 @@ bool Settings::saveFile()
 		node.append_attribute("value").set_value(iter->second.c_str());
 	}
 
-	doc.save_file(WINSTRINGW(path).c_str());
+	// Serialised once, then written through a temporary and a rename
+	// (D-CLOUD-079): save_file opened the live path for writing, which
+	// truncates it, and a process killed before the write completed -- or a
+	// battery gone at that instant -- left an empty es_settings.cfg that the
+	// next start read as "no settings" and the next save made permanent.
+	// The same bytes go to the last-known-good record, because what was just
+	// written is, by construction, the newest good state (D-CLOUD-078).
+	struct StringWriter : pugi::xml_writer
+	{
+		std::string out;
+		void write(const void* data, size_t size) override { out.append((const char*) data, size); }
+	};
+	StringWriter writer;
+	doc.save(writer);
+
+	if (!Utils::AtomicFile::writeText(path, writer.out))
+	{
+		// Kept dirty, so the next save tries again rather than believing this
+		// one happened.
+		LOG(LogError) << "Settings::saveFile() : could not write " << path << "; the changes are kept for the next save";
+		mWasChanged = true;
+		return false;
+	}
+	if (!Utils::AtomicFile::writeText(path + ".backup", writer.out))
+		LOG(LogWarning) << "Settings::saveFile() : could not write the last-known-good record " << path << ".backup";
 
 	Scripting::fireEvent("config-changed");
 	Scripting::fireEvent("settings-changed");
@@ -503,19 +530,51 @@ bool Settings::saveFile()
 	return true;
 }
 
+// Read the live file if it parses; else the last-known-good record beside it
+// (es_settings.cfg.backup), which then goes back as the live file; else
+// nothing -- the defaults stand and nothing is written over the file that
+// failed, so a start that found it damaged and a record that was missing
+// leaves both for somebody to look at (D-CLOUD-078, D-CLOUD-079). An empty
+// file is a parse failure here: pugixml reports no document element, which
+// is exactly what a write cut short leaves behind.
 void Settings::loadFile()
 {
 	const std::string path = Paths::getUserEmulationStationPath() + "/es_settings.cfg";
-	if(!Utils::FileSystem::exists(path))
-		return;
+	const std::string backup = path + ".backup";
+
+	// A temporary left by a save that never reached its rename is litter,
+	// not a record: nothing reads it, and the next save replaces it. The
+	// record's own temporary likewise.
+	std::remove((path + ".tmp").c_str());
+	std::remove((path + ".backup.tmp").c_str());
 
 	pugi::xml_document doc;
-	pugi::xml_parse_result result = doc.load_file(WINSTRINGW(path).c_str());
-	if(!result)
+	bool loaded = false;
+	bool fromBackup = false;
+	const bool liveExists = Utils::FileSystem::exists(path);
+	if (liveExists)
 	{
-		LOG(LogError) << "Could not parse Settings file!\n   " << result.description();
-		return;
+		pugi::xml_parse_result result = doc.load_file(WINSTRINGW(path).c_str());
+		loaded = (bool) result;
+		if (!loaded)
+			LOG(LogError) << "Could not parse Settings file!\n   " << result.description();
 	}
+	if (!loaded && Utils::FileSystem::exists(backup))
+	{
+		doc.reset();
+		pugi::xml_parse_result result = doc.load_file(WINSTRINGW(backup).c_str());
+		if (result)
+		{
+			loaded = true;
+			fromBackup = true;
+			LOG(LogWarning) << path << " is " << (liveExists ? "damaged" : "missing")
+				<< " -- loading the last-known-good record " << backup << " and writing it back";
+		}
+		else
+			LOG(LogError) << "Could not parse the last-known-good record " << backup << "!\n   " << result.description();
+	}
+	if (!loaded)
+		return;
 
 	pugi::xml_node root = doc;
 
@@ -543,6 +602,23 @@ void Settings::loadFile()
 	}
 
 	mWasChanged = false;
+
+	if (fromBackup)
+	{
+		if (!Utils::AtomicFile::copy(backup, path))
+			LOG(LogError) << "Could not write " << path << " back from its last-known-good record";
+		sRecovered = true;
+	}
+	else
+	{
+		// The file that just parsed is the last known good: record it, and
+		// only when the record would change -- this runs at every start.
+		bool ok = false;
+		const std::string live = Utils::AtomicFile::readText(path, &ok);
+		if (ok && live != Utils::AtomicFile::readText(backup)
+			&& !Utils::AtomicFile::writeText(backup, live))
+			LOG(LogWarning) << "Could not write the last-known-good record " << backup;
+	}
 }
 
 //Print a warning message if the setting we're trying to get doesn't already exist in the map, then return the value in the map.

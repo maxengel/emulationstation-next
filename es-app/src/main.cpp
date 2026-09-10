@@ -551,6 +551,12 @@ static void startStartupSavesSync(Window* window)
 	// The route check and probe loop stay as the fallback for an image
 	// without cloud_net_ready, so this and the script can ship in either
 	// order.
+	//
+	// Both halves run whatever the first did, and each reports itself to
+	// the card as it ends (">>> tier <label>|<rc>"): a restore that finished
+	// under a backup that did not is COMPLETED WITH GAPS - BACKING UP SAVES
+	// DID NOT FINISH, where the exit code alone read the whole run as
+	// failed (D-UI-028).
 	const std::string noNetwork = std::to_string(CloudExit::NoNetwork);
 	const std::string command =
 		"if [ -x /usr/bin/cloud_net_ready ]; then"
@@ -568,7 +574,9 @@ static void startStartupSavesSync(Window* window)
 		" [ \"$_up\" = 1 ] || exit " + noNetwork + ";"
 		" fi;"
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?;"
+		" echo \">>> tier RESTORING SAVES|$_r\";"
 		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?;"
+		" echo \">>> tier BACKING UP SAVES|$_b\";"
 		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";
 
 	// SYNC SAVES is the title the manual sync row already prints when it is
@@ -796,16 +804,37 @@ int main(int argc, char* argv[])
 	// from the cloud. Credentials are therefore pushed LAST so they land
 	// on top and are dealt with first; only then does the player reach
 	// the download prompt, by which time the network is back.
+	//
+	// The marker is backuptool's now: `backuptool restore --then-cloud`
+	// touches it only after its extract has been verified (D-CLOUD-078), where
+	// GuiMenu used to touch it before running the restore -- so a restore
+	// that failed, or never ran, still produced YOUR SETTINGS WERE RESTORED
+	// at the next boot. And it is consumed by the choice, not by the display:
+	// removed on YES as the download starts and on LATER as the player
+	// declines, so a crash or a power cut while the prompt is on screen
+	// leaves it for the next boot rather than losing the continuation.
 	std::string journeyMarker = "/storage/.config/.cloud-journey-pending";
 	const bool journeyPending = Utils::FileSystem::exists(journeyMarker);
 	if (journeyPending)
 	{
-		std::remove(journeyMarker.c_str());
 		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES, AND SAVES FROM THE CLOUD NOW?"), _("YES"),
-			[&window] {
+			[&window, journeyMarker] {
+			std::remove(journeyMarker.c_str());
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_content_restore --all && /usr/bin/cloud_restore --yes\"", "", &window);
-			}, _("LATER"), nullptr));
+			}, _("LATER"), [journeyMarker] {
+			std::remove(journeyMarker.c_str());
+			}));
 	}
+
+	// Either configuration file was found missing, empty or damaged at this
+	// start and its last-known-good record was loaded and written back in its
+	// place (Settings::loadFile, SystemConf::loadSystemConf; D-CLOUD-079).
+	// Said once, here, where the interface is up to say it: the alternative
+	// was the RG SP's morning -- every setting back at its default and no
+	// word why (fork #102). Pushed before the one-shot prompts above so it
+	// sits under them and is read after they are dealt with.
+	if (Settings::wasRecovered() || SystemConf::wasRecovered())
+		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS FILE WAS DAMAGED. THE LAST GOOD COPY WAS RESTORED."), _("OK")));
 
 	// A finished backup restore leaves a one-shot marker (see backuptool).
 	// The page itself clears it on FINISH, not here: consuming it on
