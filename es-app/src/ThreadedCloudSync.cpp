@@ -26,7 +26,13 @@ ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
 	: mWindow(window), mCommand(command), mTitle(title), mRunning(running), mOrigin(origin)
 {
 	mGameExitSync = SystemConf::getInstance()->get("cloudsaves.gameexit") == "1";
-	mWndNotification = mWindow->createAsyncNotificationComponent();
+	// With the action row. The default is a two-row card (title and text),
+	// and this was created with the default, so the recovery clause run()
+	// composes -- what is in place, and where to try again (D-CLOUD-077) --
+	// was measured, chosen, and never drawn: the card had no row to draw it
+	// on (guest d, 2026-09-10). The row is blank while the work runs and
+	// carries the clause once the outcome is known.
+	mWndNotification = mWindow->createAsyncNotificationComponent(true);
 	mWndNotification->updateTitle(ICONINDEX + (mRunning.empty() ? mTitle : mRunning));
 	mWndNotification->updateText(_("Working..."));
 	mWndNotification->updatePercent(-1);

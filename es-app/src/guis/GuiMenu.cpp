@@ -4088,24 +4088,43 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 		}));
 }
 
-// What happened the last time this ran, phrased for a row's description.
+// What happened the last time this ran: when, how it ended, and -- when it
+// did not finish -- the scripts' own sentence for why.
 //
-// This used to be its own menu row -- LAST CONTENT UPLOAD sitting in a list
-// next to the actions, which is where you put a fact you have nowhere better
-// for. It belongs on the row it describes: the answer to "should I back this
-// up?" is "you last did, and it worked", read in the moment of deciding.
-static std::string cloudLastRunDetail(const std::string& name)
+// Read once, said in two places. The row under the action carries the date
+// and the outcome word (cloudLastRunDetail); the confirmation dialog the
+// action opens carries the why (cloudLastRunWhy). The row used to carry
+// both, and at 1280 px "LAST 09/09/2026 23:52  -  COULDN'T FINISH, YOUR
+// CLOUD DIDN'T ANSWER. ITS SIGN-IN MAY HAVE EXPIRED" wrapped to two lines
+// of small text under the label -- three lines on a row, which is the shape
+// the maintainer's rule forbids (D-UI-023), on a 4-inch panel worse. The
+// rule also says where the extra line goes: into the dialog, where it is
+// read at the moment of deciding to try again (D-UI-029).
+struct CloudLastRun
 {
+	bool ran = false;
+	time_t when = 0;
+	int code = 0;
+	std::string token;
+	std::string why;      // upper case, no trailing period; empty when it completed
+	std::string outcome;  // the row's word(s): COMPLETED, COULDN'T FINISH, SKIPPED, ...
+	bool finished = false;
+};
+
+static CloudLastRun cloudReadLastRun(const std::string& name)
+{
+	CloudLastRun r;
 	const std::string path = "/storage/.cache/cloud_sync/last-" + name;
-	const std::string never = _("NOT DONE ON THIS DEVICE YET");
 	if (!Utils::FileSystem::exists(path))
-		return never;
+		return r;
 	auto parts = Utils::String::split(Utils::String::trim(Utils::FileSystem::readAllText(path)), ' ', true);
 	if (parts.size() < 2)
-		return never;
+		return r;
 	time_t when = (time_t) atoll(parts[0].c_str());
 	if (when <= 0)
-		return never;
+		return r;
+	r.ran = true;
+	r.when = when;
 	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028). The first two fields
 	// are what every stamp has always carried; the token is one word for
 	// the outcome where the code alone cannot say it (a 130 that was a
@@ -4122,6 +4141,7 @@ static std::string cloudLastRunDetail(const std::string& name)
 	// SAVES DURING STARTUP the player's question is what happened this
 	// morning, and "nothing, there was no network" answers it.
 	const int code = atoi(parts[1].c_str());
+	r.code = code;
 	//
 	// Two writers, two shapes of third field. EmulationStation's stamps
 	// (ThreadedCloudSync::recordOutcome) carry one of its tokens, with the
@@ -4144,25 +4164,44 @@ static std::string cloudLastRunDetail(const std::string& name)
 	while (!why.empty() && why.back() == '.')
 		why.pop_back();
 
-	std::string outcome;
+	r.token = token;
 	if (code == 0 || code == 9 || token == "completed")
-		outcome = _("COMPLETED");
+	{
+		r.outcome = _("COMPLETED");
+		r.finished = true;
+	}
 	else if (token == "gaps")
-		outcome = _("COMPLETED WITH GAPS");
+		r.outcome = _("COMPLETED WITH GAPS");
 	else if (code == CloudExit::LockHeld)
-		outcome = _("SKIPPED, ANOTHER SYNC WAS RUNNING");
+		r.outcome = _("SKIPPED, ANOTHER SYNC WAS RUNNING");
 	else if (code == CloudExit::NoNetwork)
-		outcome = _("SKIPPED, NO NETWORK");
+		r.outcome = _("SKIPPED, NO NETWORK");
 	else if (token == "cancelled")
-		outcome = _("SKIPPED, A GAME WAS STARTED");
+		r.outcome = _("SKIPPED, A GAME WAS STARTED");
 	else
 	{
 		if (why.empty() && ours)
 			why = ThreadedCloudSync::whyForToken(token);
 		if (why.empty())
 			why = ThreadedCloudSync::whyForCode(code);
-		outcome = _("COULDN'T FINISH") + std::string(", ") + why;
+		r.outcome = _("COULDN'T FINISH");
+		r.why = why;
 	}
+	return r;
+}
+
+// The line under a row: the date and how it ended, one line (D-UI-023).
+//
+// This used to be its own menu row -- LAST CONTENT UPLOAD sitting in a list
+// next to the actions, which is where you put a fact you have nowhere better
+// for. It belongs on the row it describes: the answer to "should I back this
+// up?" is "you last did, and it worked", read in the moment of deciding.
+static std::string cloudLastRunDetail(const std::string& name)
+{
+	const CloudLastRun r = cloudReadLastRun(name);
+	if (!r.ran)
+		return _("NOT DONE ON THIS DEVICE YET");
+	const time_t when = r.when;
 	// The player's own date format and clock, not ours.
 	//
 	// timeToString already resolves through localtime(), so the timezone comes
@@ -4179,7 +4218,19 @@ static std::string cloudLastRunDetail(const std::string& name)
 		+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
 
 	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt)
-		+ "  -  " + outcome;
+		+ "  -  " + r.outcome;
+}
+
+// The second paragraph of the confirmation dialog: why the last run could
+// not finish, so the decision to try again is made knowing what stopped the
+// last one. Empty when it finished, was skipped, or gave no reason -- the
+// dialog then reads as it always has.
+static std::string cloudLastRunWhy(const std::string& name)
+{
+	const CloudLastRun r = cloudReadLastRun(name);
+	if (!r.ran || r.why.empty())
+		return "";
+	return std::string("\n\n") + _("LAST TIME IT COULDN'T FINISH:") + " " + r.why + ".";
 }
 
 // One data class, with what it carries and how it last went.
@@ -5129,7 +5180,7 @@ void GuiMenu::openGamesSettings()
 		// whole run failed (D-UI-028); the backup still waits on the restore.
 		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"),
 			cloudLastRunDetail("sync-manual"), [window] {
-			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
+			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED.") + cloudLastRunWhy("sync-manual"), _("YES"),
 				[window] {
 				ThreadedCloudSync::start(window,
 					"/usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?; echo \">>> tier RESTORING SAVES|$_r\"; [ \"$_r\" = 0 ] || exit \"$_r\";"
@@ -5138,12 +5189,12 @@ void GuiMenu::openGamesSettings()
 				}, _("NO"), nullptr));
 		});
 		cloudAddClassRow(s, window, cloudConfigured, _("BACK UP SAVES TO THE CLOUD"), "backup", [window] {
-			window->pushGui(new GuiMsgBox(window, _("BACK UP GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?"), _("YES"),
+			window->pushGui(new GuiMsgBox(window, _("BACK UP GAME SAVES, SAVE STATES, AND SCREENSHOTS TO THE CLOUD?") + cloudLastRunWhy("backup"), _("YES"),
 				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only", _("BACK UP SAVES"), _("BACKING UP SAVES"), ThreadedCloudSync::Origin::Manual); },
 				_("NO"), nullptr));
 		});
 		cloudAddClassRow(s, window, cloudConfigured, _("RESTORE SAVES FROM THE CLOUD"), "restore", [window] {
-			window->pushGui(new GuiMsgBox(window, _("RESTORE GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?"), _("YES"),
+			window->pushGui(new GuiMsgBox(window, _("RESTORE GAME SAVES, SAVE STATES, AND SCREENSHOTS FROM THE CLOUD?") + cloudLastRunWhy("restore"), _("YES"),
 				[window] { ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --saves-only", _("RESTORE SAVES"), _("RESTORING SAVES"), ThreadedCloudSync::Origin::Manual); },
 				_("NO"), nullptr));
 		});
