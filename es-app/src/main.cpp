@@ -807,6 +807,16 @@ int main(int argc, char* argv[])
 			}, _("LATER"), nullptr));
 	}
 
+	// Either configuration file was found missing, empty or damaged at this
+	// start and its last-known-good record was loaded and written back in its
+	// place (Settings::loadFile, SystemConf::loadSystemConf; D-CLOUD-079).
+	// Said once, here, where the interface is up to say it: the alternative
+	// was the RG SP's morning -- every setting back at its default and no
+	// word why (fork #102). Pushed before the one-shot prompts above so it
+	// sits under them and is read after they are dealt with.
+	if (Settings::wasRecovered() || SystemConf::wasRecovered())
+		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS FILE WAS DAMAGED. THE LAST GOOD COPY WAS RESTORED."), _("OK")));
+
 	// A finished backup restore leaves a one-shot marker (see backuptool).
 	// The page itself clears it on FINISH, not here: consuming it on
 	// display would lose the flow for good if the device crashed or the

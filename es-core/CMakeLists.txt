@@ -118,6 +118,7 @@ set(CORE_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/src/resources/TextureDataManager.h
 
 	# Utils
+	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/AtomicFileUtil.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/FileSystemUtil.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/StringUtil.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/StringListLock.h
@@ -250,6 +251,7 @@ set(CORE_SOURCES
 	${CMAKE_CURRENT_SOURCE_DIR}/src/resources/TextureDataManager.cpp
 
 	# Utils
+	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/AtomicFileUtil.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/FileSystemUtil.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/StringUtil.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/utils/StringListLock.cpp
