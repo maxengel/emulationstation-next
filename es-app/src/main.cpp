@@ -5,6 +5,7 @@
 #include "guis/GuiDetectDevice.h"
 #include "guis/GuiMenu.h"
 #include "guis/GuiMsgBox.h"
+#include "guis/GuiCloudTransfer.h"
 #include "SystemConf.h"
 #include "guis/GuiSettings.h"
 #include "utils/FileSystemUtil.h"
@@ -820,7 +821,27 @@ int main(int argc, char* argv[])
 		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES, AND SAVES FROM THE CLOUD NOW?"), _("YES"),
 			[&window, journeyMarker] {
 			std::remove(journeyMarker.c_str());
-			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_content_restore --all && /usr/bin/cloud_restore --yes\"", "", &window);
+			// The first thing a new device does, on the transfer page every
+			// other cloud run of this size uses (#114). It was a fullscreen
+			// console until now: raw script output, no outcome, and nothing
+			// to press when it went wrong.
+			//
+			// Two parts, composed the way GuiMenu's transfer page composes
+			// them (cloudOpenTransfer): each reports itself as it ends
+			// (">>> tier <label>|<rc>") and the run's status is accumulated
+			// rather than taken from the last part. They are not chained
+			// with && any more -- ROMs that could not be reached used to
+			// skip the saves silently, which on a device with nothing on it
+			// is the half that matters most.
+			std::string cmd = "rc=0";
+			cmd += " ; _t=0 ; { /usr/bin/cloud_content_restore --all ; } || _t=$? ; echo \">>> tier RESTORING ROMS AND BIOS|$_t\" ; [ \"$_t\" = 0 ] || rc=$_t";
+			cmd += " ; _t=0 ; { /usr/bin/cloud_restore --yes ; } || _t=$? ; echo \">>> tier RESTORING SAVES|$_t\" ; [ \"$_t\" = 0 ] || rc=$_t";
+			cmd += " ; exit $rc";
+			// The content script announces how many systems it has and the
+			// page counts from that; the two single-item phases that follow
+			// it -- the saves restore and the settings-archive phase inside
+			// the same script -- are what the count has to keep room for.
+			window.pushGui(new GuiCloudTransfer(&window, cmd, _("RESTORING FROM THE CLOUD"), 2, 2));
 			}, _("LATER"), [journeyMarker] {
 			std::remove(journeyMarker.c_str());
 			}));
