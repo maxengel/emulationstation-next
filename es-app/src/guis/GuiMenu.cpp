@@ -4244,9 +4244,45 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 // next to the actions, which is where you put a fact you have nowhere better
 // for. It belongs on the row it describes: the answer to "should I back this
 // up?" is "you last did, and it worked", read in the moment of deciding.
+// Was the run this stamp records one the player started, or one of the two
+// automatic syncs? EmulationStation stamps last-sync-startup/-exit as each
+// automatic run ends, within a second or two of the script writing its own
+// last-backup/last-restore, so a matching time says which it was. Inferred
+// rather than recorded because the scripts do not know who called them --
+// and it only ever changes the words, never the outcome.
+//
+// It exists because the page contradicted itself: BACK UP SAVES TO THE CLOUD
+// reported the sync that runs when you exit a game, under a label naming
+// something the player never pressed, while SYNC SAVES WITH THE CLOUD said
+// NOT DONE ON THIS DEVICE YET (maintainer, 2026-09-10, fork #112).
+static std::string cloudRunOrigin(time_t when)
+{
+	if (when <= 0)
+		return "";
+	for (auto& o : { std::make_pair("sync-exit", "AFTER YOUR LAST GAME"),
+	                 std::make_pair("sync-startup", "AT STARTUP") })
+	{
+		const CloudLastRun a = cloudReadLastRun(o.first);
+		if (a.ran && std::labs((long) (a.when - when)) <= 10)
+			return _(o.second);
+	}
+	return "";
+}
+
 static std::string cloudLastRunDetail(const std::string& name)
 {
-	const CloudLastRun r = cloudReadLastRun(name);
+	CloudLastRun r = cloudReadLastRun(name);
+	// SYNC SAVES WITH THE CLOUD moves saves both ways, and so do the two
+	// automatic syncs; a row that counted only the manual one said NOT DONE
+	// ON THIS DEVICE YET on a device that had been syncing all along. It
+	// reports the newest sync by any route (#112).
+	if (name == "sync-manual")
+		for (auto* other : { "sync-exit", "sync-startup" })
+		{
+			const CloudLastRun a = cloudReadLastRun(other);
+			if (a.ran && (!r.ran || a.when > r.when))
+				r = a;
+		}
 	if (!r.ran)
 		return _("NOT DONE ON THIS DEVICE YET");
 	const time_t when = r.when;
@@ -4264,6 +4300,13 @@ static std::string cloudLastRunDetail(const std::string& name)
 	// flip and come straight back to this page.
 	const std::string fmt = Utils::Time::getSystemDateFormat()
 		+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
+
+	// An automatic run says which one it was instead of its date: the date is
+	// what the player would have had to reason from to work that out, and the
+	// row has two lines to say it in (D-UI-023).
+	const std::string origin = cloudRunOrigin(when);
+	if (!origin.empty())
+		return origin + "  -  " + r.outcome;
 
 	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt)
 		+ "  -  " + r.outcome;
