@@ -4077,23 +4077,49 @@ static std::string cloudLastRunDetail(const std::string& name)
 	time_t when = (time_t) atoll(parts[0].c_str());
 	if (when <= 0)
 		return never;
-	// Stopped is the interrupt the backends' trap exits with: somebody
-	// stopped it, which is not a failure and should not be reported as one.
-	// LockHeld and NoNetwork are the scripts' "another sync holds the lock"
-	// and "no network" (CloudExit.h has the values and why): the scripts
-	// write no stamp for those (nothing ran), but the whole-run
-	// stamps EmulationStation keeps per cause (last-sync-startup, -exit,
-	// -manual; fork #94) do, because under SYNC SAVES DURING STARTUP the
-	// player's question is what happened this morning, and "nothing, there
-	// was no network" answers it where FAILED would send them to a log.
-	// Commas rather than dashes inside the outcome: the line already uses a
-	// dash to separate the date from it.
+	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028). The first two fields
+	// are what every stamp has always carried; the token is one word for
+	// the outcome where the code alone cannot say it (a 130 that was a
+	// launch cancel; a composed run that completed with gaps), and the why
+	// is the scripts' own sentence when they printed one. A stamp with two
+	// fields -- the scripts' last-backup and last-restore, or one written
+	// before this reader -- is read from its code.
+	//
+	// The four words, with commas rather than dashes inside the outcome:
+	// the line already uses a dash to separate the date from it. LockHeld
+	// and NoNetwork are the scripts' "another sync holds the lock" and "no
+	// network" (CloudExit.h): the scripts write no stamp for those (nothing
+	// ran), but the whole-run stamps EmulationStation keeps per cause
+	// (last-sync-startup, -exit, -manual; fork #94) do, because under SYNC
+	// SAVES DURING STARTUP the player's question is what happened this
+	// morning, and "nothing, there was no network" answers it.
 	const int code = atoi(parts[1].c_str());
-	const std::string outcome = code == 0 ? _("SUCCEEDED")
-		: code == CloudExit::Stopped ? _("STOPPED")
-		: code == CloudExit::LockHeld ? _("SKIPPED, ANOTHER SYNC WAS RUNNING")
-		: code == CloudExit::NoNetwork ? _("SKIPPED, NO NETWORK")
-		: _("FAILED");
+	const std::string token = parts.size() > 2 ? parts[2] : "";
+	std::string why;
+	for (size_t i = 3; i < parts.size(); i++)
+		why += (why.empty() ? "" : " ") + parts[i];
+	while (!why.empty() && why.back() == '.')
+		why.pop_back();
+
+	std::string outcome;
+	if (code == 0 || code == 9 || token == "completed")
+		outcome = _("COMPLETED");
+	else if (token == "gaps")
+		outcome = _("COMPLETED WITH GAPS");
+	else if (code == CloudExit::LockHeld)
+		outcome = _("SKIPPED, ANOTHER SYNC WAS RUNNING");
+	else if (code == CloudExit::NoNetwork)
+		outcome = _("SKIPPED, NO NETWORK");
+	else if (token == "cancelled")
+		outcome = _("SKIPPED, A GAME WAS STARTED");
+	else
+	{
+		if (why.empty())
+			why = ThreadedCloudSync::whyForToken(token);
+		if (why.empty())
+			why = ThreadedCloudSync::whyForCode(code);
+		outcome = _("COULDN'T FINISH") + std::string(", ") + why;
+	}
 	// The player's own date format and clock, not ours.
 	//
 	// timeToString already resolves through localtime(), so the timezone comes
@@ -4377,35 +4403,61 @@ static void cloudOpenTransfer(Window* window, bool backup)
 // confirmation names what goes. The preview is a network round trip -- an
 // rclone dry run per selected system -- so it runs behind GuiLoading rather
 // than freezing the menu.
+// What --match said and how it ended.
+struct CloudMatchPreview
+{
+	std::vector<std::string> lines;
+	int rc = -1;
+};
+
 static void cloudOpenMatch(Window* window)
 {
-	window->pushGui(new GuiLoading<std::vector<std::string>>(
+	window->pushGui(new GuiLoading<CloudMatchPreview>(
 		window, _("COMPARING YOUR ROMS AND BIOS FILES WITH THE CLOUD"),
 		[](auto gui)
 		{
-			return ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --match");
+			CloudMatchPreview r;
+			r.rc = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --match",
+				[&r](const std::string& line) { r.lines.push_back(line); }).second;
+			return r;
 		},
-		[window](std::vector<std::string> result)
+		[window](CloudMatchPreview result)
 		{
-			// The backend refuses -- unreachable remote, an empty content
-			// root, exclusions not loaded -- by printing why. Show its words
-			// rather than inventing a summary of a refusal we did not make.
-			std::string refusal;
-			for (auto& line : result)
-				if (Utils::String::startsWith(Utils::String::trim(line), "Refusing"))
-					refusal = Utils::String::trim(line);
-
-			if (!refusal.empty())
+			// The backend declines -- no network, an unreachable remote, an
+			// empty content root, exclusions not loaded, no systems selected
+			// for this device -- by exiting non-zero and printing why. Show
+			// its words rather than inventing a summary of a refusal we did
+			// not make: "No systems are selected for this device yet." used
+			// to fall through to THIS DEVICE ALREADY MATCHES YOUR CLOUD,
+			// which was false (#105).
+			if (result.rc == CloudExit::NoNetwork)
 			{
-				window->pushGui(new GuiMsgBox(window, Utils::String::toUpper(refusal)
-					+ "\n\n" + _("NOTHING WAS CHANGED."), _("OK")));
+				window->pushGui(new GuiMsgBox(window, _("COULDN'T REACH YOUR CLOUD.\n\nTRY AGAIN WHEN YOU'RE ONLINE."), _("OK")));
+				return;
+			}
+			bool refusal = false;
+			std::string said;
+			for (auto& raw : result.lines)
+			{
+				const std::string line = Utils::String::trim(raw);
+				if (line.empty() || line.find('|') != std::string::npos)
+					continue;   // a plan line, read below
+				if (Utils::String::startsWith(line, "Refusing"))
+					refusal = true;
+				said += (said.empty() ? "" : "\n") + Utils::String::toUpper(line);
+			}
+			if (result.rc != 0 || refusal)
+			{
+				if (said.empty())
+					said = _("COULDN'T READ YOUR CLOUD'S CONTENT.");
+				window->pushGui(new GuiMsgBox(window, said + "\n\n" + _("NOTHING WAS CHANGED."), _("OK")));
 				return;
 			}
 
 			struct Change { std::string name; long files; long bytes; };
 			std::vector<Change> changes;
 			long totalFiles = 0, totalBytes = 0;
-			for (auto& line : result)
+			for (auto& line : result.lines)
 			{
 				auto p = Utils::String::split(Utils::String::trim(line), '|', true);
 				if (p.size() < 4)
@@ -4468,16 +4520,37 @@ static void cloudOpenMatch(Window* window)
 // box, and past it the dialog shows whatever the script had said by then.
 static void cloudPreviewTidyFolders(Window* window)
 {
-	window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("CHECKING..."),
+	window->pushGui(new GuiLoading<CloudMatchPreview>(window, _("CHECKING..."),
 		[](IGuiLoadingHandler*)
 		{
-			return Utils::Platform::GetShOutputLines("timeout 60 /usr/bin/cloud_migrate_layout --check");
+			CloudMatchPreview r;
+			r.rc = ApiSystem::executeScriptLegacy("timeout 60 /usr/bin/cloud_migrate_layout --check",
+				[&r](const std::string& line) { r.lines.push_back(line); }).second;
+			return r;
 		},
-		[window](std::vector<std::string> lines)
+		[window](CloudMatchPreview result)
 		{
 			std::string detail;
-			for (auto& line : lines)
+			bool refusing = false;
+			for (auto& line : result.lines)
+			{
+				if (Utils::String::startsWith(Utils::String::trim(line), "REFUSING"))
+					refusing = true;
 				detail += line + "\n";
+			}
+
+			// MOVE is offered only over a plan the script stands behind: a
+			// refusal (the destination already exists), an answer that is
+			// not a plan, or a listing cut off by the minute's timeout is
+			// shown as it is, with nothing to press but OK (#105). The row
+			// stays, so the check can be run again.
+			if (result.rc != 0 || refusing)
+			{
+				if (result.rc == 124)
+					detail += (detail.empty() ? "" : "\n") + _("YOUR CLOUD DID NOT ANSWER. TRY AGAIN WHEN YOU'RE ONLINE.") + "\n";
+				window->pushGui(new GuiMsgBox(window, detail + "\n" + _("NOTHING WAS MOVED."), _("OK")));
+				return;
+			}
 
 			window->pushGui(new GuiMsgBox(window,
 				detail + "\n" + _("MOVE THEM?"),
@@ -5716,14 +5789,31 @@ static void cloudSetupBuildDoneStep(Window* window, const std::string& remote, G
 	// somebody's cloud account without saying so is the half of this that
 	// should never be silent -- the choice is ours to make, the fact is
 	// theirs to know.
-	cloudSetupAddInfoRow(s, window, _("SET UP FOR YOU IN YOUR CLOUD ACCOUNT, IF NOT ALREADY THERE:"));
+	//
+	// And reported honestly: a folder the seeding could not confirm is
+	// listed as MISSING, and when none was confirmed at all -- the remote
+	// went away between the check and this page, or the ninety seconds ran
+	// out -- the group says so instead of pointing at an empty list. The
+	// first backup creates whatever is missing; nothing is lost (#105).
+	bool anyOk = false;
 	for (auto& line : seeded)
+		if (Utils::String::trim(line).rfind("OK ", 0) == 0)
+			anyOk = true;
+	if (!anyOk)
+		cloudSetupAddInfoRow(s, window, _("YOUR CLOUD FOLDERS COULDN'T BE SET UP YET. THEY ARE CREATED AT YOUR FIRST BACKUP."));
+	else
 	{
-		auto text = Utils::String::trim(line);
-		if (text.rfind("OK ", 0) == 0)
-			cloudSetupAddInfoRow(s, window, _U("\uF07B  ") + text.substr(3));
+		cloudSetupAddInfoRow(s, window, _("SET UP FOR YOU IN YOUR CLOUD ACCOUNT, IF NOT ALREADY THERE:"));
+		for (auto& line : seeded)
+		{
+			auto text = Utils::String::trim(line);
+			if (text.rfind("OK ", 0) == 0)
+				cloudSetupAddInfoRow(s, window, _U("\uF07B  ") + text.substr(3));
+			else if (text.rfind("MISSING ", 0) == 0)
+				cloudSetupAddInfoRow(s, window, _U("\uF071  ") + _("MISSING") + " " + text.substr(8));
+		}
+		cloudSetupAddInfoRow(s, window, _("PUT ROMS AND BIOS FILES IN THESE FROM A COMPUTER, THEN RESTORE THEM HERE."));
 	}
-	cloudSetupAddInfoRow(s, window, _("PUT ROMS AND BIOS FILES IN THESE FROM A COMPUTER, THEN RESTORE THEM HERE."));
 
 	s->addGroup(_("OPTIONAL NEXT STEPS"));
 	const std::string syncpath = info["SAVES_REMOTE"];
