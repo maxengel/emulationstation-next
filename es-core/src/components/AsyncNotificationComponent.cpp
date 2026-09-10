@@ -6,6 +6,10 @@
 #include "components/TextComponent.h"
 #include "LocaleES.h"
 #include "Window.h"
+// The choosing itself is pure and lives with the rest of the cloud text, so
+// a test binary can reach it (es-app/tests/unit). Reached the way Window.cpp
+// reaches ApiSystem: es-core's include path does not carry es-app.
+#include "../../es-app/src/CloudText.h"
 #include <SDL_timer.h>
 
 #define PADDING_PX  (Renderer::getScreenWidth()*0.01)
@@ -131,17 +135,13 @@ AsyncNotificationComponent::~AsyncNotificationComponent()
 // known, and the row is re-chosen when the candidates next change.
 std::string AsyncNotificationComponent::chooseThatFits(const std::shared_ptr<TextComponent>& row, const std::vector<std::string>& candidates)
 {
-	std::string shown;
-
 	const float width = (row == nullptr) ? 0.0f : row->getSize().x();
-	for (auto& candidate : candidates)
-	{
-		shown = candidate;
-		if (width <= 0.0f || row->getFont() == nullptr || row->getFont()->sizeText(candidate).x() <= width)
-			break;
-	}
 
-	return shown;
+	std::function<float(const std::string&)> measure;
+	if (row != nullptr && row->getFont() != nullptr)
+		measure = [row](const std::string& candidate) { return row->getFont()->sizeText(candidate).x(); };
+
+	return CloudText::chooseThatFits(candidates, width, measure);
 }
 
 void AsyncNotificationComponent::updateText(const std::string text, const std::string action)

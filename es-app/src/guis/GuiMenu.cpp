@@ -19,6 +19,7 @@
 #include "guis/GuiMoonlight.h"
 #include "ThreadedCloudSync.h"
 #include "CloudExit.h"
+#include "CloudText.h"
 #include "guis/GuiCloudTransfer.h"
 #include "guis/GuiLoading.h"
 #include "guis/GuiNetPlaySettings.h"
@@ -3932,38 +3933,6 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static std::map<std::string, std::string> cloudSetupInfo();
-static std::string cloudProviderLabel(const std::string& type);
-// The device name as the network takes it: ASCII letters and digits, any run
-// of anything else as one hyphen, none at either end, at most 63. The same
-// rule as the scripts' clean_hostname (001-functions), which network-base-setup
-// applies at boot. The player's own name is left exactly as they typed it --
-// this is only what the network shows, said back to them under the IP address
-// so "RG SP" appearing on a router as "RG-SP" is not a mystery (#106).
-static std::string cleanHostname(const std::string& in)
-{
-	std::string out;
-	bool gap = false;
-	for (char c : in)
-	{
-		const bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-		if (keep)
-		{
-			if (gap && !out.empty())
-				out += '-';
-			gap = false;
-			out += c;
-		}
-		else
-			gap = true;
-	}
-	if (out.size() > 63)
-	{
-		out.resize(63);
-		while (!out.empty() && out.back() == '-')
-			out.pop_back();
-	}
-	return out;
-}
 
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
 // Horizontal padding matching what ComponentList applies to selectable
@@ -4284,83 +4253,54 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 	// has made it.
 	if (!Utils::FileSystem::exists(path, false))
 		return r;
-	auto parts = Utils::String::split(Utils::String::trim(Utils::FileSystem::readAllText(path)), ' ', true);
-	if (parts.size() < 2)
+	// The line itself -- its fields, its two shapes of third field, and
+	// which of the four outcomes it names -- is parsed in CloudText, where
+	// a test can reach it without a device or a locale (es-app/tests/unit).
+	// What stays here is the read, the fallback why for a stamp that gave
+	// none, and the outcome said in the player's language.
+	const CloudText::LastRun p = CloudText::parseLastRun(Utils::FileSystem::readAllText(path));
+	if (!p.ran)
 		return r;
-	time_t when = (time_t) atoll(parts[0].c_str());
-	if (when <= 0)
-		return r;
-	r.ran = true;
-	r.when = when;
-	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028). The first two fields
-	// are what every stamp has always carried; the token is one word for
-	// the outcome where the code alone cannot say it (a 130 that was a
-	// launch cancel; a composed run whose parts disagreed), and the why
-	// is the scripts' own sentence when they printed one. A stamp with two
-	// fields -- one written before this reader -- is read from its code.
-	//
-	// The four words, with commas rather than dashes inside the outcome:
-	// the line already uses a dash to separate the date from it. LockHeld
-	// and NoNetwork are the scripts' "another sync holds the lock" and "no
-	// network" (CloudExit.h): the scripts write no stamp for those (nothing
-	// ran), but the whole-run stamps EmulationStation keeps per cause
-	// (last-sync-startup, -exit, -manual; fork #94) do, because under SYNC
-	// SAVES DURING STARTUP the player's question is what happened this
-	// morning, and "nothing, there was no network" answers it.
-	const int code = atoi(parts[1].c_str());
-	r.code = code;
-	//
-	// Two writers, two shapes of third field. EmulationStation's stamps
-	// (ThreadedCloudSync::recordOutcome) carry one of its tokens, with the
-	// scripts' sentence after it when they printed one; the scripts' own
-	// stamps (last-backup, last-restore, last-content-*) carry the sentence
-	// itself as the third field, spaces turned into underscores
-	// ("1789000000 5 YOUR_CLOUD_STOPPED_ANSWERING"), and only for a code
-	// that is not 0, 9, 69 or 75. So a third field that is not one of our
-	// tokens is the why, read back with its underscores as spaces.
-	const std::string token = parts.size() > 2 ? parts[2] : "";
-	static const std::set<std::string> ourTokens = {
-		"completed", "gaps", "no-network", "lock-held", "cancelled", "stopped",
-		"folder-missing", "cloud-stopped", "cloud-refused", "unknown" };
-	const bool ours = ourTokens.find(token) != ourTokens.cend();
-	std::string why;
-	for (size_t i = ours ? 3 : 2; i < parts.size(); i++)
-		why += (why.empty() ? "" : " ") + parts[i];
-	if (!ours)
-		why = Utils::String::toUpper(Utils::String::replace(why, "_", " "));
-	while (!why.empty() && why.back() == '.')
-		why.pop_back();
 
-	r.token = token;
-	if (code == 0 || code == 9 || token == "completed")
+	r.ran = true;
+	r.when = p.when;
+	r.code = p.code;
+	r.token = p.token;
+	r.finished = p.finished;
+
+	switch (p.outcome)
 	{
+	case CloudText::Outcome::Completed:
 		r.outcome = _("COMPLETED");
-		r.finished = true;
-	}
-	else if (token == "gaps")
-	{
+		break;
+	case CloudText::Outcome::Gaps:
 		// A run whose parts disagreed. The stamp keeps its own token so a log
 		// can tell it from a total failure; the row says what every other
 		// failure says (D-UI-030).
 		r.outcome = _("COULDN'T FINISH");
-		if (why.empty())
-			why = ThreadedCloudSync::whyForToken(token);
-		r.why = why;
-	}
-	else if (code == CloudExit::LockHeld)
+		r.why = p.why.empty() ? ThreadedCloudSync::whyForToken(p.token) : p.why;
+		break;
+	case CloudText::Outcome::SkippedLockHeld:
 		r.outcome = _("SKIPPED, ANOTHER SYNC WAS RUNNING");
-	else if (code == CloudExit::NoNetwork)
+		break;
+	case CloudText::Outcome::SkippedNoNetwork:
 		r.outcome = _("SKIPPED, NO NETWORK");
-	else if (token == "cancelled")
+		break;
+	case CloudText::Outcome::SkippedGameStarted:
 		r.outcome = _("SKIPPED, A GAME WAS STARTED");
-	else
+		break;
+	case CloudText::Outcome::Failed:
 	{
-		if (why.empty() && ours)
-			why = ThreadedCloudSync::whyForToken(token);
+		// The token's phrase for one of ours, the code's for anything else.
+		std::string why = p.why;
+		if (why.empty() && p.knownToken)
+			why = ThreadedCloudSync::whyForToken(p.token);
 		if (why.empty())
-			why = ThreadedCloudSync::whyForCode(code);
+			why = ThreadedCloudSync::whyForCode(p.code);
 		r.outcome = _("COULDN'T FINISH");
 		r.why = why;
+		break;
+	}
 	}
 	return r;
 }
@@ -4386,13 +4326,18 @@ static std::string cloudRunOrigin(time_t when)
 {
 	if (when <= 0)
 		return "";
-	for (auto& o : { std::make_pair("sync-exit", "AFTER YOUR LAST GAME"),
-	                 std::make_pair("sync-startup", "AT STARTUP") })
-	{
-		const CloudLastRun a = cloudReadLastRun(o.first);
-		if (a.ran && std::labs((long) (a.when - when)) <= 10)
-			return _(o.second);
-	}
+	// In preference order, and each stamp read only if it is still needed:
+	// the exit stamp answers most rows, and the window that makes two
+	// stamps the same run is CloudText's (es-app/tests/unit checks its
+	// edges).
+	const CloudLastRun exitRun = cloudReadLastRun("sync-exit");
+	if (CloudText::runOrigin(when, exitRun.ran ? exitRun.when : 0, 0) == CloudText::RunOrigin::AfterLastGame)
+		return _("AFTER YOUR LAST GAME");
+
+	const CloudLastRun startupRun = cloudReadLastRun("sync-startup");
+	if (CloudText::runOrigin(when, 0, startupRun.ran ? startupRun.when : 0) == CloudText::RunOrigin::AtStartup)
+		return _("AT STARTUP");
+
 	return "";
 }
 
@@ -5011,7 +4956,7 @@ void GuiMenu::openCloud(Window* window)
 		// currently have, which seems like a miss" (maintainer, 2026-09-10,
 		// fork #110). The name is the player's own label for the remote when
 		// they gave it one, otherwise the provider's name.
-		const std::string provider = cloudProviderLabel(cloudSetupInfo()["REMOTE_TYPE"]);
+		const std::string provider = CloudText::providerLabel(cloudSetupInfo()["REMOTE_TYPE"]);
 		const std::string remoteName = cloudSetupInfo()["REMOTE_NAME"];
 		if (!provider.empty())
 			s->addWithLabel(_("CONNECTED TO"), std::make_shared<TextComponent>(window, provider,
@@ -6296,51 +6241,10 @@ struct CloudBackendField
 // Alibaba, ArvanCloud..." is accurate and useless on a handheld -- it is
 // truncated mid-word in a menu and tells the player nothing the first three
 // characters did not.
-// Translated at the point of use: _() at static-init time would run
-// before the locale is loaded.
-// The providers we put in front of people, most-likely-to-be-owned first.
-//
-// This was split into two groups by how the sign-in works -- one you approve
-// through a provider page, one you type a key into. That is our distinction,
-// not the player's: they are choosing where their saves live, and the group
-// headers made an implementation detail look like the question being asked.
-// It also read as a hierarchy it is not, since the second group was a
-// handful of picks rather than the rest of the world.
-//
-// One list of recommendations, and a complete list behind it. Which kind of
-// sign-in a provider needs is settled after it is chosen, by its own tier.
-static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED = {
-	{ "dropbox",     "DROPBOX" },
-	{ "drive",       "GOOGLE DRIVE" },
-	{ "onedrive",    "MICROSOFT ONEDRIVE" },
-	{ "box",         "BOX" },
-	{ "pcloud",      "PCLOUD" },
-	{ "mega",        "MEGA" },
-	{ "protondrive", "PROTON DRIVE" },
-	{ "koofr",       "KOOFR" },
-	{ "webdav",      "WEBDAV" },
-	{ "sftp",        "SSH / SFTP" },
-	{ "smb",         "WINDOWS SHARE (SMB)" },
-	{ "s3",          "AMAZON S3 AND COMPATIBLE" },
-	{ "b2",          "BACKBLAZE B2" },
-	{ "storj",       "STORJ" },
-};
-
-// rclone's word for a service ("drive") in the words the player chose it by
-// ("GOOGLE DRIVE"). The recommendation list above is the same mapping seen
-// from the other side, so it is the one table; a provider set up outside that
-// list falls back to rclone's own word, uppercased, which is at least the
-// name on the tin. Empty in, empty out -- the caller decides what to say when
-// nothing is connected.
-static std::string cloudProviderLabel(const std::string& type)
-{
-	if (type.empty())
-		return "";
-	for (auto& p : CLOUD_RECOMMENDED)
-		if (p.first == type)
-			return p.second;
-	return Utils::String::toUpper(type);
-}
+// The table and the label it gives a provider live in CloudText, which is
+// where the pure cloud text is tested from (es-app/tests/unit): translated
+// at the point of use, since _() at static-init time would run before the
+// locale is loaded.
 
 static std::vector<std::string> cloudRemoteLines(const std::string& args)
 {
@@ -7107,7 +7011,7 @@ void GuiMenu::openCloudAddRemote(Window* window)
 	}
 
 	s->addGroup(_("RECOMMENDED"));
-	for (auto& want : CLOUD_RECOMMENDED)
+	for (auto& want : CloudText::recommendedProviders())
 	{
 		for (auto& b : backends)
 		{
@@ -8776,7 +8680,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	// that form is -- shown only when it differs from the name they gave, since
 	// otherwise it repeats the HOSTNAME row below (#106).
 	const std::string deviceName = SystemConf::getInstance()->get("system.hostname");
-	const std::string networkName = cleanHostname(deviceName);
+	const std::string networkName = CloudText::cleanHostname(deviceName);
 	if (!networkName.empty() && networkName != deviceName)
 		s->addWithLabel(_("NETWORK NAME"), std::make_shared<TextComponent>(mWindow, networkName, font, color));
 

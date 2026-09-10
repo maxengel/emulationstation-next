@@ -1,5 +1,6 @@
 #include "ThreadedCloudSync.h"
 #include "CloudExit.h"
+#include "CloudText.h"
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
 #include "guis/GuiMsgBox.h"
@@ -78,38 +79,9 @@ std::string ThreadedCloudSync::whyForCode(int rc)
 	}
 }
 
-// A shorter form of a why sentence, for a panel the whole one does not fit
-// on (#115).
-//
-// The whys are written by the scripts at the point of failure and are one
-// sentence each, so the composed line -- outcome word, dash, sentence --
-// runs past the card's row on a 640x480 panel and was clipped mid-word
-// with an ellipsis. A sentence was shortened by hand once to make one of
-// them fit; the next long one clips again, which is why the row is handed
-// forms to choose between instead.
-//
-// Two shapes appear in the sentences the scripts and the table below
-// emit, and both put the part that can go at the end: a trailing clause
-// after a dash (COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN) and a
-// trailing sentence after a full stop. Anything else has no short form,
-// and the caller falls back to the outcome word on its own -- which fits
-// any panel, and is still true.
-static std::string shortenWhy(const std::string& why)
-{
-	const size_t dash = why.find(" - ");
-	if (dash != std::string::npos)
-		return Utils::String::trim(why.substr(0, dash));
-
-	const size_t paren = why.find(" (");
-	if (paren != std::string::npos)
-		return Utils::String::trim(why.substr(0, paren));
-
-	const size_t stop = why.find(". ");
-	if (stop != std::string::npos)
-		return Utils::String::trim(why.substr(0, stop));
-
-	return "";
-}
+// The short forms of a why sentence, for a panel the whole one does not fit
+// on (#115), are CloudText::shortenWhy and CloudText::outcomeCandidates --
+// pure string work, checked by es-app/tests/unit.
 
 // The stamp's one-word token for the same code, for the row's reader.
 std::string ThreadedCloudSync::tokenForCode(int rc)
@@ -138,28 +110,16 @@ std::string ThreadedCloudSync::whyForToken(const std::string& token)
 	return "";
 }
 
-// Which way the saves moved, read from the command: the in-place clause is
-// one per verb, true because rclone renames each file into place when it is
-// complete (D-CLOUD-077).
-enum class Verb { Sync, Backup, Restore, Other };
-
-static Verb verbOf(const std::string& cmd)
-{
-	const bool restore = cmd.find("cloud_restore") != std::string::npos;
-	const bool backup  = cmd.find("cloud_backup")  != std::string::npos || cmd.find("backuptool") != std::string::npos;
-	if (restore && backup) return Verb::Sync;
-	if (restore) return Verb::Restore;
-	if (backup)  return Verb::Backup;
-	return Verb::Other;
-}
-
-static std::string inPlaceClause(Verb verb, bool moved)
+// Which way the saves moved, read from the command (CloudText::verbOf): the
+// in-place clause is one per verb, true because rclone renames each file
+// into place when it is complete (D-CLOUD-077).
+static std::string inPlaceClause(CloudText::Verb verb, bool moved)
 {
 	switch (verb)
 	{
-		case Verb::Sync:    return moved ? _("THE SAVES THAT MADE IT ARE ON BOTH SIDES. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
-		case Verb::Backup:  return moved ? _("WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.") : _("DON'T WORRY, NOTHING CHANGED.");
-		case Verb::Restore: return moved ? _("WHAT MADE IT IS ON THIS DEVICE. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
+		case CloudText::Verb::Sync:    return moved ? _("THE SAVES THAT MADE IT ARE ON BOTH SIDES. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
+		case CloudText::Verb::Backup:  return moved ? _("WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.") : _("DON'T WORRY, NOTHING CHANGED.");
+		case CloudText::Verb::Restore: return moved ? _("WHAT MADE IT IS ON THIS DEVICE. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
 		default:            return "";
 	}
 }
@@ -214,49 +174,52 @@ void ThreadedCloudSync::run()
 			// part's code. ">>> unit" and anything newer is for the transfer
 			// page and never reaches the card -- but each one says the wait
 			// is over, as does the first word any script prints.
-			if (clean.rfind(">>> ", 0) == 0)
+			//
+			// Which line is which is CloudText::classifyProtocolLine, so the
+			// shapes can be checked without a pipe (es-app/tests/unit); what
+			// each one does to this thread stays here.
+			const CloudText::ProtocolLine protocol = CloudText::classifyProtocolLine(clean);
+			if (protocol.kind != CloudText::ProtocolKind::NotProtocol)
 			{
-				if (clean.rfind(">>> pid ", 0) == 0)
-					mPid = atoi(clean.substr(8).c_str());
-				else if (clean.rfind(">>> doing ", 0) == 0)
+				switch (protocol.kind)
 				{
-					const std::string what = Utils::String::trim(clean.substr(10));
-					mWaitingForNetwork = (what == "network");
-					if (what == "network" && mWndNotification != nullptr)
+				case CloudText::ProtocolKind::Pid:
+					mPid = protocol.number;
+					break;
+				case CloudText::ProtocolKind::Doing:
+				{
+					// The local answer, not the member: cancelForLaunch clears
+					// the flag from another thread, and this line is about the
+					// line just read.
+					const bool network = (protocol.text == "network");
+					mWaitingForNetwork = network;
+					if (network && mWndNotification != nullptr)
 						mWndNotification->updateText(_("WAITING FOR THE NETWORK..."));
+					break;
 				}
-				else if (clean.rfind(">>> why ", 0) == 0)
-				{
+				case CloudText::ProtocolKind::Why:
 					mWaitingForNetwork = false;
-					std::string why = Utils::String::toUpper(Utils::String::trim(clean.substr(8)));
-					// The outcome line supplies its own end; a sentence's
-					// full stop after a dash reads as a typo.
-					while (!why.empty() && why.back() == '.')
-						why.pop_back();
-					if (!why.empty())
-						mWhy = why;
-				}
-				else if (clean.rfind(">>> offer ", 0) == 0)
-				{
+					if (!protocol.text.empty())
+						mWhy = protocol.text;
+					break;
+				case CloudText::ProtocolKind::Offer:
 					// A script asking for a question to be put to the player
 					// once the run is over. The only one today: a cloud that
 					// answers with no saves folder in it, which is not a
 					// failure but does leave the player with nothing to
 					// restore and no obvious way forward (#100, D-CLOUD-085).
 					mWaitingForNetwork = false;
-					mOffer = Utils::String::trim(clean.substr(10));
-				}
-				else if (clean.rfind(">>> tier ", 0) == 0)
-				{
+					mOffer = protocol.text;
+					break;
+				case CloudText::ProtocolKind::Tier:
 					mWaitingForNetwork = false;
-					auto parts = Utils::String::split(clean.substr(9), '|', false);
-					const std::string label = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
-					const int rc = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : -1;
-					if (!label.empty())
-						mTiers.push_back(std::make_pair(Utils::String::toUpper(label), rc));
-				}
-				else
+					if (!protocol.text.empty())
+						mTiers.push_back(std::make_pair(protocol.text, protocol.number));
+					break;
+				default:
 					mWaitingForNetwork = false;
+					break;
+				}
 				continue;
 			}
 			mWaitingForNetwork = false;
@@ -420,7 +383,7 @@ void ThreadedCloudSync::run()
 	// last-sync-manual for those too put a backup's outcome under the sync
 	// row -- LAST 00:48 - COULDN'T FINISH on a row nobody had pressed (guest
 	// d, 2026-09-10). Automatic origins stamp whatever they ran.
-	if (mOrigin != Origin::Manual || verbOf(mCommand) == Verb::Sync)
+	if (mOrigin != Origin::Manual || CloudText::verbOf(mCommand) == CloudText::Verb::Sync)
 		recordOutcome(mOrigin, ret, token, mWhy);
 
 	// One surface for the whole event.
@@ -443,7 +406,7 @@ void ThreadedCloudSync::run()
 		std::vector<std::string> action;
 		if (!completed)
 		{
-			const Verb verb = verbOf(mCommand);
+			const CloudText::Verb verb = CloudText::verbOf(mCommand);
 			const std::string inPlace = inPlaceClause(verb, mMoved);
 
 			std::string recover;
@@ -459,8 +422,8 @@ void ThreadedCloudSync::run()
 				recover = _("WAIT FOR IT TO FINISH, THEN TRY AGAIN.");
 			else if (mOrigin == Origin::Manual)
 				recover = _("TRY AGAIN FROM GAME SETTINGS > ") + std::string(
-					verb == Verb::Sync ? _("SYNC SAVES WITH THE CLOUD")
-					: verb == Verb::Restore ? _("RESTORE SAVES FROM THE CLOUD")
+					verb == CloudText::Verb::Sync ? _("SYNC SAVES WITH THE CLOUD")
+					: verb == CloudText::Verb::Restore ? _("RESTORE SAVES FROM THE CLOUD")
 					: _("BACK UP SAVES TO THE CLOUD"));
 			else if (mCommand.find("cloud_migrate_layout") != std::string::npos)
 				recover = _("TRY AGAIN FROM MANAGE CLOUD STORAGE > TIDY UP YOUR CLOUD FOLDERS");
@@ -488,21 +451,7 @@ void ThreadedCloudSync::run()
 		// then the outcome word alone, which fits any panel this runs on.
 		// A translation whose outcome line carries no " - " has no split
 		// to make and gets the single candidate it has today.
-		std::vector<std::string> outcomeCandidates;
-		outcomeCandidates.push_back(outcome);
-
-		const size_t outcomeDash = outcome.find(" - ");
-		if (outcomeDash != std::string::npos)
-		{
-			const std::string head = outcome.substr(0, outcomeDash);
-			const std::string tail = outcome.substr(outcomeDash + 3);
-			const std::string shortTail = shortenWhy(tail);
-			if (!shortTail.empty() && shortTail != tail)
-				outcomeCandidates.push_back(head + std::string(" - ") + shortTail);
-			outcomeCandidates.push_back(head);
-		}
-
-		mWndNotification->updateText(outcomeCandidates, action);
+		mWndNotification->updateText(CloudText::outcomeCandidates(outcome), action);
 
 		// A full bar on success; otherwise the bar goes, because a progress
 		// bar left standing under COULDN'T FINISH reads as a measure of how
