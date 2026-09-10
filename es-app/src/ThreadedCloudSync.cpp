@@ -60,7 +60,12 @@ std::string ThreadedCloudSync::whyForCode(int rc)
 		case 3: case 4: return _("YOUR CLOUD FOLDER WASN'T FOUND");
 		case 5:         return _("YOUR CLOUD STOPPED ANSWERING");
 		case 7: case 8: return _("YOUR CLOUD REFUSED THE TRANSFER");
-		case CloudExit::Stopped: return _("IT WAS STOPPED");
+		case CloudExit::Stopped:   return _("IT WAS STOPPED");
+		// The sentinels, for a part that exited one beside a part that did
+		// not (the transfer page's line 4): the same words the SKIPPED
+		// outcome uses, so one code is never called two things.
+		case CloudExit::NoNetwork: return _("NO NETWORK CONNECTION");
+		case CloudExit::LockHeld:  return _("ANOTHER CLOUD SYNC IS RUNNING");
 		default:        return _("SOMETHING WENT WRONG");
 	}
 }

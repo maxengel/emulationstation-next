@@ -277,6 +277,7 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome() const
 	const bool match = mCommand.find("--match") != std::string::npos;
 	o.gaps = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && mRemovedFiles > 0));
 	const int code = mTiers.empty() ? mExit : onlyCode;
+	o.skipped = !o.completed && !o.gaps && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
 	if (o.completed)
 		o.word = _("COMPLETED");
 	else if (o.gaps)
@@ -337,6 +338,24 @@ std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std:
 	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
 		text.pop_back();
 	return text + "...";
+}
+
+std::string GuiCloudTransfer::fitSentences(const std::shared_ptr<Font>& font, std::string text, float width)
+{
+	if (!font)
+		return text;
+	while (font->sizeText(text).x() > width)
+	{
+		// the last sentence boundary before the end: ". " with something after it
+		const size_t end = text.find_last_not_of(" .");
+		if (end == std::string::npos)
+			break;
+		const size_t cut = text.rfind(". ", end);
+		if (cut == std::string::npos)
+			break;
+		text = text.substr(0, cut + 1);
+	}
+	return fitOneLine(font, text, width);
 }
 
 // rclone's size units, once: how each is spelt in its output (the torn
@@ -636,13 +655,15 @@ void GuiCloudTransfer::update(int deltaTime)
 			mActivity->setText(fitOneLine(mTextFont, summary, mLineWidth));
 			mDetail  ->setText("");
 		}
-		if (!o.completed)
+		if (!o.completed && !o.skipped)
 		{
 			// 4. The items that did not finish, and why: "NES, SETTINGS - YOUR
 			// CLOUD STOPPED ANSWERING". Items sharing a why share the line's
 			// one dash; a second why gets its own group. A why with no item
 			// (the scripts spoke before any unit, and no tier line followed)
-			// stands alone.
+			// stands alone. Not on a skip: line 1 has said the one thing
+			// there is to say about every part, and a list of them under it
+			// would read as a list of failures.
 			std::vector<std::pair<std::string, std::vector<std::string>>> groups;
 			for (auto& f : mFailed)
 			{
@@ -689,7 +710,9 @@ void GuiCloudTransfer::update(int deltaTime)
 		}
 		else if (contentRun && (mRemovedFiles > 0 || mAnyTransferred))
 			note = _("UPDATE GAMELISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
-		mNote->setText(fitOneLine(mSmallFont, note, mLineWidth));
+		// Two sentences on a 640px panel do not fit the small font; the
+		// first alone says what is in place, so it is what survives.
+		mNote->setText(fitSentences(mSmallFont, note, mLineWidth));
 
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
 		// 7. The retry lives on the surface that reported the failure: A runs

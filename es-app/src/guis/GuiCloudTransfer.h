@@ -60,6 +60,7 @@ private:
 	{
 		bool completed;   // every part finished (0 or 9)
 		bool gaps;        // some finished and some did not
+		bool skipped;     // a sentinel, and nothing else to report
 		std::string word; // line 1
 	};
 	Outcome outcome() const;
@@ -89,6 +90,11 @@ private:
 	std::shared_ptr<Font> mSmallFont;
 	float mLineWidth;
 	static std::string fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width);
+	// Drop whole sentences from the end before clipping: "WHAT WAS SENT IS IN
+	// YOUR CLOUD. THE REST IS STILL ON THIS DEVICE." keeps its first sentence
+	// on a panel too narrow for both, rather than ending mid-word in an
+	// ellipsis. The last sentence standing is clipped if even it does not fit.
+	static std::string fitSentences(const std::shared_ptr<Font>& font, std::string text, float width);
 	static std::string prettyRclone(std::string fragment);
 	static std::string roundSizes(const std::string& fragment);
 
