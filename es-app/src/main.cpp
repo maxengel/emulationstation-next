@@ -836,6 +836,22 @@ int main(int argc, char* argv[])
 	if (Settings::wasRecovered() || SystemConf::wasRecovered())
 		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS FILE WAS DAMAGED. THE LAST GOOD COPY WAS RESTORED."), _("OK")));
 
+	// A settings restore that was cut off -- the power gone while the archive
+	// was being written over the live tree -- was undone at this boot by
+	// chksysconfig from the copy backuptool had taken aside, or could not be;
+	// the marker says which (D-CLOUD-078, KILL18). Consumed on OK, not on
+	// display, so a power cut with the message up leaves it for the next
+	// boot. Read uncached: another process wrote it.
+	const std::string revertedMarker = "/storage/.config/.restore-reverted";
+	if (Utils::FileSystem::exists(revertedMarker, false))
+	{
+		const std::string how = Utils::String::trim(Utils::FileSystem::readAllText(revertedMarker));
+		window.pushGui(new GuiMsgBox(&window, how == "reverted"
+			? _("YOUR SETTINGS RESTORE WAS INTERRUPTED. YOUR PREVIOUS SETTINGS WERE PUT BACK. TRY THE RESTORE AGAIN.")
+			: _("YOUR SETTINGS RESTORE WAS INTERRUPTED AND COULDN'T BE UNDONE. RESTORE YOUR SETTINGS AGAIN."),
+			_("OK"), [revertedMarker] { std::remove(revertedMarker.c_str()); }));
+	}
+
 	// A finished backup restore leaves a one-shot marker (see backuptool).
 	// The page itself clears it on FINISH, not here: consuming it on
 	// display would lose the flow for good if the device crashed or the
