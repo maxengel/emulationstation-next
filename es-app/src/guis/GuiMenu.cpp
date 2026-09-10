@@ -4303,15 +4303,18 @@ static void cloudOpenTransfer(Window* window, bool backup)
 
 		// A settings restore rewrites the configuration and reboots, so it
 		// cannot be one link in a chain -- anything after it would never run.
-		// The journey marker is what carries the rest across the restart.
+		// The journey marker is what carries the rest across the restart --
+		// and backuptool sets it (--then-cloud), after its extract has been
+		// verified, where this used to touch it before the restore ran: a
+		// download that never happened, or a restore that failed, still
+		// produced YOUR SETTINGS WERE RESTORED at the next boot (D-CLOUD-078).
 		if (!backup && wantSettings)
 		{
 			window->pushGui(new GuiMsgBox(window, _("RESTORE SYSTEM SETTINGS FIRST, THEN REBOOT?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. ANYTHING ELSE YOU TICKED IS RESTORED AFTER THE RESTART. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED."), _("YES"),
 				[s]
 				{
 					s->close();
-					Utils::Platform::runSystemCommand("touch /storage/.config/.cloud-journey-pending", "", nullptr);
-					Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore\"", "", nullptr);
+					Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore --then-cloud\"", "", nullptr);
 				}, _("NO"), nullptr));
 			return;
 		}

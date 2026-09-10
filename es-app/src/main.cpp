@@ -804,15 +804,26 @@ int main(int argc, char* argv[])
 	// from the cloud. Credentials are therefore pushed LAST so they land
 	// on top and are dealt with first; only then does the player reach
 	// the download prompt, by which time the network is back.
+	//
+	// The marker is backuptool's now: `backuptool restore --then-cloud`
+	// touches it only after its extract has been verified (D-CLOUD-078), where
+	// GuiMenu used to touch it before running the restore -- so a restore
+	// that failed, or never ran, still produced YOUR SETTINGS WERE RESTORED
+	// at the next boot. And it is consumed by the choice, not by the display:
+	// removed on YES as the download starts and on LATER as the player
+	// declines, so a crash or a power cut while the prompt is on screen
+	// leaves it for the next boot rather than losing the continuation.
 	std::string journeyMarker = "/storage/.config/.cloud-journey-pending";
 	const bool journeyPending = Utils::FileSystem::exists(journeyMarker);
 	if (journeyPending)
 	{
-		std::remove(journeyMarker.c_str());
 		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES, AND SAVES FROM THE CLOUD NOW?"), _("YES"),
-			[&window] {
+			[&window, journeyMarker] {
+			std::remove(journeyMarker.c_str());
 			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_content_restore --all && /usr/bin/cloud_restore --yes\"", "", &window);
-			}, _("LATER"), nullptr));
+			}, _("LATER"), [journeyMarker] {
+			std::remove(journeyMarker.c_str());
+			}));
 	}
 
 	// Either configuration file was found missing, empty or damaged at this
