@@ -4111,8 +4111,7 @@ static std::string cloudLastRunDetail(const std::string& name)
 	// the outcome where the code alone cannot say it (a 130 that was a
 	// launch cancel; a composed run that completed with gaps), and the why
 	// is the scripts' own sentence when they printed one. A stamp with two
-	// fields -- the scripts' last-backup and last-restore, or one written
-	// before this reader -- is read from its code.
+	// fields -- one written before this reader -- is read from its code.
 	//
 	// The four words, with commas rather than dashes inside the outcome:
 	// the line already uses a dash to separate the date from it. LockHeld
@@ -4123,10 +4122,25 @@ static std::string cloudLastRunDetail(const std::string& name)
 	// SAVES DURING STARTUP the player's question is what happened this
 	// morning, and "nothing, there was no network" answers it.
 	const int code = atoi(parts[1].c_str());
+	//
+	// Two writers, two shapes of third field. EmulationStation's stamps
+	// (ThreadedCloudSync::recordOutcome) carry one of its tokens, with the
+	// scripts' sentence after it when they printed one; the scripts' own
+	// stamps (last-backup, last-restore, last-content-*) carry the sentence
+	// itself as the third field, spaces turned into underscores
+	// ("1789000000 5 YOUR_CLOUD_STOPPED_ANSWERING"), and only for a code
+	// that is not 0, 9, 69 or 75. So a third field that is not one of our
+	// tokens is the why, read back with its underscores as spaces.
 	const std::string token = parts.size() > 2 ? parts[2] : "";
+	static const std::set<std::string> ourTokens = {
+		"completed", "gaps", "no-network", "lock-held", "cancelled", "stopped",
+		"folder-missing", "cloud-stopped", "cloud-refused", "unknown" };
+	const bool ours = ourTokens.find(token) != ourTokens.cend();
 	std::string why;
-	for (size_t i = 3; i < parts.size(); i++)
+	for (size_t i = ours ? 3 : 2; i < parts.size(); i++)
 		why += (why.empty() ? "" : " ") + parts[i];
+	if (!ours)
+		why = Utils::String::toUpper(Utils::String::replace(why, "_", " "));
 	while (!why.empty() && why.back() == '.')
 		why.pop_back();
 
@@ -4143,7 +4157,7 @@ static std::string cloudLastRunDetail(const std::string& name)
 		outcome = _("SKIPPED, A GAME WAS STARTED");
 	else
 	{
-		if (why.empty())
+		if (why.empty() && ours)
 			why = ThreadedCloudSync::whyForToken(token);
 		if (why.empty())
 			why = ThreadedCloudSync::whyForCode(code);
