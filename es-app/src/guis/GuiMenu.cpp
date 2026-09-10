@@ -4896,7 +4896,7 @@ void GuiMenu::openCloud(Window* window)
 		// keyboard and you type a path.
 		const std::string syncpath = cloudSetupInfo()["SAVES_REMOTE"];
 		s->addWithDescription(_("CHANGE CLOUD FOLDER"),
-			_("THE FOLDER ON YOUR CLOUD REMOTE THAT HOLDS YOUR SAVES. CURRENT:") + " " + syncpath,
+			_("THE FOLDER IN YOUR CLOUD THAT HOLDS YOUR SAVES. CURRENT:") + " " + syncpath,
 			nullptr, [window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); },
 			"", false, true);
 	}
