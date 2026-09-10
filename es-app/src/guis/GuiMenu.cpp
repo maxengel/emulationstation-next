@@ -3805,6 +3805,40 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static std::map<std::string, std::string> cloudSetupInfo();
+// The device name as the network accepts it: ASCII letters and digits, with
+// any run of anything else -- spaces, underscores, punctuation, hyphens --
+// as one hyphen, none at either end, at most 63. The same rule as the
+// scripts' clean_hostname (001-functions), so the row and the network agree.
+static bool hostnameChar(char c)
+{
+	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+static std::string cleanHostname(const std::string& in)
+{
+	std::string out;
+	bool gap = false;
+	for (char c : in)
+	{
+		if (hostnameChar(c))
+		{
+			if (gap && !out.empty())
+				out += '-';
+			gap = false;
+			out += c;
+		}
+		else
+			gap = true;
+	}
+	if (out.size() > 63)
+	{
+		out.resize(63);
+		while (!out.empty() && out.back() == '-')
+			out.pop_back();
+	}
+	return out;
+}
+
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
 // Horizontal padding matching what ComponentList applies to selectable
 // rows, so informational text lines up with the actionable rows.
@@ -8484,8 +8518,44 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	s->addGroup(_("SETTINGS"));
 
 #if !WIN32
-	// Hostname
-	s->addInputTextConfigRow(_("HOSTNAME"), "system.hostname", false);
+	// Hostname: letters, digits and hyphens are the only form the network
+	// takes. A space or an underscore becomes a hyphen as it is typed, and the
+	// player is told; anything else is refused with a word; what is saved is
+	// the clean form, said back when it differs from what was typed.
+	// network-base-setup applies the same rule (clean_hostname) to a value
+	// already stored, so what this row shows is what the network shows. Left
+	// to the default editor, "RG SP" was applied half and hostnamed made it
+	// RGSP behind the player's back (fork #106).
+	s->addInputTextConfigRow(_("HOSTNAME"), "system.hostname", false, false,
+		[](Window* window, std::string title, std::string value, const std::function<void(std::string)>& onsave)
+		{
+			auto kb = new GuiTextEditPopupKeyboard(window, title, value,
+				[window, onsave](const std::string& typed)
+				{
+					const std::string clean = cleanHostname(typed);
+					if (clean.empty())
+					{
+						window->displayNotificationMessage(_("A DEVICE NAME NEEDS AT LEAST ONE LETTER OR DIGIT. THE NAME WAS NOT CHANGED."), 3000);
+						return;
+					}
+					if (clean != typed)
+						window->displayNotificationMessage(Utils::String::format(_("DEVICE NAME SAVED AS %s").c_str(), clean.c_str()), 3000);
+					onsave(clean);
+				}, false);
+			kb->setCharacterFilter([](const std::string& ch, std::string& message) -> std::string
+			{
+				if (ch.size() == 1 && (hostnameChar(ch[0]) || ch[0] == '-'))
+					return ch;
+				if (ch == " " || ch == "_")
+				{
+					message = _("A SPACE BECOMES A HYPHEN IN A DEVICE NAME");
+					return "-";
+				}
+				message = _("THAT CHARACTER CAN'T BE USED IN A DEVICE NAME. LETTERS, DIGITS AND HYPHENS ONLY.");
+				return "";
+			});
+			window->pushGui(kb);
+		});
 #endif
 
 	// Wifi enable

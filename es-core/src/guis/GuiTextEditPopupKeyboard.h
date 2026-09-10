@@ -18,6 +18,15 @@ public:
 	void onSizeChanged();
 	std::vector<HelpPrompt> getHelpPrompts() override;
 
+	// A rule for what may be typed. Given one character, the filter returns
+	// what to insert in its place -- itself, a substitute, or nothing -- and
+	// may set a message the popup shows once, briefly, as a toast. It applies
+	// to the on-screen keys, the shoulder-button space, and characters from a
+	// physical keyboard alike, so a field with a rule cannot be typed past
+	// (the HOSTNAME row: letters, digits and hyphens; fork #106).
+	void setCharacterFilter(const std::function<std::string(const std::string& typed, std::string& message)>& filter) { mFilter = filter; }
+	void textInput(const char* text) override;
+
 private:
 	class KeyboardButton
 	{
@@ -49,6 +58,10 @@ private:
 	std::shared_ptr<ComponentGrid> mKeyboardGrid;
 	
 	std::function<void(const std::string&)> mOkCallback;
+	std::function<std::string(const std::string&, std::string&)> mFilter;
+
+	// Every character reaches the field through here, filtered.
+	void insert(const std::string& text);
 
 	bool mMultiLine;
 	bool mShift = false;	
