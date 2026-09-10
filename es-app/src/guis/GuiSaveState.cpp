@@ -8,6 +8,7 @@
 #include "SystemConf.h"
 #include "guis/GuiMsgBox.h"
 #include "SaveStateRepository.h"
+#include "ThreadedCloudSync.h"
 
 #define WINDOW_HEIGHT Renderer::getScreenHeight() * 0.40f
 
@@ -223,6 +224,19 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 
 	if (input.value != 0 && config->isMappedTo("y", input))
 	{
+		// Every writer of the saves tree is gated by the transfer lock
+		// (D-CLOUD-053): a deletion and the renumber it triggers, landing
+		// while a sync is reading that tree, is the race the maintainer
+		// named -- exit a game, the backup starts, delete a save under it.
+		// Refused, never waited for (nobody waits, #22 R6), in the words the
+		// launch gate uses for the same state.
+		if (ThreadedCloudSync::isRunning())
+		{
+			mWindow->pushGui(new GuiMsgBox(mWindow,
+				_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE DELETING A SAVE STATE - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));
+			return true;
+		}
+
 		if (mGrid->size())
 		{
 			mWindow->pushGui(new GuiMsgBox(mWindow, _("ARE YOU SURE YOU WANT TO DELETE THIS ITEM?"), _("YES"), 
