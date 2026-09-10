@@ -122,11 +122,34 @@ AsyncNotificationComponent::~AsyncNotificationComponent()
 	delete mGrid;	
 }
 
+// The first candidate that fits the row, else the last one offered.
+//
+// Sizing text is a glyph lookup per character and the font atlas is a GL
+// resource, so this runs on the interface thread (render) and never on the
+// worker that composed the strings. A row that has not been sized yet gets
+// the first candidate: the full form is the right answer when nothing is
+// known, and the row is re-chosen when the candidates next change.
+std::string AsyncNotificationComponent::chooseThatFits(const std::shared_ptr<TextComponent>& row, const std::vector<std::string>& candidates)
+{
+	std::string shown;
+
+	const float width = (row == nullptr) ? 0.0f : row->getSize().x();
+	for (auto& candidate : candidates)
+	{
+		shown = candidate;
+		if (width <= 0.0f || row->getFont() == nullptr || row->getFont()->sizeText(candidate).x() <= width)
+			break;
+	}
+
+	return shown;
+}
+
 void AsyncNotificationComponent::updateText(const std::string text, const std::string action)
 {
 	std::unique_lock<std::mutex> lock(mMutex);
 
-	mNextGameName = text;
+	mNextGameName.clear();
+	mNextGameName.push_back(text);
 	mNextAction.clear();
 	mNextAction.push_back(action);
 }
@@ -135,7 +158,20 @@ void AsyncNotificationComponent::updateText(const std::string text, const std::v
 {
 	std::unique_lock<std::mutex> lock(mMutex);
 
-	mNextGameName = text;
+	mNextGameName.clear();
+	mNextGameName.push_back(text);
+	mNextAction = actionCandidates;
+	if (mNextAction.empty())
+		mNextAction.push_back("");
+}
+
+void AsyncNotificationComponent::updateText(const std::vector<std::string>& textCandidates, const std::vector<std::string>& actionCandidates)
+{
+	std::unique_lock<std::mutex> lock(mMutex);
+
+	mNextGameName = textCandidates;
+	if (mNextGameName.empty())
+		mNextGameName.push_back("");
 	mNextAction = actionCandidates;
 	if (mNextAction.empty())
 		mNextAction.push_back("");
@@ -161,27 +197,29 @@ void AsyncNotificationComponent::render(const Transform4x4f& parentTrans)
 
 	Transform4x4f trans = parentTrans * getTransform();
 
-	if (mGameName != nullptr && mNextGameName != mGameName->getText())
-		mGameName->setText(mNextGameName);
+	// Both rows re-chosen only when their candidates change: sizing text is
+	// a glyph lookup per character, and this runs every frame.
+	if (mGameName != nullptr)
+	{
+		std::string key;
+		for (auto& c : mNextGameName)
+			key += c + "\n";
+		if (key != mAppliedGameName)
+		{
+			mAppliedGameName = key;
+			mGameName->setText(chooseThatFits(mGameName, mNextGameName));
+		}
+	}
 
 	if (mAction != nullptr)
 	{
-		// Re-chosen only when the candidates change: sizing text is a glyph
-		// lookup per character, and this runs every frame.
 		std::string key;
 		for (auto& c : mNextAction)
 			key += c + "\n";
 		if (key != mAppliedAction)
 		{
 			mAppliedAction = key;
-			std::string shown;
-			for (auto& c : mNextAction)
-			{
-				shown = c;
-				if (mAction->getFont() == nullptr || mAction->getFont()->sizeText(c).x() <= mAction->getSize().x())
-					break;
-			}
-			mAction->setText(shown);
+			mAction->setText(chooseThatFits(mAction, mNextAction));
 		}
 	}
 

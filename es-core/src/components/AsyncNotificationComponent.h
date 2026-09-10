@@ -32,6 +32,12 @@ public:
 	// card's outcome line (D-UI-028): what is in place plus how to recover
 	// where both fit, the recovery alone where they do not.
 	void updateText(const std::string text, const std::vector<std::string>& actionCandidates);
+	// Both rows from candidates. The text row is composed too -- the
+	// outcome word and then a whole sentence saying why -- so it runs off
+	// a 640x480 panel and was clipped mid-word with an ellipsis, which is
+	// the one thing a reason line must not do (#115). Same rule as the
+	// action row: longest first, first that fits.
+	void updateText(const std::vector<std::string>& textCandidates, const std::vector<std::string>& actionCandidates);
 	void updatePercent(int percent);
 
 	float getFading() { return mFadeOut; }
@@ -46,10 +52,14 @@ private:
 	std::shared_ptr<TextComponent> mGameName;
 	std::shared_ptr<TextComponent> mAction;
 
-	std::string mNextGameName;
+	std::vector<std::string> mNextGameName; // candidates, longest first
+	std::string mAppliedGameName;           // the candidates the row was last chosen from, joined
 	std::string mNextTitle;
 	std::vector<std::string> mNextAction;   // candidates, longest first
 	std::string mAppliedAction;             // the candidates the row was last chosen from, joined
+
+	// The first candidate that fits the row, else the last one offered.
+	static std::string chooseThatFits(const std::shared_ptr<TextComponent>& row, const std::vector<std::string>& candidates);
 
 	ComponentGrid* mGrid;
 	NinePatchComponent* mFrame;
