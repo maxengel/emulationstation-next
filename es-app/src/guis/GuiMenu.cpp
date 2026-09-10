@@ -254,6 +254,96 @@ GuiMenu::GuiMenu(Window *window, bool animate) : GuiComponent(window), mMenu(win
 	}
 }
 
+// A maintenance script run headlessly, with the outcome on a dialog.
+//
+// The ten rows on this page -- the two settings-backup rows and the eight
+// resets -- used to hand their command to /usr/bin/run: EmulationStation was
+// stopped, the script scrolled past on a console for as long as it ran, and
+// the UI came back. Nothing carried the result. runSystemCommand double-forks
+// and always returns 0, and /usr/bin/run exited 0 on both halves of its
+// console branch whatever the command did, so a factory reset that reset
+// nothing and one that worked were the same press with the same ending: the
+// carousel (#119).
+//
+// executeScriptLegacy hands back the real status and every line the script
+// printed, so the work happens behind a spinner and ends in a message. The
+// scripts print the why in the player's words at the point of failure
+// (D-UI-028), so the failure sentence is the script's own last line where
+// there is one, and the row's sentence only where the script died without
+// saying anything.
+static std::string maintenancePlainLine(const std::string& line)
+{
+	// The scripts colour their failure sentence for whoever is reading a
+	// console, and the cloud pages' ">>> " protocol lines are not sentences.
+	// Neither belongs on a dialog.
+	std::string out;
+	for (size_t i = 0; i < line.size(); i++)
+	{
+		if (line[i] == 0x1B)
+		{
+			while (i < line.size() && line[i] != 'm')
+				i++;
+			continue;
+		}
+		out += line[i];
+	}
+	return Utils::String::trim(out);
+}
+
+// The configuration on disk is no longer the one this process holds: a
+// settings restore has replaced it and a factory reset has removed it. Re-read
+// both before anything can write the old values back over what just happened
+// -- ViewController::saveState() saves es_settings.cfg on the way out whenever
+// the player has moved to another system since this boot, and that write
+// carries every other setting with it (#114).
+static void maintenanceRestart()
+{
+	Settings::getInstance()->loadFile();
+	SystemConf::getInstance()->loadSystemConf();
+	Utils::Platform::quitES(Utils::Platform::QuitMode::REBOOT);
+}
+
+static void runMaintenanceCommand(Window* window, const std::string& cmd, const std::string& busyTitle,
+	const std::string& doneText, const std::string& failText, std::function<void()> onCompleted = nullptr)
+{
+	window->pushGui(new GuiLoading<std::pair<int, std::string>>(window, busyTitle,
+		[cmd](auto gui)
+		{
+			std::string last;
+			std::string why;
+			int rc = ApiSystem::executeScriptLegacy(cmd, [&last, &why](const std::string line)
+			{
+				const std::string clean = maintenancePlainLine(line);
+				if (clean.empty())
+					return;
+				if (clean.rfind(">>> why ", 0) == 0)
+				{
+					why = Utils::String::trim(clean.substr(8));
+					return;
+				}
+				if (clean.rfind(">>> ", 0) == 0)
+					return;
+				last = clean;
+			}).second;
+
+			if (rc == 0)
+				return std::pair<int, std::string>(0, "");
+			return std::pair<int, std::string>(rc, last.empty() ? why : last);
+		},
+		[window, doneText, failText, onCompleted](std::pair<int, std::string> result)
+		{
+			if (result.first == 0)
+			{
+				window->pushGui(new GuiMsgBox(window, doneText, _("OK"),
+					[onCompleted] { if (onCompleted != nullptr) onCompleted(); }));
+				return;
+			}
+
+			const std::string why = result.second.empty() ? failText : Utils::String::toUpper(result.second);
+			window->pushGui(new GuiMsgBox(window, _("COULDN'T FINISH") + " - " + why, _("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
+		}));
+}
+
 void GuiMenu::openResetOptions()
 {
 	Window *window = mWindow;
@@ -263,15 +353,26 @@ void GuiMenu::openResetOptions()
 	s->addGroup(_("DATA MANAGEMENT"));
 	s->addEntry(_("BACK UP SETTINGS TO THIS DEVICE"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/?\n\nWI-FI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR TURN ON SETTINGS BACKUP UNDER CLOUD SETTINGS."), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool backup\"", "", nullptr);
+		[window] {
+		// backuptool names the archive it wrote to the system log only, so
+		// the dialog says where the backups live rather than which file this
+		// one is -- a filename is not something to read off a 3.5-inch panel.
+		runMaintenanceCommand(window, "/usr/bin/backuptool backup", _("PACKING UP YOUR SETTINGS..."),
+			_("SETTINGS BACKED UP TO THIS DEVICE.\n\nCOPY IT SOMEWHERE SAFE, OR BACK UP SETTINGS TO THE CLOUD FROM GAME SETTINGS."),
+			_("THE BACKUP COULDN'T FINISH. YOUR LAST BACKUP IS UNCHANGED."));
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESTORE CONFIGURATION FROM DEVICE"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FROM THE NEWEST BACKUP IN /storage/roms/backup/?\n\nYOUR EXISTING CONFIGURATION WILL BE OVERWRITTEN AND THE DEVICE WILL REBOOT. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED AFTERWARDS."), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/backuptool restore\"", "", nullptr);
+		[window] {
+		// --no-restart, and the restart happens after the message: left to
+		// itself backuptool sleeps five seconds and reboots, which takes the
+		// screen away at the moment it has the outcome on it (#114). Nothing
+		// restarts on a failure.
+		runMaintenanceCommand(window, "/usr/bin/backuptool restore --no-restart", _("RESTORING YOUR SETTINGS..."),
+			_("SETTINGS RESTORED. THIS DEVICE RESTARTS SO THEY TAKE EFFECT."),
+			_("THE RESTORE COULDN'T FINISH."), maintenanceRestart);
 		}, _("NO"), nullptr));
 	});
 
@@ -296,43 +397,62 @@ void GuiMenu::openResetOptions()
 	s->addGroup(_("EMULATOR MANAGEMENT"));
 	s->addEntry(_("RESET RETROARCH CONFIG TO DEFAULT"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: RETROARCH CONFIG WILL RESET TO DEFAULT\n\nPER-CORE CONFIGURATIONS WILL NOT BE AFFECTED AND NO BACKUP WILL BE CREATED!\n\nRESET RETROARCH CONFIG TO DEFAULT?"), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset retroarch\"", "", nullptr);
+		[window] {
+		runMaintenanceCommand(window, "/usr/bin/factoryreset retroarch", _("RESETTING RETROARCH..."),
+			_("RETROARCH CONFIG RESET TO DEFAULT."),
+			_("THE RETROARCH CONFIG COULDN'T BE RESET."));
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESET OVERLAYS (CORES, CHEATS, JOYPADS, ETC)"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: ALL CUSTOM RETROARCH OVERLAYS WILL BE REMOVED\n\nCUSTOM CORES, JOYSTICKS, CHEATS, ETC. NO BACKUP WILL BE CREATED!\n\nRESET RETROARCH OVERLAYS TO DEFAULT?"), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset overlays\"", "", nullptr);
+		[window] {
+		// The overlay mounts are remade at boot, so this one has always ended
+		// in a restart. The script does it only when nobody asked to be left
+		// in charge of it; here the message comes first.
+		runMaintenanceCommand(window, "/usr/bin/factoryreset overlays --no-restart", _("RESETTING YOUR CUSTOM FILES..."),
+			_("OVERLAYS RESET TO DEFAULT. THIS DEVICE RESTARTS SO THEY TAKE EFFECT."),
+			_("THE OVERLAYS COULDN'T BE RESET."), maintenanceRestart);
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("FULLY RESET RETROARCH"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: RETROARCH AND ALL USER SAVED CONFIGURATIONS WILL RESET TO DEFAULT\n\nPER-CORE CONFIGURATIONS WILL BE REMOVED AND NO BACKUP WILL BE CREATED!\n\nRESET RETROARCH?"), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset retroarch-full && /usr/bin/factoryreset overlays\"", "", nullptr);
+		[window] {
+		runMaintenanceCommand(window, "/usr/bin/factoryreset retroarch-full && /usr/bin/factoryreset overlays --no-restart",
+			_("RESETTING RETROARCH..."),
+			_("RETROARCH RESET TO DEFAULT. THIS DEVICE RESTARTS SO IT TAKES EFFECT."),
+			_("RETROARCH COULDN'T BE FULLY RESET."), maintenanceRestart);
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESET MEDNAFEN CONFIG TO DEFAULT"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: MEDNAFEN CONFIG WILL RESET TO DEFAULT\n\nNO BACKUP WILL BE CREATED!\n\nRESET MEDNAFEN CONFIG TO DEFAULT?"), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset mednafen\"", "", nullptr);
+		[window] {
+		// The only reset that removes one file and copies nothing back, so
+		// this is the only failure sentence here that can promise the rest of
+		// the device is as it was.
+		runMaintenanceCommand(window, "/usr/bin/factoryreset mednafen", _("RESETTING MEDNAFEN..."),
+			_("MEDNAFEN CONFIG RESET TO DEFAULT."),
+			_("THE MEDNAFEN CONFIG COULDN'T BE RESET. NOTHING ELSE WAS CHANGED."));
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("RESET STANDALONE EMULATOR CONFIGS TO DEFAULT"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: STANDALONE EMULATOR CONFIGS WILL RESET TO DEFAULT\n\nNO BACKUP WILL BE CREATED!\n\nRESET STANDALONE EMULATOR CONFIGS TO DEFAULT?"), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset standalone\"", "", nullptr);
+		[window] {
+		runMaintenanceCommand(window, "/usr/bin/factoryreset standalone", _("RESETTING THE STANDALONE EMULATORS..."),
+			_("STANDALONE EMULATOR CONFIGS RESET TO DEFAULT."),
+			_("THE STANDALONE EMULATOR CONFIGS COULDN'T ALL BE RESET."));
 		}, _("NO"), nullptr));
 	});
 
         s->addEntry(_("FULLY RESET PORTMASTER"), true, [window] {
         window->pushGui(new GuiMsgBox(window, _("WARNING: PORTMASTER WILL RESET TO DEFAULT\n\nNO BACKUP WILL BE CREATED!\n\nRESET RESET PORTMASTER TO DEFAULT?"), _("YES"),
-                [] {
-                Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset portmaster\"", "", nullptr);
+                [window] {
+                runMaintenanceCommand(window, "/usr/bin/factoryreset portmaster", _("RESETTING PORTMASTER..."),
+                        _("PORTMASTER RESET TO DEFAULT."),
+                        _("PORTMASTER COULDN'T BE RESET."));
                 }, _("NO"), nullptr));
         });
 
@@ -340,15 +460,22 @@ void GuiMenu::openResetOptions()
 
 	s->addEntry(_("AUDIO RESET"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: AUDIO SETTINGS WILL BE RESET TO DEFAULTS AND THE SYSTEM WILL REBOOT!\n\nRESET AUDIO AND RESTART?"), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset audio\"", "", nullptr);
+		[window] {
+		runMaintenanceCommand(window, "/usr/bin/factoryreset audio --no-restart", _("RESETTING THE AUDIO SETTINGS..."),
+			_("AUDIO SETTINGS RESET. THIS DEVICE RESTARTS SO THEY TAKE EFFECT."),
+			_("THE AUDIO SETTINGS COULDN'T BE RESET."), maintenanceRestart);
 		}, _("NO"), nullptr));
 	});
 
 	s->addEntry(_("FACTORY RESET"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: YOUR DATA AND ALL OTHER CONFIGURATIONS WILL BE RESET TO DEFAULTS!\n\nIF YOU WANT TO KEEP YOUR SETTINGS MAKE A BACKUP AND SAVE IT ON AN EXTERNAL DRIVE BEFORE RUNING THIS OPTION!\n\nEJECT YOUR GAME CARD BEFORE PROCEEDING!\n\nRESET SYSTEM AND RESTART?"), _("YES"),
-		[] {
-		Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset ALL\"", "", nullptr);
+		[window] {
+		// No "nothing else was changed" anywhere on this row: by the time it
+		// can fail, most of /storage is gone, and saying otherwise would be a
+		// lie at the worst possible moment.
+		runMaintenanceCommand(window, "/usr/bin/factoryreset ALL --no-restart", _("RESETTING THIS DEVICE..."),
+			_("THIS DEVICE HAS BEEN RESET. IT RESTARTS NOW."),
+			_("THE RESET COULDN'T FINISH."), maintenanceRestart);
 		}, _("NO"), nullptr));
 	});
 
