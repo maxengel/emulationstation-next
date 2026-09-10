@@ -543,8 +543,10 @@ void Settings::loadFile()
 	const std::string backup = path + ".backup";
 
 	// A temporary left by a save that never reached its rename is litter,
-	// not a record: nothing reads it, and the next save replaces it.
+	// not a record: nothing reads it, and the next save replaces it. The
+	// record's own temporary likewise.
 	std::remove((path + ".tmp").c_str());
+	std::remove((path + ".backup.tmp").c_str());
 
 	pugi::xml_document doc;
 	bool loaded = false;

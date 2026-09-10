@@ -133,8 +133,10 @@ bool SystemConf::loadSystemConf()
 	changedConf.clear();
 
 	// A temporary left by a save that never reached its rename is litter,
-	// not a record: nothing reads it, and the next save replaces it.
+	// not a record: nothing reads it, and the next save replaces it. The
+	// record's own temporary likewise.
 	std::remove((mSystemConfFile + ".tmp").c_str());
+	std::remove((mSystemConfFile + ".backup.tmp").c_str());
 
 	bool liveOpened = false;
 	const std::string live = Utils::AtomicFile::readText(mSystemConfFile, &liveOpened);
