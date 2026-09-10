@@ -1,4 +1,5 @@
 #include "guis/GuiTextEditPopupKeyboard.h"
+#include "Window.h"
 #include "components/MenuComponent.h"
 #include "utils/StringUtil.h"
 #include "Log.h"
@@ -374,16 +375,7 @@ bool GuiTextEditPopupKeyboard::input(InputConfig* config, Input input)
 
 	// For Adding a space (Right Top Button)
 	if (config->isMappedTo("rightshoulder", input) && input.value)
-	{
-		bool editing = mText->isEditing();
-		if (!editing)
-			mText->startEditing();
-
-		mText->textInput(" ");
-
-		if (!editing)
-			mText->stopEditing();
-	}
+		insert(" ");
 
 	// For Shifting (Y)
 	if (config->isMappedTo("y", input) && input.value) 
@@ -461,6 +453,55 @@ std::vector<HelpPrompt> GuiTextEditPopupKeyboard::getHelpPrompts()
 	return prompts;
 }
 
+// One way in for every character. With a filter set, each character of the
+// text is offered to it -- a UTF-8 sequence at a time -- and what comes back
+// is what goes in; the first message the filter sets is shown once as a
+// toast. Control characters (delete, the multi-line return) pass untouched.
+void GuiTextEditPopupKeyboard::insert(const std::string& text)
+{
+	std::string out = text;
+	if (mFilter && text != "\b" && text != "\r\n")
+	{
+		out.clear();
+		std::string message;
+		size_t cursor = 0;
+		while (cursor < text.size())
+		{
+			size_t next = Utils::String::nextCursor(text, cursor);
+			if (next <= cursor)
+				next = cursor + 1;
+			std::string one;
+			out += mFilter(text.substr(cursor, next - cursor), one);
+			if (message.empty())
+				message = one;
+			cursor = next;
+		}
+		if (!message.empty())
+			mWindow->displayNotificationMessage(message, 2500);
+		if (out.empty())
+			return;
+	}
+
+	bool editing = mText->isEditing();
+	if (!editing)
+		mText->startEditing();
+	mText->textInput(out.c_str());
+	if (!editing)
+		mText->stopEditing();
+}
+
+// Characters from a physical keyboard. Without a filter they reach the field
+// as they always did; with one they take the same door as the on-screen keys.
+void GuiTextEditPopupKeyboard::textInput(const char* text)
+{
+	if (mFilter && text != nullptr && text[0] != '\0' && text[0] != '\b' && text[0] != '\r' && text[0] != '\n')
+	{
+		insert(text);
+		return;
+	}
+	GuiComponent::textInput(text);
+}
+
 std::shared_ptr<ButtonComponent> GuiTextEditPopupKeyboard::makeButton(const std::string& key, const std::string& shiftedKey, const std::string& altedKey, const std::string& altedShiftedKey)
 {
 	std::shared_ptr<ButtonComponent> button = std::make_shared<ButtonComponent>(mWindow, key, key, [this, key, shiftedKey, altedKey, altedShiftedKey]
@@ -485,7 +526,7 @@ std::shared_ptr<ButtonComponent> GuiTextEditPopupKeyboard::makeButton(const std:
 		}
 		else if (key == _("SPACE") || key == " ")
 		{
-			mText->startEditing(); mText->textInput(" "); mText->stopEditing();
+			insert(" ");
 			return;
 		}
 		else if (key == _("RESET"))
@@ -508,8 +549,6 @@ std::shared_ptr<ButtonComponent> GuiTextEditPopupKeyboard::makeButton(const std:
 				return;
 		}
 
-		mText->startEditing();
-
 		const char* text;
 		if (mAlt && mShift)
 			text = altedShiftedKey.c_str();
@@ -519,9 +558,7 @@ std::shared_ptr<ButtonComponent> GuiTextEditPopupKeyboard::makeButton(const std:
 			text = shiftedKey.c_str();
 		else
 			text = key.c_str();
-		mText->textInput(text);
-
-		mText->stopEditing();
+		insert(text);
 
 		if (Utils::String::isKorean(text) && mShift)
 			shiftKeys();
