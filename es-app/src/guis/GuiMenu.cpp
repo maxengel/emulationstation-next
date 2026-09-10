@@ -3860,20 +3860,49 @@ static void cloudAddCentredLine(GuiSettings* s, Window* window, const std::strin
 	s->addRow(row);
 }
 
+// What --scan said and how it ended. The exit code is the difference between
+// an empty cloud and a cloud that could not be read (below).
+struct CloudScanResult
+{
+	std::vector<std::string> scan;
+	int rc = -1;
+	std::vector<std::string> selected;
+};
+
 static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel, bool backup, bool content, bool media, const std::string& perSystem, const std::string& wholeDevice)
 {
-	window->pushGui(new GuiLoading<std::pair<std::vector<std::string>, std::vector<std::string>>>(
+	window->pushGui(new GuiLoading<CloudScanResult>(
 		window, backup ? _("COMPARING THIS DEVICE'S CONTENT WITH YOUR CLOUD") : _("COMPARING YOUR CLOUD'S CONTENT WITH THIS DEVICE"),
 		[content, media](auto gui)
 		{
-			auto scan = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudContentMode(content, media));
-			auto sel  = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
-			return std::make_pair(scan, sel);
+			// The pair form, for the exit code: the list form threw it away,
+			// and a scan that exited 69 with nothing on stdout -- no network
+			// -- was handed to the page as an empty cloud (#105).
+			CloudScanResult r;
+			r.rc = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudContentMode(content, media),
+				[&r](const std::string& line) { r.scan.push_back(line); }).second;
+			r.selected = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
+			return r;
 		},
-		[window, onDone, proceedLabel, backup, perSystem, wholeDevice](std::pair<std::vector<std::string>, std::vector<std::string>> result)
+		[window, onDone, proceedLabel, backup, perSystem, wholeDevice](CloudScanResult result)
 		{
+			// A scan that could not read the cloud says so, and says what to
+			// do; only a scan that read it and found nothing shows the
+			// nothing-found text below (D-CLOUD-077: a scan that fails must
+			// say so, not show an empty cloud).
+			if (result.rc == CloudExit::NoNetwork)
+			{
+				window->pushGui(new GuiMsgBox(window, _("COULDN'T REACH YOUR CLOUD.\n\nTRY AGAIN WHEN YOU'RE ONLINE.")));
+				return;
+			}
+			if (result.rc != 0)
+			{
+				window->pushGui(new GuiMsgBox(window, _("COULDN'T READ YOUR CLOUD'S CONTENT.\n\nTRY AGAIN.")));
+				return;
+			}
+
 			std::set<std::string> chosen;
-			for (auto& line : result.second)
+			for (auto& line : result.selected)
 			{
 				auto name = Utils::String::trim(line);
 				if (!name.empty())
@@ -3887,7 +3916,7 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			// missing fields as "nothing to move".
 			struct Found { std::string name; unsigned long cloudBytes; bool supported; unsigned long localBytes; int cloudNotHere; int hereNotCloud; unsigned long cloudNotHereBytes; unsigned long hereNotCloudBytes; bool sized; };
 			std::vector<Found> found;
-			for (auto& line : result.first)
+			for (auto& line : result.scan)
 			{
 				auto p = Utils::String::split(Utils::String::trim(line), '|', true);
 				if (p.size() < 3)
