@@ -34,7 +34,7 @@ ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
 	// carries the clause once the outcome is known.
 	mWndNotification = mWindow->createAsyncNotificationComponent(true);
 	mWndNotification->updateTitle(ICONINDEX + (mRunning.empty() ? mTitle : mRunning));
-	mWndNotification->updateText(_("Working..."));
+	mWndNotification->updateText(_("STARTING..."));
 	mWndNotification->updatePercent(-1);
 
 	mHandle = new std::thread(&ThreadedCloudSync::run, this);
@@ -63,15 +63,15 @@ std::string ThreadedCloudSync::whyForCode(int rc)
 {
 	switch (rc)
 	{
-		case 3: case 4: return _("YOUR CLOUD FOLDER WASN'T FOUND");
+		case 3: case 4: return _("COULDN'T FIND YOUR CLOUD FOLDER");
 		case 5:         return _("YOUR CLOUD STOPPED ANSWERING");
-		case 7: case 8: return _("YOUR CLOUD REFUSED THE TRANSFER");
+		case 7: case 8: return _("YOUR CLOUD WOULDN'T TAKE THE FILES");
 		case CloudExit::Stopped:   return _("IT WAS STOPPED");
 		// The sentinels, for a part that exited one beside a part that did
 		// not (the transfer page's line 4): the same words the SKIPPED
 		// outcome uses, so one code is never called two things.
-		case CloudExit::NoNetwork: return _("NO NETWORK CONNECTION");
-		case CloudExit::LockHeld:  return _("ANOTHER CLOUD SYNC IS RUNNING");
+		case CloudExit::NoNetwork: return _("YOU'RE NOT ONLINE");
+		case CloudExit::LockHeld:  return _("A SYNC IS ALREADY RUNNING");
 		default:        return _("SOMETHING WENT WRONG");
 	}
 }
@@ -122,9 +122,9 @@ static std::string inPlaceClause(Verb verb, bool moved)
 {
 	switch (verb)
 	{
-		case Verb::Sync:    return moved ? _("THE SAVES THAT MOVED ARE ON BOTH SIDES. THE REST ARE AS THEY WERE.") : _("YOUR SAVES ARE AS THEY WERE.");
-		case Verb::Backup:  return moved ? _("WHAT WAS SENT IS IN YOUR CLOUD. THE REST IS STILL ON THIS DEVICE.") : _("NOTHING WAS SENT. YOUR CLOUD IS AS IT WAS.");
-		case Verb::Restore: return moved ? _("WHAT ARRIVED IS ON THIS DEVICE. THE REST IS AS IT WAS.") : _("NOTHING ARRIVED. THIS DEVICE IS AS IT WAS.");
+		case Verb::Sync:    return moved ? _("THE SAVES THAT MADE IT ARE ON BOTH SIDES. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
+		case Verb::Backup:  return moved ? _("WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.") : _("DON'T WORRY, NOTHING CHANGED.");
+		case Verb::Restore: return moved ? _("WHAT MADE IT IS ON THIS DEVICE. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
 		default:            return "";
 	}
 }
@@ -262,7 +262,7 @@ void ThreadedCloudSync::run()
 				auto comma = clean.find(',');
 				const std::string count = Utils::String::trim(
 					clean.substr(7, comma == std::string::npos ? std::string::npos : comma - 7));
-				clean = _("COMPARING SAVE FILES WITH THE CLOUD") + std::string(" ") + count;
+				clean = _("COMPARING YOUR SAVES WITH THE CLOUD") + std::string(" ") + count;
 			}
 
 			if (informative && !clean.empty() && mWndNotification != nullptr)
@@ -336,7 +336,7 @@ void ThreadedCloudSync::run()
 	std::string outcome, token;
 	if (cancelled)
 	{
-		outcome = _("SKIPPED - A GAME WAS STARTED");
+		outcome = _("SKIPPED - YOU STARTED A GAME");
 		token = "cancelled";
 	}
 	else if (completed)
@@ -351,12 +351,12 @@ void ThreadedCloudSync::run()
 	}
 	else if (ret == CloudExit::LockHeld)
 	{
-		outcome = _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING");
+		outcome = _("SKIPPED - A SYNC IS ALREADY RUNNING");
 		token = "lock-held";
 	}
 	else if (ret == CloudExit::NoNetwork)
 	{
-		outcome = _("SKIPPED - NO NETWORK CONNECTION");
+		outcome = _("SKIPPED - YOU'RE NOT ONLINE");
 		token = "no-network";
 	}
 	else
@@ -403,24 +403,24 @@ void ThreadedCloudSync::run()
 
 			std::string recover;
 			if (cancelled && mGameExitSync)
-				recover = _("YOUR SAVES ARE SENT WHEN YOU EXIT THE GAME.");
+				recover = _("YOUR SAVES GO UP WHEN YOU EXIT THE GAME.");
 			else if (mOrigin == Origin::Startup)
-				recover = _("IT RUNS AGAIN AT THE NEXT STARTUP, OR UNDER GAME SETTINGS > SYNC SAVES WITH THE CLOUD");
+				recover = _("IT'LL TRY AGAIN AT STARTUP, OR SYNC NOW FROM GAME SETTINGS.");
 			else if (mOrigin == Origin::Exit)
-				recover = _("IT RUNS AGAIN WHEN YOU EXIT A GAME");
+				recover = _("IT'LL TRY AGAIN WHEN YOU EXIT A GAME.");
 			else if (ret == CloudExit::NoNetwork)
 				recover = _("TRY AGAIN WHEN YOU'RE ONLINE.");
 			else if (ret == CloudExit::LockHeld)
 				recover = _("WAIT FOR IT TO FINISH, THEN TRY AGAIN.");
 			else if (mOrigin == Origin::Manual)
-				recover = _("TRY AGAIN: GAME SETTINGS > ") + std::string(
+				recover = _("TRY AGAIN FROM GAME SETTINGS > ") + std::string(
 					verb == Verb::Sync ? _("SYNC SAVES WITH THE CLOUD")
 					: verb == Verb::Restore ? _("RESTORE SAVES FROM THE CLOUD")
 					: _("BACK UP SAVES TO THE CLOUD"));
 			else if (mCommand.find("cloud_migrate_layout") != std::string::npos)
-				recover = _("TRY AGAIN: GAME SETTINGS > MANAGE CLOUD STORAGE > TIDY UP YOUR CLOUD FOLDERS");
+				recover = _("TRY AGAIN FROM MANAGE CLOUD STORAGE > TIDY UP YOUR CLOUD FOLDERS");
 			else
-				recover = _("TRY AGAIN: GAME SETTINGS > MANAGE CLOUD STORAGE > BACK UP TO THE CLOUD");
+				recover = _("TRY AGAIN FROM MANAGE CLOUD STORAGE > BACK UP TO THE CLOUD");
 
 			// Candidates, longest first; the card measures them in the row's
 			// own font on the interface thread and shows the first that
@@ -434,7 +434,7 @@ void ThreadedCloudSync::run()
 				action.push_back(inPlace + " " + recover);
 			action.push_back(recover);
 			if (mOrigin == Origin::Startup)
-				action.push_back(_("IT RUNS AGAIN AT THE NEXT STARTUP."));
+				action.push_back(_("IT'LL TRY AGAIN NEXT STARTUP."));
 		}
 		mWndNotification->updateText(outcome, action);
 
@@ -472,7 +472,7 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 {
 	if (ThreadedCloudSync::mInstance != nullptr)
 	{
-		window->pushGui(new GuiMsgBox(window, _("A CLOUD SYNC IS ALREADY RUNNING.")));
+		window->pushGui(new GuiMsgBox(window, _("A SYNC IS ALREADY RUNNING.")));
 		return;
 	}
 

@@ -289,9 +289,9 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome() const
 	else if (o.partial)
 		o.word = _("COULDN'T FINISH");
 	else if (code == CloudExit::LockHeld)
-		o.word = _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING");
+		o.word = _("SKIPPED - A SYNC IS ALREADY RUNNING");
 	else if (code == CloudExit::NoNetwork)
-		o.word = _("SKIPPED - NO NETWORK CONNECTION");
+		o.word = _("SKIPPED - YOU'RE NOT ONLINE");
 	else
 		o.word = _("COULDN'T FINISH");
 	return o;
@@ -617,7 +617,7 @@ void GuiCloudTransfer::update(int deltaTime)
 					detail += (detail.empty() ? "" : "   ") + d;
 				mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
 				if (mAnyTransferred)
-					mCounter->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DID NOT WERE DOWNLOADED TOO."), mLineWidth));
+					mCounter->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DIDN'T CAME DOWN TOO."), mLineWidth));
 			}
 		}
 		else
@@ -653,10 +653,10 @@ void GuiCloudTransfer::update(int deltaTime)
 				// so the sentence is not offered. The clause after the dash
 				// is dropped whole on a panel too narrow for it, rather than
 				// ending in an ellipsis -- measured in the font it is set in.
-				summary = restore ? _("NOTHING NEW TO RECEIVE - EVERYTHING WAS ALREADY ON THIS DEVICE")
-				                  : _("NOTHING NEW TO SEND - EVERYTHING WAS ALREADY IN YOUR CLOUD");
+				summary = restore ? _("NOTHING NEW - YOU ALREADY HAD IT ALL")
+				                  : _("NOTHING NEW - YOUR CLOUD ALREADY HAD IT ALL");
 				if (mTextFont && mTextFont->sizeText(summary).x() > mLineWidth)
-					summary = restore ? _("NOTHING NEW TO RECEIVE") : _("NOTHING NEW TO SEND");
+					summary = restore ? _("NOTHING NEW TO BRING DOWN") : _("NOTHING NEW TO SEND UP");
 			}
 			mActivity->setText(fitOneLine(mTextFont, summary, mLineWidth));
 			mDetail  ->setText("");
@@ -706,16 +706,16 @@ void GuiCloudTransfer::update(int deltaTime)
 		{
 			const bool moved = mAnyTransferred || mRunFiles > 0;
 			if (match)
-				note = mRemovedFiles == 0 ? _("NOTHING WAS REMOVED.")
+				note = mRemovedFiles == 0 ? _("NOTHING WAS REMOVED FROM THIS DEVICE.")
 					: mRemovedFiles == 1 ? _("1 FILE WAS REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS IT.")
 					: std::to_string(mRemovedFiles) + " " + std::string(_("FILES WERE REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS THEM."));
 			else if (restore)
-				note = moved ? _("WHAT ARRIVED IS ON THIS DEVICE. THE REST IS AS IT WAS.") : _("NOTHING ARRIVED. THIS DEVICE IS AS IT WAS.");
+				note = moved ? _("WHAT MADE IT IS ON THIS DEVICE. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
 			else
-				note = moved ? _("WHAT WAS SENT IS IN YOUR CLOUD. THE REST IS STILL ON THIS DEVICE.") : _("NOTHING WAS SENT. YOUR CLOUD IS AS IT WAS.");
+				note = moved ? _("WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.") : _("DON'T WORRY, NOTHING CHANGED.");
 		}
 		else if (contentRun && (mRemovedFiles > 0 || mAnyTransferred))
-			note = _("UPDATE GAMELISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
+			note = _("UPDATE GAME LISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
 		// Two sentences on a 640px panel do not fit the small font; the
 		// first alone says what is in place, so it is what survives.
 		mNote->setText(fitSentences(mSmallFont, note, mLineWidth));
@@ -810,7 +810,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			// this page can use, so ES announces it (">>> doing archive") and
 			// the settings item says what it is doing like every other item,
 			// rather than sitting on a spinner (maintainer, 2026-09-09).
-			doing = _("WRITING THE SETTINGS ARCHIVE...");
+			doing = _("PACKING UP YOUR SETTINGS...");
 		}
 		else if (mItemIndex > 0)
 			doing = _("WORKING...");
