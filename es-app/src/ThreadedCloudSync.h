@@ -111,6 +111,7 @@ private:
 	// run where one part finished and another did not is COMPLETED WITH
 	// GAPS rather than the last part's code (D-UI-028).
 	std::string					mWhy;
+	std::string					mOffer;   // a question the script asked us to put to the player once the run ends (#100)
 	bool						mMoved{false};
 	std::vector<std::pair<std::string, int>> mTiers;
 	// Whether SYNC SAVES WHEN EXITING A GAME is on, read in the constructor

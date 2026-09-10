@@ -3,6 +3,8 @@
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
 #include "guis/GuiMsgBox.h"
+#include "ApiSystem.h"
+#include "guis/GuiLoading.h"
 #include "SystemConf.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/Platform.h"
@@ -200,6 +202,16 @@ void ThreadedCloudSync::run()
 						why.pop_back();
 					if (!why.empty())
 						mWhy = why;
+				}
+				else if (clean.rfind(">>> offer ", 0) == 0)
+				{
+					// A script asking for a question to be put to the player
+					// once the run is over. The only one today: a cloud that
+					// answers with no saves folder in it, which is not a
+					// failure but does leave the player with nothing to
+					// restore and no obvious way forward (#100, D-CLOUD-085).
+					mWaitingForNetwork = false;
+					mOffer = Utils::String::trim(clean.substr(10));
 				}
 				else if (clean.rfind(">>> tier ", 0) == 0)
 				{
@@ -462,6 +474,37 @@ void ThreadedCloudSync::run()
 		// 18 seconds -- once the exit sync came down to about five, the card
 		// spent as long saying it was done as it had spent working.
 		std::this_thread::sleep_for(std::chrono::milliseconds(completed ? 1500 : 5000));
+	}
+
+	// A question the run asked us to put to the player, once its card has
+	// had its say. Pushed on the interface thread, and only when the run
+	// completed -- an offer to create a folder on top of a failure is one
+	// thing too many to read at once.
+	if (completed && mOffer == "create-saves-folder")
+	{
+		Window* window = mWindow;
+		window->postToUiThread([window]()
+		{
+			window->pushGui(new GuiMsgBox(window,
+				_("YOUR CLOUD HAS NO SAVES FOLDER YET, SO THERE WAS NOTHING TO BRING BACK.\n\nCREATE IT NOW, READY FOR YOUR FIRST BACKUP?"),
+				_("CREATE IT"), [window]
+				{
+					window->pushGui(new GuiLoading<int>(window, _("SETTING UP YOUR CLOUD FOLDERS"),
+						[](auto gui)
+						{
+							return ApiSystem::executeScriptLegacy("timeout 90 /usr/bin/cloud_setup --seed-folders",
+								[](const std::string) {}).second;
+						},
+						[window](int rc)
+						{
+							window->pushGui(new GuiMsgBox(window, rc == 0
+								? _("DONE. YOUR SAVES WILL GO THERE THE NEXT TIME YOU BACK THEM UP.")
+								: _("COULDN'T CREATE IT. CHECK YOUR CONNECTION AND TRY AGAIN FROM MANAGE CLOUD STORAGE."),
+								_("OK")));
+						}));
+				},
+				_("NOT NOW"), nullptr));
+		});
 	}
 
 	delete this;
