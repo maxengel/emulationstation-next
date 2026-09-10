@@ -880,6 +880,38 @@ int main(int argc, char* argv[])
 	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
 		GuiMenu::openRestoreRelink(&window, true);
 
+	// A credential can go missing without a marker to say so (#109).
+	//
+	// Settings backups strip secrets on purpose, so a restore leaves the
+	// RetroAchievements username behind with no password and no token.
+	// `backuptool restore` writes the marker above and the page opens; a
+	// restore done by hand over SSH -- which is how the RG SP was put back
+	// together on 2026-09-09 -- writes no marker, and the account was
+	// simply signed out for a day with nothing on any screen saying why.
+	//
+	// So notice the shape instead of waiting to be told about it: a
+	// username with neither a password nor a token is an account that
+	// cannot sign in, whatever lost the credential. The token is what an
+	// earlier sign-in leaves behind, so a device that still has one is
+	// still signed in and is not asked anything.
+	//
+	// Not while the marker's own flow is running -- that page is already
+	// on the stack and covers this and every other credential. Once per
+	// boot by construction: this runs once, and a NOT NOW is answered by
+	// asking again at the next startup, by which time the account is
+	// either back or still signed out.
+	if (!Utils::FileSystem::exists("/storage/.config/.restore-finish-pending")
+		&& !SystemConf::getInstance()->get("global.retroachievements.username").empty()
+		&& SystemConf::getInstance()->get("global.retroachievements.password").empty()
+		&& SystemConf::getInstance()->get("global.retroachievements.token").empty())
+	{
+		LOG(LogInfo) << "retroachievements: username set with no password and no token, offering re-entry";
+		window.pushGui(new GuiMsgBox(&window,
+			_("YOUR RETROACHIEVEMENTS PASSWORD IS MISSING, SO YOU'RE SIGNED OUT.\n\nENTER IT NOW? IF NOT, IT'S IN GAME SETTINGS > RETROACHIEVEMENTS SETTINGS."),
+			_("YES"), [&window] { GuiMenu::openRestoreRelink(&window, false); },
+			_("NOT NOW"), nullptr));
+	}
+
 	// Create a flag in  temporary directory to signal READY state
 	ApiSystem::getInstance()->setReadyFlag();
 

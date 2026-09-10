@@ -78,6 +78,39 @@ std::string ThreadedCloudSync::whyForCode(int rc)
 	}
 }
 
+// A shorter form of a why sentence, for a panel the whole one does not fit
+// on (#115).
+//
+// The whys are written by the scripts at the point of failure and are one
+// sentence each, so the composed line -- outcome word, dash, sentence --
+// runs past the card's row on a 640x480 panel and was clipped mid-word
+// with an ellipsis. A sentence was shortened by hand once to make one of
+// them fit; the next long one clips again, which is why the row is handed
+// forms to choose between instead.
+//
+// Two shapes appear in the sentences the scripts and the table below
+// emit, and both put the part that can go at the end: a trailing clause
+// after a dash (COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN) and a
+// trailing sentence after a full stop. Anything else has no short form,
+// and the caller falls back to the outcome word on its own -- which fits
+// any panel, and is still true.
+static std::string shortenWhy(const std::string& why)
+{
+	const size_t dash = why.find(" - ");
+	if (dash != std::string::npos)
+		return Utils::String::trim(why.substr(0, dash));
+
+	const size_t paren = why.find(" (");
+	if (paren != std::string::npos)
+		return Utils::String::trim(why.substr(0, paren));
+
+	const size_t stop = why.find(". ");
+	if (stop != std::string::npos)
+		return Utils::String::trim(why.substr(0, stop));
+
+	return "";
+}
+
 // The stamp's one-word token for the same code, for the row's reader.
 std::string ThreadedCloudSync::tokenForCode(int rc)
 {
@@ -448,7 +481,28 @@ void ThreadedCloudSync::run()
 			if (mOrigin == Origin::Startup)
 				action.push_back(_("IT'LL TRY AGAIN NEXT STARTUP."));
 		}
-		mWndNotification->updateText(outcome, action);
+		// The outcome line, from candidates too, and for the same reason
+		// as the action line (#115): it is composed -- the outcome word,
+		// then the why -- and the why is a whole sentence. Longest first:
+		// the whole thing, then the why with its trailing clause dropped,
+		// then the outcome word alone, which fits any panel this runs on.
+		// A translation whose outcome line carries no " - " has no split
+		// to make and gets the single candidate it has today.
+		std::vector<std::string> outcomeCandidates;
+		outcomeCandidates.push_back(outcome);
+
+		const size_t outcomeDash = outcome.find(" - ");
+		if (outcomeDash != std::string::npos)
+		{
+			const std::string head = outcome.substr(0, outcomeDash);
+			const std::string tail = outcome.substr(outcomeDash + 3);
+			const std::string shortTail = shortenWhy(tail);
+			if (!shortTail.empty() && shortTail != tail)
+				outcomeCandidates.push_back(head + std::string(" - ") + shortTail);
+			outcomeCandidates.push_back(head);
+		}
+
+		mWndNotification->updateText(outcomeCandidates, action);
 
 		// A full bar on success; otherwise the bar goes, because a progress
 		// bar left standing under COULDN'T FINISH reads as a measure of how
@@ -523,8 +577,15 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
 }
 
-bool ThreadedCloudSync::cancelForLaunch()
+bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal)
 {
+	// Stopping unless we find otherwise: it covers the sync that was
+	// signalled and has not gone yet, and the one that had already gone
+	// before we took the lock. Both are answered by trying again in a
+	// moment; only the player's own sync is answered by waiting.
+	if (refusal != nullptr)
+		*refusal = CancelRefusal::Stopping;
+
 	ThreadedCloudSync* sync = nullptr;
 	pid_t pid = 0;
 	{
@@ -534,7 +595,11 @@ bool ThreadedCloudSync::cancelForLaunch()
 			return false;
 		// The player pressed this one; the launch does not override it.
 		if (sync->mOrigin != Origin::Startup && sync->mOrigin != Origin::Exit)
+		{
+			if (refusal != nullptr)
+				*refusal = CancelRefusal::PlayerStarted;
 			return false;
+		}
 
 		// Cancelled before the signal, so run() finds it set however quickly
 		// pclose returns. The whole group: the command runs under setsid, so

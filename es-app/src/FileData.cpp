@@ -729,10 +729,21 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// A sync the player asked for keeps this refusal: they pressed it, and
 	// can wait for it or stop it themselves. Behind the refusal the scripts'
 	// own flock refuses a second writer.
-	if (ThreadedCloudSync::isRunning() && !ThreadedCloudSync::cancelForLaunch())
+	//
+	// Two refusals, two sentences (#115). Waiting is the answer to a sync
+	// the player pressed: nothing is stopping it, and the card at the top
+	// will say when it is done. It is the wrong answer to the other
+	// refusal -- an automatic sync that was signalled for this launch and
+	// had not gone within the two-second budget -- because that one is on
+	// its way out and a moment later the same press works. Told to wait
+	// for it, somebody waits for a card that has already gone.
+	ThreadedCloudSync::CancelRefusal refusal = ThreadedCloudSync::CancelRefusal::Stopping;
+	if (ThreadedCloudSync::isRunning() && !ThreadedCloudSync::cancelForLaunch(&refusal))
 	{
 		window->pushGui(new GuiMsgBox(window,
-			_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE STARTING A GAME - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));
+			refusal == ThreadedCloudSync::CancelRefusal::PlayerStarted
+				? _("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE STARTING A GAME - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")
+				: _("YOUR SAVES ARE STILL FINISHING UP WITH THE CLOUD.\n\nIT'S STOPPING SO YOU CAN PLAY - TRY AGAIN IN A MOMENT.")));
 		return false;
 	}
 
