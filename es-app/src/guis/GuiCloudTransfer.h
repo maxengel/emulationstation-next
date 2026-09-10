@@ -5,6 +5,7 @@
 #include "components/NinePatchComponent.h"
 #include "components/TextComponent.h"
 
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -33,6 +34,20 @@ public:
 	GuiCloudTransfer(Window* window, const std::string& command, const std::string& title,
 		int itemsExpected = 0, int itemsAfterContent = 0);
 	virtual ~GuiCloudTransfer();
+
+	// What the page does instead of closing, when the run completed.
+	//
+	// A settings restore replaces the configuration under a running
+	// EmulationStation, so there is nowhere safe to go back to: the menu
+	// behind this page is drawn from values the restore has just made
+	// stale, and the next thing that writes them puts the old ones back
+	// over the new. So the page's only exit becomes the action -- any
+	// button takes it -- and the three strings say so: `helpVerb` is the
+	// word on the help bar, `footer` is line 7, and `note` is line 5, what
+	// happens next. Nothing is called when the run did not complete; TRY
+	// AGAIN and CLOSE apply then exactly as they always do (#114).
+	void setCompletedAction(const std::function<void()>& action, const std::string& helpVerb,
+		const std::string& footer, const std::string& note);
 
 	void render(const Transform4x4f& parentTrans) override;
 	bool input(InputConfig* config, Input input) override;
@@ -183,6 +198,10 @@ private:
 	// and the bar ran one block ahead of the text for a frame.
 	bool mShownFinished;
 	int mShownPercent;
+
+	// The completed run's one exit, and the words for it (setCompletedAction).
+	std::function<void()> mCompletedAction;
+	std::string mCompletedHelpVerb, mCompletedFooter, mCompletedNote;
 
 	int mElapsedMs;
 	std::thread* mHandle;

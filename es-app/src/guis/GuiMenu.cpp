@@ -4457,27 +4457,6 @@ static void cloudOpenTransfer(Window* window, bool backup)
 			return;
 		}
 
-		// A settings restore rewrites the configuration and reboots, so it
-		// cannot be one link in a chain -- anything after it would never run.
-		// The journey marker is what carries the rest across the restart --
-		// and backuptool sets it (--then-cloud), after its extract has been
-		// verified, where this used to touch it before the restore ran: a
-		// download that never happened, or a restore that failed, still
-		// produced YOUR SETTINGS WERE RESTORED at the next boot (D-CLOUD-078).
-		if (!backup && wantSettings)
-		{
-			window->pushGui(new GuiMsgBox(window, _("RESTORE SYSTEM SETTINGS FIRST, THEN REBOOT?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. ANYTHING ELSE YOU TICKED IS RESTORED AFTER THE RESTART. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED."), _("YES"),
-				[s]
-				{
-					s->close();
-					Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/cloud_restore --yes --system-only && /usr/bin/backuptool restore --then-cloud\"", "", nullptr);
-				}, _("NO"), nullptr));
-			return;
-		}
-
-		// Order matters on a backup: the settings archive is written last so
-		// the copy that goes up is the current one.
-		std::string cmd;
 		// Each tier runs whatever the one before it did, and the whole run
 		// fails if any part did.
 		//
@@ -4493,12 +4472,66 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// SETTINGS) -- so the page can say which parts finished and which did
 		// not: a run where one did and one did not is a failure with that part's why,
 		// never the last part's code over the first part's files (D-UI-028).
+		std::string cmd;
 		auto add = [&cmd](const std::string& label, const std::string& part)
 		{
 			if (cmd.empty())
 				cmd = "rc=0";
 			cmd += " ; _t=0 ; { " + part + " ; } || _t=$? ; echo \">>> tier " + label + "|$_t\" ; [ \"$_t\" = 0 ] || rc=$_t";
 		};
+
+		// A settings restore rewrites the configuration and restarts the
+		// device, so it cannot be one link in a chain -- anything after it
+		// would never run. The journey marker is what carries the rest
+		// across the restart -- and backuptool sets it (--then-cloud), after
+		// its extract has been verified, where this used to touch it before
+		// the restore ran: a download that never happened, or a restore that
+		// failed, still produced YOUR SETTINGS WERE RESTORED at the next
+		// boot (D-CLOUD-078).
+		//
+		// One tier with two parts, the settings tier of a backup read
+		// backwards: the archive comes down, then backuptool puts it in
+		// place -- and only if it arrived, so a download that failed is not
+		// followed by an extract of whatever was already on the card. ES
+		// announces the item and what the second part is busy with, because
+		// backuptool prints nothing this page can use (the same reason the
+		// backup tier announces its own).
+		//
+		// --no-restart, and the page restarts the device instead: backuptool
+		// left to itself sleeps five seconds and reboots, which takes the
+		// screen away at the exact moment it has the outcome on it. An older
+		// backuptool ignores the option and restarts as it always did (#114).
+		if (!backup && wantSettings)
+		{
+			add("SETTINGS", "echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only"
+				" && { echo '>>> doing unpack' ; /usr/bin/backuptool restore --then-cloud --no-restart ; }");
+			cmd += " ; exit $rc";
+			window->pushGui(new GuiMsgBox(window, _("RESTORE SYSTEM SETTINGS FIRST, THEN RESTART?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. ANYTHING ELSE YOU TICKED IS RESTORED AFTER THE RESTART. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED."), _("YES"),
+				[window, s, cmd]
+				{
+					s->close();
+					auto page = new GuiCloudTransfer(window, cmd, _("RESTORING SETTINGS FROM THE CLOUD"), 1);
+					page->setCompletedAction([]
+					{
+						// The configuration on disk is no longer the one
+						// this process holds. Re-read it before anything
+						// can write the old values back over the restore:
+						// ViewController::saveState() saves es_settings.cfg
+						// on the way out whenever the player has moved to
+						// another system since this boot, and that write
+						// carries every other setting with it.
+						Settings::getInstance()->loadFile();
+						SystemConf::getInstance()->loadSystemConf();
+						Utils::Platform::quitES(Utils::Platform::QuitMode::REBOOT);
+					}, _("RESTART"), _("PRESS ANY BUTTON TO RESTART"),
+					   _("THIS DEVICE RESTARTS SO YOUR RESTORED SETTINGS TAKE EFFECT."));
+					window->pushGui(page);
+				}, _("NO"), nullptr));
+			return;
+		}
+
+		// Order matters on a backup: the settings archive is written last so
+		// the copy that goes up is the current one.
 		// --saves-only: without it the saves scripts run their settings-archive
 		// phase too, and a run with SETTINGS unticked still moved the archive
 		// under a SETTINGS BACKUP label the page then kept showing through the

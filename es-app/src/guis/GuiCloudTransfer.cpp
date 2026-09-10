@@ -159,6 +159,16 @@ GuiCloudTransfer::~GuiCloudTransfer()
 	}
 }
 
+void GuiCloudTransfer::setCompletedAction(const std::function<void()>& action, const std::string& helpVerb,
+	const std::string& footer, const std::string& note)
+{
+	std::unique_lock<std::mutex> lock(mMutex);
+	mCompletedAction = action;
+	mCompletedHelpVerb = helpVerb;
+	mCompletedFooter = footer;
+	mCompletedNote = note;
+}
+
 // The run's starting state. Called from the constructor, and again from
 // input() for TRY AGAIN once the finished worker has been joined -- so no
 // other thread reads these while they are set. The rows that only the done
@@ -222,9 +232,21 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 		if (t.rc == 0 || t.rc == 9)
 			anyTierOk = true;
 	const bool restored = (o.completed || anyTierOk) && mCommand.find("restore") != std::string::npos;
+	// A completed run with an action set has nowhere to go back to
+	// (setCompletedAction), so the press that would have closed the page
+	// takes the action instead. Copied out first: the page is gone by the
+	// time it runs.
+	std::function<void()> completedAction;
+	if (o.completed && mCompletedAction)
+		completedAction = mCompletedAction;
 	lock.unlock();
 	Window* window = mWindow;
 	delete this;
+	if (completedAction)
+	{
+		completedAction();
+		return true;
+	}
 	if (restored)
 		window->postToUiThread([] { SystemData::rescanChangedFolders(); });
 	return true;
@@ -236,9 +258,13 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 	std::unique_lock<std::mutex> lock(mMutex);
 	if (mFinished)
 	{
-		if (!outcome().completed)
+		const Outcome o = outcome();
+		if (!o.completed)
 			prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
-		prompts.push_back(HelpPrompt("b", _("CLOSE")));
+		// The page's one exit says what it does: CLOSE, or the word the
+		// action was given (setCompletedAction).
+		prompts.push_back(HelpPrompt("b", o.completed && mCompletedAction && !mCompletedHelpVerb.empty()
+			? mCompletedHelpVerb : _("CLOSE")));
 	}
 	return prompts;
 }
@@ -716,6 +742,11 @@ void GuiCloudTransfer::update(int deltaTime)
 		}
 		else if (contentRun && (mRemovedFiles > 0 || mAnyTransferred))
 			note = _("UPDATE GAME LISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
+		// A completed run whose only exit is an action says what that
+		// action does here, where a run that finished cleanly otherwise has
+		// nothing to put (setCompletedAction).
+		if (o.completed && mCompletedAction && !mCompletedNote.empty())
+			note = mCompletedNote;
 		// Two sentences on a 640px panel do not fit the small font; the
 		// first alone says what is in place, so it is what survives.
 		mNote->setText(fitSentences(mSmallFont, note, mLineWidth));
@@ -724,7 +755,9 @@ void GuiCloudTransfer::update(int deltaTime)
 		// 7. The retry lives on the surface that reported the failure: A runs
 		// the same command again (input), B closes; the help bar carries the
 		// same two. A run that completed has nothing to retry.
-		mFooter  ->setText(o.completed ? _("PRESS ANY BUTTON TO CLOSE") : _("A  TRY AGAIN     B  CLOSE"));
+		mFooter  ->setText(!o.completed ? _("A  TRY AGAIN     B  CLOSE")
+			: mCompletedAction && !mCompletedFooter.empty() ? mCompletedFooter
+			: _("PRESS ANY BUTTON TO CLOSE"));
 	}
 	else
 	{
@@ -812,6 +845,13 @@ void GuiCloudTransfer::update(int deltaTime)
 			// rather than sitting on a spinner (maintainer, 2026-09-09).
 			doing = _("PACKING UP YOUR SETTINGS...");
 		}
+		else if (mDoing == "unpack")
+		{
+			// The same item on the way back: backuptool is extracting the
+			// archive over the live configuration, and says nothing this
+			// page can use either (">>> doing unpack", #114).
+			doing = _("PUTTING YOUR SETTINGS BACK...");
+		}
 		else if (mItemIndex > 0)
 			doing = _("WORKING...");
 		mActivity->setText(doing);
@@ -871,8 +911,9 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	//   ">>> doing <keyword>" -- what the item is busy with while rclone is
 	//     not running yet. "archive": backuptool is writing the settings
 	//     archive (its own output is discarded), and row 3 says so until the
-	//     next per-file, checks or totals line, or the next unit. Any other
-	//     keyword is a newer script's and is ignored rather than shown raw.
+	//     next per-file, checks or totals line, or the next unit. "unpack":
+	//     the same tool putting one back. Any other keyword is a newer
+	//     script's and is ignored rather than shown raw.
 	//   ">>> removed <files>|<bytes>|<per-system>" -- a match's summary, for
 	//     the done page (below). A match cut off by the network prints it
 	//     before exiting 69, so the page can say what had already gone.
@@ -1000,7 +1041,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	if (line.rfind(">>> doing ", 0) == 0)
 	{
 		const std::string what = Utils::String::trim(line.substr(10));
-		if (what == "archive")
+		if (what == "archive" || what == "unpack")
 			mDoing = what;
 		return;
 	}
