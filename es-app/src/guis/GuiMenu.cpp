@@ -3805,6 +3805,7 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static std::map<std::string, std::string> cloudSetupInfo();
+static std::string cloudProviderLabel(const std::string& type);
 // The device name as the network takes it: ASCII letters and digits, any run
 // of anything else as one hyphen, none at either end, at most 63. The same
 // rule as the scripts' clean_hostname (001-functions), which network-base-setup
@@ -4800,6 +4801,46 @@ void GuiMenu::openCloud(Window* window)
 	s->addGroup(_("CLOUD STORAGE SETUP"));
 	if (configured)
 	{
+		// Who this device is connected to, and whether it answers.
+		//
+		// The page offered to connect a provider and never said one already
+		// was: "there's nowhere where it shows what cloud backend you
+		// currently have, which seems like a miss" (maintainer, 2026-09-10,
+		// fork #110). The name is the player's own label for the remote when
+		// they gave it one, otherwise the provider's name.
+		const std::string provider = cloudProviderLabel(cloudSetupInfo()["REMOTE_TYPE"]);
+		const std::string remoteName = cloudSetupInfo()["REMOTE_NAME"];
+		if (!provider.empty())
+			s->addWithLabel(_("CONNECTED TO"), std::make_shared<TextComponent>(window, provider,
+				ThemeData::getMenuTheme()->Text.font, ThemeData::getMenuTheme()->Text.color));
+
+		// The thing to reach for when a sync has just failed: does the cloud
+		// answer right now? Behind GuiLoading, because it is a network round
+		// trip -- bounded by the script (a single listing, 10 s to connect,
+		// 30 s to answer), so the page cannot hang on it.
+		s->addWithDescription(_("CHECK CONNECTION"), _("SEE WHETHER YOUR CLOUD ANSWERS RIGHT NOW."), nullptr,
+			[window, provider]
+			{
+				window->pushGui(new GuiLoading<int>(window, _("CHECKING YOUR CLOUD..."),
+					[](auto gui)
+					{
+						return ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --check", [](const std::string) {}).second;
+					},
+					[window, provider](int rc)
+					{
+						const std::string who = provider.empty() ? _("YOUR CLOUD") : provider;
+						std::string text;
+						if (rc == 0)
+							text = who + " " + _("ANSWERED. YOU'RE CONNECTED.");
+						else if (rc == 1)
+							text = _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.");
+						else
+							text = _("COULDN'T REACH") + " " + who + ".\n\n"
+								+ _("CHECK WI-FI, THEN TRY AGAIN. IF IT KEEPS FAILING, SIGN IN AGAIN UNDER CONNECT OR REPAIR CLOUD STORAGE.");
+						window->pushGui(new GuiMsgBox(window, text, _("OK")));
+					}));
+			}, "", false, true);
+
 
 		// Came here with the rest of NETWORK SETTINGS' cloud group, and was
 		// missed when that group was deleted -- which left the folder editable
@@ -6081,6 +6122,22 @@ static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED 
 	{ "b2",          "BACKBLAZE B2" },
 	{ "storj",       "STORJ" },
 };
+
+// rclone's word for a service ("drive") in the words the player chose it by
+// ("GOOGLE DRIVE"). The recommendation list above is the same mapping seen
+// from the other side, so it is the one table; a provider set up outside that
+// list falls back to rclone's own word, uppercased, which is at least the
+// name on the tin. Empty in, empty out -- the caller decides what to say when
+// nothing is connected.
+static std::string cloudProviderLabel(const std::string& type)
+{
+	if (type.empty())
+		return "";
+	for (auto& p : CLOUD_RECOMMENDED)
+		if (p.first == type)
+			return p.second;
+	return Utils::String::toUpper(type);
+}
 
 static std::vector<std::string> cloudRemoteLines(const std::string& args)
 {
