@@ -4273,11 +4273,17 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// built to stop it. Independent tiers must not be chained with && (a
 		// failed saves restore would silently skip the ROMs), so the status is
 		// accumulated instead.
-		auto add = [&cmd](const std::string& part)
+		//
+		// And each part reports itself as it ends -- ">>> tier <label>|<rc>",
+		// the label being what the page calls the item (SAVES, ROMS AND BIOS,
+		// SETTINGS) -- so the page can say which parts finished and which did
+		// not: a run where one did and one did not is COMPLETED WITH GAPS,
+		// never the last part's code over the first part's files (D-UI-028).
+		auto add = [&cmd](const std::string& label, const std::string& part)
 		{
 			if (cmd.empty())
 				cmd = "rc=0";
-			cmd += " ; { " + part + " ; } || rc=$?";
+			cmd += " ; _t=0 ; { " + part + " ; } || _t=$? ; echo \">>> tier " + label + "|$_t\" ; [ \"$_t\" = 0 ] || rc=$_t";
 		};
 		// --saves-only: without it the saves scripts run their settings-archive
 		// phase too, and a run with SETTINGS unticked still moved the archive
@@ -4285,9 +4291,10 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// ROMs (maintainer, 2026-09-06). The settings tier below is the only
 		// thing that moves settings.
 		if (wantSaves)
-			add(backup ? "/usr/bin/cloud_backup --yes --saves-only" : "/usr/bin/cloud_restore --yes --saves-only");
+			add("SAVES", backup ? "/usr/bin/cloud_backup --yes --saves-only" : "/usr/bin/cloud_restore --yes --saves-only");
 		if (wantContent || wantMedia)
-			add((backup ? std::string("/usr/bin/cloud_content_backup --selected")
+			add(wantContent && wantMedia ? "ROMS, BIOS, AND GAME CONTENT" : wantContent ? "ROMS AND BIOS" : "GAME CONTENT",
+			    (backup ? std::string("/usr/bin/cloud_content_backup --selected")
 			            : std::string("/usr/bin/cloud_content_restore --selected"))
 			    + cloudContentMode(wantContent, wantMedia));
 		// The settings item announces itself before backuptool runs, and says
@@ -4298,7 +4305,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// ">>> unit SETTINGS||" again when its turn comes; the same label, so
 		// the page does not count it twice.
 		if (backup && wantSettings)
-			add("echo '>>> unit SETTINGS||' ; echo '>>> doing archive' ; /usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
+			add("SETTINGS", "echo '>>> unit SETTINGS||' ; echo '>>> doing archive' ; /usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only");
 
 		// How many items the page should expect (ITEM i OF n, D-UI-026): one
 		// for saves, one per system the picker left ticked, one for settings.
