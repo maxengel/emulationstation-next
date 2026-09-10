@@ -4442,7 +4442,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	{
 		if (!configured)
 		{
-			window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET ONE UP NOW?"), _("YES"),
+			window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nSET IT UP NOW?"), _("YES"),
 				[window] { GuiMenu::openCloudAddRemote(window); }, _("NO"), nullptr));
 			return;
 		}
@@ -5434,11 +5434,11 @@ static std::string cloudSetupTitle(CloudSetupMode mode)
 	switch (mode)
 	{
 	case CloudSetupMode::AddRemote:
-		return _("ADD A CLOUD REMOTE");
+		return _("ADD A CONNECTION");
 	case CloudSetupMode::RepairRemote:
-		return _("REPAIR OR MODIFY REMOTE");
+		return _("REPAIR A CONNECTION");
 	default:
-		return _("SET UP YOUR FIRST REMOTE");
+		return _("SET UP YOUR CLOUD STORAGE");
 	}
 }
 
@@ -5510,7 +5510,7 @@ static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, 
 	row.addElement(entry, true);
 	row.makeAcceptInputHandler([window]
 	{
-		window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.\n\nSET UP YOUR CLOUD REMOTE NOW?"), _("YES"),
+		window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nSET IT UP NOW?"), _("YES"),
 			[window] { GuiMenu::openCloudAddRemote(window); },
 			_("NO"), nullptr));
 	});
@@ -5912,12 +5912,12 @@ static void cloudSetupGateCheck(Window* window, GuiSettings* s, const std::strin
 		}
 		else if (rc == 2)
 			window->pushGui(new GuiMsgBox(window,
-				_("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + " " + cloudSetupDisplayName(name) + "\n\n" + _("ITS SIGN-IN MAY BE INCOMPLETE OR EXPIRED. IN THE TERMINAL, RUN:") + "\n'rclone config reconnect " + name + "'",
+				_("THIS CONNECTION ISN'T ANSWERING:") + " " + cloudSetupDisplayName(name) + "\n\n" + _("ITS SIGN-IN MAY BE INCOMPLETE OR EXPIRED. IN THE TERMINAL, RUN:") + "\n'rclone config reconnect " + name + "'",
 				_("OK"), nullptr,
 				_("EXIT"), [s] { s->close(); }));
 		else
 			window->pushGui(new GuiMsgBox(window,
-				_("NO CLOUD REMOTE IS CONFIGURED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
+				_("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
 				_("OK"), nullptr,
 				_("EXIT"), [s] { s->close(); }));
 	});
@@ -5938,7 +5938,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 
 	if (mode == CloudSetupMode::RepairRemote)
 	{
-		s->setSubTitle(_("STEP 3 OF 3 - REPAIR THE REMOTE"));
+		s->setSubTitle(_("STEP 3 OF 3 - REPAIR THE CONNECTION"));
 		s->addGroup(_("IN THE TERMINAL"));
 		cloudSetupAddInfoRow(s, window, _("1. RUN 'rclone config reconnect ") + remote + "'");
 		cloudSetupAddInfoRow(s, window, _("2. THAT RENEWS AN EXPIRED SIGN-IN."));
@@ -5947,7 +5947,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 	}
 	else
 	{
-		s->setSubTitle(_("STEP 3 OF 3 - CREATE THE REMOTE"));
+		s->setSubTitle(_("STEP 3 OF 3 - CREATE THE CONNECTION"));
 		s->addGroup(_("IN THE TERMINAL"));
 		// Step 5 is the one people get wrong: rclone's own prompt says to
 		// answer N on a machine with no browser, which describes this
@@ -5958,7 +5958,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 		// prints the URL to the terminal. Saying "the link in your browser"
 		// implied one opens by itself and left people with nothing to click.
 		cloudSetupAddInfoRow(s, window, _("1. RUN 'rclone config'"));
-		cloudSetupAddInfoRow(s, window, _("2. PRESS 'N' FOR A NEW REMOTE"));
+		cloudSetupAddInfoRow(s, window, _("2. PRESS 'N' FOR A NEW REMOTE (RCLONE'S WORD FOR A CONNECTION)"));
 		cloudSetupAddInfoRow(s, window, _("3. NAME IT, PICK YOUR PROVIDER, TAKE DEFAULTS"));
 		cloudSetupAddInfoRow(s, window, _("4. AT 'USE AUTO CONFIG?' PRESS 'Y'"));
 		cloudSetupAddInfoRow(s, window, _("5. 'FAILED TO OPEN BROWSER' IS NORMAL HERE"));
@@ -6002,7 +6002,7 @@ static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, con
 			if (newRemote.empty())
 			{
 				window->pushGui(new GuiMsgBox(window,
-					_("NO NEW REMOTE WAS ADDED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
+					_("NO NEW CONNECTION WAS ADDED YET.\n\nFINISH 'RCLONE CONFIG' IN THE TERMINAL, THEN SELECT 'CONTINUE' AGAIN."),
 					_("OK"), nullptr,
 					_("EXIT"), [s] { s->close(); }));
 				return;
@@ -6025,9 +6025,9 @@ static void cloudSetupBuildDoneStep(Window* window, const std::string& remote, G
 	LOG(LogInfo) << "cloud_setup wizard: complete, remote=" << remote << " saves_remote=" << info["SAVES_REMOTE"];
 
 	auto s = new GuiSettings(window, _("CLOUD SETUP COMPLETE"));
-	s->setSubTitle(_("YOUR CLOUD REMOTE IS READY"));
+	s->setSubTitle(_("YOUR CLOUD STORAGE IS READY"));
 
-	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("REMOTE '") + cloudSetupDisplayName(remote) + _("' IS CONFIGURED AND WORKING."));
+	cloudSetupAddInfoRow(s, window, _U("\uF058  ") + _("YOUR CLOUD IS ANSWERING:") + " " + cloudSetupDisplayName(remote));
 	cloudSetupAddInfoRow(s, window, _("CLOUD SETTINGS ARE NOW AVAILABLE IN GAME SETTINGS."));
 	cloudSetupAddInfoRow(s, window, _("YOU CAN CLOSE THE TERMINAL ON YOUR COMPUTER."));
 
@@ -6325,7 +6325,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 		(*values)["__name__"] = backend.name;
 
 	s->addGroup(_("NAME"));
-	s->addInputTextRow(_("REMOTE NAME"), (*values)["__name__"], false,
+	s->addInputTextRow(_("CONNECTION NAME"), (*values)["__name__"], false,
 		cloudRemoteEditor(values, "__name__"),
 		[values](const std::string& newVal) { (*values)["__name__"] = newVal; });
 
@@ -6400,7 +6400,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 					// it current as the choice changes.
 					//
 					// NOT addSaveFunc: those run from GuiSettings::save(),
-					// which happens when the page closes. CREATE REMOTE builds
+					// which happens when the page closes. The CONNECT row builds
 					// its command while the page is still open, so a value
 					// left to save() never reaches it -- the chosen vendor was
 					// dropped, silently and with a success dialog, because
@@ -6434,13 +6434,13 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 	}
 
 	s->addGroup(_("FINISH"));
-	s->addEntry(_("CREATE REMOTE"), true, [window, backend, values, s]
+	s->addEntry(_("CONNECT"), true, [window, backend, values, s]
 	{
 		std::string name = Utils::String::trim((*values)["__name__"]);
 		if (name.empty())
 		{
 			window->pushGui(new GuiMsgBox(window,
-				_("GIVE THE REMOTE A NAME FIRST."), _("OK"), nullptr));
+				_("GIVE THE CONNECTION A NAME FIRST."), _("OK"), nullptr));
 			return;
 		}
 
@@ -6457,7 +6457,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 		}
 
 		window->pushGui(new GuiMsgBox(window,
-			_("CONNECT TO THIS PROVIDER NOW?\n\nTHE REMOTE IS ONLY SAVED IF IT ANSWERS."),
+			_("CONNECT TO THIS PROVIDER NOW?\n\nTHE CONNECTION IS ONLY SAVED IF IT ANSWERS."),
 			_("YES"), [window, cmd, s]
 			{
 				// cloud_remote verifies the remote -- an rclone listing it
@@ -6479,7 +6479,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 						if (out.find("OK=") != std::string::npos)
 						{
 							window->pushGui(new GuiMsgBox(window,
-								_("THE REMOTE IS CONFIGURED AND WORKING.\n\nGAME SETTINGS > CLOUD SETTINGS IS NOW AVAILABLE."),
+								_("YOUR CLOUD IS ANSWERING.\n\nGAME SETTINGS > CLOUD SETTINGS IS NOW AVAILABLE."),
 								_("OK"), [s] { s->close(); }));
 							return;
 						}
@@ -6487,7 +6487,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 						// typo in a key far more easily than they can act on
 						// "it failed".
 						window->pushGui(new GuiMsgBox(window,
-							_("THE REMOTE COULD NOT BE SAVED.") + std::string("\n\n") +
+							_("THE CONNECTION COULDN'T BE SAVED.") + std::string("\n\n") +
 								Utils::String::trim(out),
 							_("OK"), nullptr));
 					}));
@@ -7034,7 +7034,7 @@ void GuiMenu::openCloudAddRemote(Window* window)
 	// union remotes, or reconnecting one whose sign-in has lapsed -- but it
 	// is no longer a second front door offering the same job as the first.
 	s->addWithDescription(_("USE A COMPUTER INSTEAD"),
-		_("RUN RCLONE'S OWN SETUP OVER SSH. FOR REMOTES THIS PAGE CANNOT BUILD."),
+		_("RUN RCLONE'S SETUP OVER SSH. FOR CONNECTIONS THIS PAGE CAN'T MAKE."),
 		nullptr, [window] { GuiMenu::openCloudSetup(window); }, "", false, true);
 
 	cloudSetupPresent(window, s, nullptr);
@@ -7063,9 +7063,9 @@ void GuiMenu::openCloudSetup(Window* window)
 		return;
 	}
 
-	auto s = new GuiSettings(window, _("CLOUD REMOTE SETUP"));
+	auto s = new GuiSettings(window, _("CLOUD STORAGE SETUP"));
 
-	s->addGroup(_("YOUR CLOUD REMOTES"));
+	s->addGroup(_("YOUR CONNECTIONS"));
 	for (auto remote : remotes)
 	{
 		s->addEntry(cloudSetupDisplayName(remote) + "  -  " + _("CHECK IT WORKS"), true, [window, remote]
@@ -7073,11 +7073,11 @@ void GuiMenu::openCloudSetup(Window* window)
 			cloudSetupRunCheck(window, remote, [window](int rc, const std::string& name)
 			{
 				if (rc == 0)
-					window->pushGui(new GuiMsgBox(window, _("CLOUD REMOTE CONFIGURED AND WORKING:") + " " + cloudSetupDisplayName(name)));
+					window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD IS ANSWERING:") + " " + cloudSetupDisplayName(name)));
 				else if (rc == 2)
-					window->pushGui(new GuiMsgBox(window, _("THE REMOTE EXISTS BUT IS NOT RESPONDING:") + " " + cloudSetupDisplayName(name) + "\n\n" + _("USE 'REPAIR OR MODIFY A REMOTE' TO RENEW ITS SIGN-IN.")));
+					window->pushGui(new GuiMsgBox(window, _("THIS CONNECTION ISN'T ANSWERING:") + " " + cloudSetupDisplayName(name) + "\n\n" + _("USE 'REPAIR A CONNECTION' TO RENEW ITS SIGN-IN.")));
 				else
-					window->pushGui(new GuiMsgBox(window, _("NO CLOUD REMOTE IS CONFIGURED YET.")));
+					window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.")));
 			});
 		});
 	}
@@ -7093,18 +7093,18 @@ void GuiMenu::openCloudSetup(Window* window)
 		});
 	});
 	std::string preexisting = Utils::String::trim(info["REMOTES"]);
-	s->addEntry(_("ADD ANOTHER REMOTE"), true, [window, s, preexisting]
+	s->addEntry(_("ADD ANOTHER CONNECTION"), true, [window, s, preexisting]
 	{
 		cloudSetupShowSshStep(window, CloudSetupMode::AddRemote, "", preexisting, s);
 	});
-	s->addEntry(_("REPAIR OR MODIFY A REMOTE"), true, [window, s, remotes]
+	s->addEntry(_("REPAIR A CONNECTION"), true, [window, s, remotes]
 	{
 		if (remotes.size() == 1)
 		{
 			cloudSetupShowSshStep(window, CloudSetupMode::RepairRemote, remotes.front(), "", s);
 			return;
 		}
-		auto picker = new GuiSettings(window, _("WHICH REMOTE?"));
+		auto picker = new GuiSettings(window, _("WHICH CONNECTION?"));
 		for (auto remote : remotes)
 		{
 			picker->addEntry(cloudSetupDisplayName(remote), true, [window, s, picker, remote]
@@ -7275,13 +7275,13 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 		// cloud_setup ships in every image, so its presence gates nothing.
 		// What matters is whether a remote is actually configured: without
 		// this, a player who never set up cloud sync was shown the row and
-		// then told their remote "needs attention", implying a fault where
+		// then told their cloud "isn't answering", implying a fault where
 		// there was simply nothing to check. cloudAddGatedEntry greys the
 		// row and offers to set one up instead.
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 		// Checked on demand rather than at page build: it is a network
 		// round-trip to the provider and would stall this page.
-		cloudAddGatedEntry(s, window, cloudConfigured, _("CHECK CLOUD REMOTE"),
+		cloudAddGatedEntry(s, window, cloudConfigured, _("CHECK CONNECTION"),
 			_("CONFIRMS YOUR CLOUD STORAGE STILL SIGNS IN AFTER THE RESTORE."), [window]
 		{
 			window->pushGui(new GuiLoading<int>(window, _("CHECKING..."),
@@ -7295,9 +7295,9 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 				[window](int rc)
 				{
 					if (rc == 0)
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE IS WORKING.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD IS ANSWERING.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD REMOTE NEEDS ATTENTION.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD SETTINGS > MANAGE CLOUD STORAGE.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD ISN'T ANSWERING.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD SETTINGS > MANAGE CLOUD STORAGE.")));
 				}));
 		});
 	}
