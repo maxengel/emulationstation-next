@@ -246,10 +246,16 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 // The word for the run (D-UI-028; es-native-ui.md "Outcome vocabulary").
 //
 // COMPLETED when every part did -- rclone's 9, nothing needed moving,
-// counts. COMPLETED WITH GAPS when the parts disagree: a tier that finished
+// counts. Everything short of that is COULDN'T FINISH, including a run
+// whose parts disagree: a tier that finished
 // beside one that did not, a unit that finished inside a tier that did not
 // (its later units failed with a why of their own), or a match cut off
-// after it had already removed files. SKIPPED for the two sentinels the
+// after it had already removed files. Those used to read COMPLETED WITH
+// GAPS; a half-outcome the player cannot act on reads as "working kind of"
+// and costs more trust than a plain failure does (maintainer, 2026-09-10,
+// D-UI-030). `partial` survives as the flag that shapes the lines below --
+// what moved is still said, and line 4 still names the items that did not
+// finish -- but it no longer changes the word. SKIPPED for the two sentinels the
 // scripts exit before touching anything (CloudExit.h), when that is all
 // the run has to report; they are not failures, and FAILED would send
 // somebody to a log to find nothing wrong. COULDN'T FINISH for everything
@@ -275,13 +281,13 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome() const
 		}
 	}
 	const bool match = mCommand.find("--match") != std::string::npos;
-	o.gaps = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && mRemovedFiles > 0));
+	o.partial = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && mRemovedFiles > 0));
 	const int code = mTiers.empty() ? mExit : onlyCode;
-	o.skipped = !o.completed && !o.gaps && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
+	o.skipped = !o.completed && !o.partial && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
 	if (o.completed)
 		o.word = _("COMPLETED");
-	else if (o.gaps)
-		o.word = _("COMPLETED WITH GAPS");
+	else if (o.partial)
+		o.word = _("COULDN'T FINISH");
 	else if (code == CloudExit::LockHeld)
 		o.word = _("SKIPPED - ANOTHER CLOUD SYNC IS RUNNING");
 	else if (code == CloudExit::NoNetwork)
@@ -567,18 +573,18 @@ void GuiCloudTransfer::update(int deltaTime)
 	{
 		// Seven lines, the same rows as the run (D-UI-024/026), now carrying
 		// the outcome (D-UI-028): 1 the word; 2 how many items did not finish,
-		// on gaps; 3 what moved; 4 the items that did not finish and why; 5
+		// when partial; 3 what moved; 4 the items that did not finish and why; 5
 		// what is in place, or what to do next; 6 elapsed; 7 the buttons.
 		const Outcome o = outcome();
 		const bool restore = mCommand.find("restore") != std::string::npos;
 		const bool match = mCommand.find("--match") != std::string::npos;
 		mStatus->setText(fitOneLine(mTextFont, o.word, mLineWidth));
 
-		// 2. On gaps, the count: N distinct items that did not finish of the
+		// 2. When partial, the count: N distinct items that did not finish of the
 		// run's M -- the run's count when a script announced it, else what
 		// was reached, never fewer than N.
 		std::string counter;
-		if (o.gaps)
+		if (o.partial)
 		{
 			std::vector<std::string> names;
 			for (auto& f : mFailed)
@@ -620,7 +626,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			// used to end on "SNES  3 OF 3" over that unit's totals, or over
 			// nothing when the last unit only compared (#85). It carries the
 			// sum of every unit's final "Transferred:" pair, in the run's own
-			// verb -- shown on gaps too, because what moved is the half of
+			// verb -- shown on a partial run too, because what moved is the half of
 			// the answer that is good news. Only what rclone printed: a run
 			// that never printed a byte line says the word and nothing more.
 			//

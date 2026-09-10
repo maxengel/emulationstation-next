@@ -4167,7 +4167,7 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028). The first two fields
 	// are what every stamp has always carried; the token is one word for
 	// the outcome where the code alone cannot say it (a 130 that was a
-	// launch cancel; a composed run that completed with gaps), and the why
+	// launch cancel; a composed run whose parts disagreed), and the why
 	// is the scripts' own sentence when they printed one. A stamp with two
 	// fields -- one written before this reader -- is read from its code.
 	//
@@ -4210,7 +4210,15 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 		r.finished = true;
 	}
 	else if (token == "gaps")
-		r.outcome = _("COMPLETED WITH GAPS");
+	{
+		// A run whose parts disagreed. The stamp keeps its own token so a log
+		// can tell it from a total failure; the row says what every other
+		// failure says (D-UI-030).
+		r.outcome = _("COULDN'T FINISH");
+		if (why.empty())
+			why = ThreadedCloudSync::whyForToken(token);
+		r.why = why;
+	}
 	else if (code == CloudExit::LockHeld)
 		r.outcome = _("SKIPPED, ANOTHER SYNC WAS RUNNING");
 	else if (code == CloudExit::NoNetwork)
@@ -4439,7 +4447,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// And each part reports itself as it ends -- ">>> tier <label>|<rc>",
 		// the label being what the page calls the item (SAVES, ROMS AND BIOS,
 		// SETTINGS) -- so the page can say which parts finished and which did
-		// not: a run where one did and one did not is COMPLETED WITH GAPS,
+		// not: a run where one did and one did not is a failure with that part's why,
 		// never the last part's code over the first part's files (D-UI-028).
 		auto add = [&cmd](const std::string& label, const std::string& part)
 		{
@@ -5215,7 +5223,7 @@ void GuiMenu::openGamesSettings()
 		// like the two rows below; "both ways, nothing is deleted" is the
 		// dialog's to say. Each half reports itself to the card as it ends
 		// (">>> tier <label>|<rc>"), so a restore that finished under a
-		// backup that did not reads COMPLETED WITH GAPS rather than as the
+		// backup that did not is reported with that part's why rather than as the
 		// whole run failed (D-UI-028); the backup still waits on the restore.
 		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"),
 			cloudLastRunDetail("sync-manual"), [window] {

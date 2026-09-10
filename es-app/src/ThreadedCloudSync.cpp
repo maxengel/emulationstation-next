@@ -175,7 +175,7 @@ void ThreadedCloudSync::run()
 			// and dropped the scripts' own diagnoses). ">>> tier <label>|<rc>"
 			// is a composed command reporting each of its parts as it ends,
 			// so a run where one part finished and another did not is
-			// reported as that (COMPLETED WITH GAPS) rather than as the last
+			// reported as a failure with that part's why, rather than as the last
 			// part's code. ">>> unit" and anything newer is for the transfer
 			// page and never reaches the card -- but each one says the wait
 			// is over, as does the first word any script prints.
@@ -311,11 +311,21 @@ void ThreadedCloudSync::run()
 	// moving -- counts). SKIPPED for the two sentinels the scripts exit
 	// before touching anything (CloudExit.h) and for the launch cancel; none
 	// of the three is a failure, and FAILED would send somebody to a log to
-	// find nothing wrong. COMPLETED WITH GAPS when a composed run's parts
-	// disagree -- the startup sync's restore finished and its backup did
-	// not; the old card read the whole run as failed. COULDN'T FINISH for
-	// everything else, with the why: the scripts' own sentence when they
-	// printed one, the code's phrase otherwise.
+	// find nothing wrong. COULDN'T FINISH for everything else, with the why:
+	// the scripts' own sentence when they printed one, the code's phrase
+	// otherwise.
+	//
+	// A composed run whose parts disagree -- the startup sync's restore
+	// finished and its backup did not -- is a failure like any other. It
+	// read COMPLETED WITH GAPS for a day, and the maintainer's verdict on
+	// seeing one (2026-09-10) is that a half-outcome the player cannot act
+	// on is worse than either plain answer: "if you don't know what the gaps
+	// are, it's not very helpful ... it just makes you more anxious and
+	// trust the system less because it's working kind of. You'd rather just
+	// know it couldn't connect or it could connect." So the word is
+	// COULDN'T FINISH and the why is the failing part's; the action line
+	// below still says truthfully what did move. The stamp keeps the token
+	// so a log can still tell a partial run from a total one.
 	std::vector<std::string> okTiers, badTiers;
 	for (auto& t : mTiers)
 		(t.second == 0 || t.second == 9 ? okTiers : badTiers).push_back(t.first);
@@ -336,10 +346,7 @@ void ThreadedCloudSync::run()
 	}
 	else if (gaps)
 	{
-		std::string names;
-		for (size_t i = 0; i < badTiers.size(); i++)
-			names += (i ? ", " : "") + badTiers[i];
-		outcome = _("COMPLETED WITH GAPS") + std::string(" - ") + names + " " + _("DID NOT FINISH");
+		outcome = _("COULDN'T FINISH") + std::string(" - ") + why;
 		token = "gaps";
 	}
 	else if (ret == CloudExit::LockHeld)

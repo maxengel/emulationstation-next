@@ -59,7 +59,7 @@ private:
 	struct Outcome
 	{
 		bool completed;   // every part finished (0 or 9)
-		bool gaps;        // some finished and some did not
+		bool partial;     // some finished and some did not; a failure to the player
 		bool skipped;     // a sentinel, and nothing else to report
 		std::string word; // line 1
 	};
