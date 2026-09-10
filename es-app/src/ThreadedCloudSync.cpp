@@ -577,8 +577,15 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
 }
 
-bool ThreadedCloudSync::cancelForLaunch()
+bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal)
 {
+	// Stopping unless we find otherwise: it covers the sync that was
+	// signalled and has not gone yet, and the one that had already gone
+	// before we took the lock. Both are answered by trying again in a
+	// moment; only the player's own sync is answered by waiting.
+	if (refusal != nullptr)
+		*refusal = CancelRefusal::Stopping;
+
 	ThreadedCloudSync* sync = nullptr;
 	pid_t pid = 0;
 	{
@@ -588,7 +595,11 @@ bool ThreadedCloudSync::cancelForLaunch()
 			return false;
 		// The player pressed this one; the launch does not override it.
 		if (sync->mOrigin != Origin::Startup && sync->mOrigin != Origin::Exit)
+		{
+			if (refusal != nullptr)
+				*refusal = CancelRefusal::PlayerStarted;
 			return false;
+		}
 
 		// Cancelled before the signal, so run() finds it set however quickly
 		// pclose returns. The whole group: the command runs under setsid, so

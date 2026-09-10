@@ -64,7 +64,22 @@ public:
 	// go together; the scripts' trap exits CloudExit::Stopped, the card says
 	// SKIPPED - A GAME WAS STARTED and the stamp records the same, as the
 	// network-wait cancel always did.
-	static bool cancelForLaunch();
+	//
+	// `refusal`, where the caller passes one, says which false it is, so
+	// the launch gate can tell the player the right thing (#115). Waiting
+	// is the answer to their own sync and the wrong answer to one that is
+	// already on its way out.
+	enum class CancelRefusal
+	{
+		// The player pressed this sync. It is still running and was not
+		// asked to stop; it finishes, or they stop it.
+		PlayerStarted,
+		// An automatic sync was signalled and had not gone within the
+		// budget -- or had already gone by the time we looked. Either way
+		// it is not there to wait for; a moment later the launch works.
+		Stopping
+	};
+	static bool cancelForLaunch(CancelRefusal* refusal = nullptr);
 
 	// The outcome vocabulary's why for an exit code the scripts did not
 	// explain with a ">>> why" line (D-UI-028): rclone 3/4 YOUR CLOUD FOLDER
