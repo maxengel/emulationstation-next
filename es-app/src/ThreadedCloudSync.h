@@ -4,6 +4,8 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 #include <sys/types.h>
 #include "components/AsyncNotificationComponent.h"
 
@@ -64,9 +66,25 @@ public:
 	// network-wait cancel always did.
 	static bool cancelForLaunch();
 
+	// The outcome vocabulary's why for an exit code the scripts did not
+	// explain with a ">>> why" line (D-UI-028): rclone 3/4 YOUR CLOUD FOLDER
+	// WASN'T FOUND, 5 YOUR CLOUD STOPPED ANSWERING, 7/8 YOUR CLOUD REFUSED
+	// THE TRANSFER, 130 IT WAS STOPPED, else SOMETHING WENT WRONG. The token
+	// is the same table as one word for the stamps; whyForToken reads it
+	// back. Shared with the transfer page and the rows under the toggles so
+	// every surface says the same thing about the same code.
+	static std::string whyForCode(int rc);
+	static std::string tokenForCode(int rc);
+	static std::string whyForToken(const std::string& token);
+
 private:
 	void run();
-	static void recordOutcome(Origin origin, int rc);
+	// The stamp's fields: "<epoch> <rc> <token>[ <why>]" -- the token is one
+	// word for the outcome (completed, gaps, no-network, lock-held,
+	// cancelled, stopped, folder-missing, cloud-stopped, cloud-refused,
+	// unknown), the why the scripts' own sentence when they printed one
+	// (">>> why ..."), for the row to show instead of the token's phrase.
+	static void recordOutcome(Origin origin, int rc, const std::string& token, const std::string& why);
 
 	ThreadedCloudSync(Window* window, const std::string& command,
 	                  const std::string& title, const std::string& running,
@@ -84,6 +102,22 @@ private:
 	std::atomic<pid_t>			mPid{0};
 	std::atomic<bool>			mWaitingForNetwork{false};
 	std::atomic<bool>			mCancelled{false};
+
+	// Read by run() alone, on the worker thread. mWhy is the last ">>> why
+	// <sentence>" the scripts printed, upper-cased, for the outcome line;
+	// mMoved records that rclone's byte totals ever left "0 B", which is
+	// what decides the in-place clause; mTiers is every ">>> tier
+	// <label>|<rc>" a composed command echoed after each of its parts, so a
+	// run where one part finished and another did not is COMPLETED WITH
+	// GAPS rather than the last part's code (D-UI-028).
+	std::string					mWhy;
+	bool						mMoved{false};
+	std::vector<std::pair<std::string, int>> mTiers;
+	// Whether SYNC SAVES WHEN EXITING A GAME is on, read in the constructor
+	// on the interface thread: the recovery clause for a cancelled sync
+	// says the saves go when the game exits only if something will send
+	// them then.
+	bool						mGameExitSync{false};
 
 	Window*						mWindow;
 	AsyncNotificationComponent* mWndNotification;

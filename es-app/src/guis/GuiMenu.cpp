@@ -4995,13 +4995,20 @@ void GuiMenu::openGamesSettings()
 		const bool cloudConfigured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf");
 		s->addGroup(_("CLOUD SETTINGS"));
 
-		// Label and one line, like its neighbours (D-UI-023): the two facts a
-		// player wants before pressing. The dialog carries the rest.
+		// The line under it is how it last went (last-sync-manual, D-UI-023),
+		// like the two rows below; "both ways, nothing is deleted" is the
+		// dialog's to say. Each half reports itself to the card as it ends
+		// (">>> tier <label>|<rc>"), so a restore that finished under a
+		// backup that did not reads COMPLETED WITH GAPS rather than as the
+		// whole run failed (D-UI-028); the backup still waits on the restore.
 		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"),
-			_("BOTH WAYS. NOTHING IS DELETED."), [window] {
+			cloudLastRunDetail("sync-manual"), [window] {
 			window->pushGui(new GuiMsgBox(window, _("SYNC GAME SAVES BOTH WAYS?\n\nTHE NEWEST COPY OF EACH SAVE IS KEPT ON BOTH SIDES. NOTHING IS DELETED."), _("YES"),
 				[window] {
-				ThreadedCloudSync::start(window, "/usr/bin/cloud_restore --yes --method=copy --update --saves-only && /usr/bin/cloud_backup --yes --method=copy --update --saves-only", _("SYNC SAVES"), _("SYNCING SAVES"), ThreadedCloudSync::Origin::Manual);
+				ThreadedCloudSync::start(window,
+					"/usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?; echo \">>> tier RESTORING SAVES|$_r\"; [ \"$_r\" = 0 ] || exit \"$_r\";"
+					" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?; echo \">>> tier BACKING UP SAVES|$_b\"; exit \"$_b\"",
+					_("SYNC SAVES"), _("SYNCING SAVES"), ThreadedCloudSync::Origin::Manual);
 				}, _("NO"), nullptr));
 		});
 		cloudAddClassRow(s, window, cloudConfigured, _("BACK UP SAVES TO THE CLOUD"), "backup", [window] {

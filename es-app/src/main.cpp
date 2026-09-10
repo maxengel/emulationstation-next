@@ -551,6 +551,12 @@ static void startStartupSavesSync(Window* window)
 	// The route check and probe loop stay as the fallback for an image
 	// without cloud_net_ready, so this and the script can ship in either
 	// order.
+	//
+	// Both halves run whatever the first did, and each reports itself to
+	// the card as it ends (">>> tier <label>|<rc>"): a restore that finished
+	// under a backup that did not is COMPLETED WITH GAPS - BACKING UP SAVES
+	// DID NOT FINISH, where the exit code alone read the whole run as
+	// failed (D-UI-028).
 	const std::string noNetwork = std::to_string(CloudExit::NoNetwork);
 	const std::string command =
 		"if [ -x /usr/bin/cloud_net_ready ]; then"
@@ -568,7 +574,9 @@ static void startStartupSavesSync(Window* window)
 		" [ \"$_up\" = 1 ] || exit " + noNetwork + ";"
 		" fi;"
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?;"
+		" echo \">>> tier RESTORING SAVES|$_r\";"
 		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?;"
+		" echo \">>> tier BACKING UP SAVES|$_b\";"
 		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";
 
 	// SYNC SAVES is the title the manual sync row already prints when it is
