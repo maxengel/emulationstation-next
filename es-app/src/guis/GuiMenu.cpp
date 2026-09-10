@@ -3805,22 +3805,21 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
 static std::map<std::string, std::string> cloudSetupInfo();
-// The device name as the network accepts it: ASCII letters and digits, with
-// any run of anything else -- spaces, underscores, punctuation, hyphens --
-// as one hyphen, none at either end, at most 63. The same rule as the
-// scripts' clean_hostname (001-functions), so the row and the network agree.
-static bool hostnameChar(char c)
-{
-	return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
-}
-
+static std::string cloudProviderLabel(const std::string& type);
+// The device name as the network takes it: ASCII letters and digits, any run
+// of anything else as one hyphen, none at either end, at most 63. The same
+// rule as the scripts' clean_hostname (001-functions), which network-base-setup
+// applies at boot. The player's own name is left exactly as they typed it --
+// this is only what the network shows, said back to them under the IP address
+// so "RG SP" appearing on a router as "RG-SP" is not a mystery (#106).
 static std::string cleanHostname(const std::string& in)
 {
 	std::string out;
 	bool gap = false;
 	for (char c : in)
 	{
-		if (hostnameChar(c))
+		const bool keep = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+		if (keep)
 		{
 			if (gap && !out.empty())
 				out += '-';
@@ -4169,7 +4168,7 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028). The first two fields
 	// are what every stamp has always carried; the token is one word for
 	// the outcome where the code alone cannot say it (a 130 that was a
-	// launch cancel; a composed run that completed with gaps), and the why
+	// launch cancel; a composed run whose parts disagreed), and the why
 	// is the scripts' own sentence when they printed one. A stamp with two
 	// fields -- one written before this reader -- is read from its code.
 	//
@@ -4212,7 +4211,15 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 		r.finished = true;
 	}
 	else if (token == "gaps")
-		r.outcome = _("COMPLETED WITH GAPS");
+	{
+		// A run whose parts disagreed. The stamp keeps its own token so a log
+		// can tell it from a total failure; the row says what every other
+		// failure says (D-UI-030).
+		r.outcome = _("COULDN'T FINISH");
+		if (why.empty())
+			why = ThreadedCloudSync::whyForToken(token);
+		r.why = why;
+	}
 	else if (code == CloudExit::LockHeld)
 		r.outcome = _("SKIPPED, ANOTHER SYNC WAS RUNNING");
 	else if (code == CloudExit::NoNetwork)
@@ -4237,9 +4244,45 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 // next to the actions, which is where you put a fact you have nowhere better
 // for. It belongs on the row it describes: the answer to "should I back this
 // up?" is "you last did, and it worked", read in the moment of deciding.
+// Was the run this stamp records one the player started, or one of the two
+// automatic syncs? EmulationStation stamps last-sync-startup/-exit as each
+// automatic run ends, within a second or two of the script writing its own
+// last-backup/last-restore, so a matching time says which it was. Inferred
+// rather than recorded because the scripts do not know who called them --
+// and it only ever changes the words, never the outcome.
+//
+// It exists because the page contradicted itself: BACK UP SAVES TO THE CLOUD
+// reported the sync that runs when you exit a game, under a label naming
+// something the player never pressed, while SYNC SAVES WITH THE CLOUD said
+// NOT DONE ON THIS DEVICE YET (maintainer, 2026-09-10, fork #112).
+static std::string cloudRunOrigin(time_t when)
+{
+	if (when <= 0)
+		return "";
+	for (auto& o : { std::make_pair("sync-exit", "AFTER YOUR LAST GAME"),
+	                 std::make_pair("sync-startup", "AT STARTUP") })
+	{
+		const CloudLastRun a = cloudReadLastRun(o.first);
+		if (a.ran && std::labs((long) (a.when - when)) <= 10)
+			return _(o.second);
+	}
+	return "";
+}
+
 static std::string cloudLastRunDetail(const std::string& name)
 {
-	const CloudLastRun r = cloudReadLastRun(name);
+	CloudLastRun r = cloudReadLastRun(name);
+	// SYNC SAVES WITH THE CLOUD moves saves both ways, and so do the two
+	// automatic syncs; a row that counted only the manual one said NOT DONE
+	// ON THIS DEVICE YET on a device that had been syncing all along. It
+	// reports the newest sync by any route (#112).
+	if (name == "sync-manual")
+		for (auto* other : { "sync-exit", "sync-startup" })
+		{
+			const CloudLastRun a = cloudReadLastRun(other);
+			if (a.ran && (!r.ran || a.when > r.when))
+				r = a;
+		}
 	if (!r.ran)
 		return _("NOT DONE ON THIS DEVICE YET");
 	const time_t when = r.when;
@@ -4257,6 +4300,13 @@ static std::string cloudLastRunDetail(const std::string& name)
 	// flip and come straight back to this page.
 	const std::string fmt = Utils::Time::getSystemDateFormat()
 		+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
+
+	// An automatic run says which one it was instead of its date: the date is
+	// what the player would have had to reason from to work that out, and the
+	// row has two lines to say it in (D-UI-023).
+	const std::string origin = cloudRunOrigin(when);
+	if (!origin.empty())
+		return origin + "  -  " + r.outcome;
 
 	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt)
 		+ "  -  " + r.outcome;
@@ -4441,7 +4491,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// And each part reports itself as it ends -- ">>> tier <label>|<rc>",
 		// the label being what the page calls the item (SAVES, ROMS AND BIOS,
 		// SETTINGS) -- so the page can say which parts finished and which did
-		// not: a run where one did and one did not is COMPLETED WITH GAPS,
+		// not: a run where one did and one did not is a failure with that part's why,
 		// never the last part's code over the first part's files (D-UI-028).
 		auto add = [&cmd](const std::string& label, const std::string& part)
 		{
@@ -4794,6 +4844,46 @@ void GuiMenu::openCloud(Window* window)
 	s->addGroup(_("CLOUD STORAGE SETUP"));
 	if (configured)
 	{
+		// Who this device is connected to, and whether it answers.
+		//
+		// The page offered to connect a provider and never said one already
+		// was: "there's nowhere where it shows what cloud backend you
+		// currently have, which seems like a miss" (maintainer, 2026-09-10,
+		// fork #110). The name is the player's own label for the remote when
+		// they gave it one, otherwise the provider's name.
+		const std::string provider = cloudProviderLabel(cloudSetupInfo()["REMOTE_TYPE"]);
+		const std::string remoteName = cloudSetupInfo()["REMOTE_NAME"];
+		if (!provider.empty())
+			s->addWithLabel(_("CONNECTED TO"), std::make_shared<TextComponent>(window, provider,
+				ThemeData::getMenuTheme()->Text.font, ThemeData::getMenuTheme()->Text.color));
+
+		// The thing to reach for when a sync has just failed: does the cloud
+		// answer right now? Behind GuiLoading, because it is a network round
+		// trip -- bounded by the script (a single listing, 10 s to connect,
+		// 30 s to answer), so the page cannot hang on it.
+		s->addWithDescription(_("CHECK CONNECTION"), _("SEE WHETHER YOUR CLOUD ANSWERS RIGHT NOW."), nullptr,
+			[window, provider]
+			{
+				window->pushGui(new GuiLoading<int>(window, _("CHECKING YOUR CLOUD..."),
+					[](auto gui)
+					{
+						return ApiSystem::executeScriptLegacy("/usr/bin/cloud_setup --check", [](const std::string) {}).second;
+					},
+					[window, provider](int rc)
+					{
+						const std::string who = provider.empty() ? _("YOUR CLOUD") : provider;
+						std::string text;
+						if (rc == 0)
+							text = who + " " + _("ANSWERED. YOU'RE CONNECTED.");
+						else if (rc == 1)
+							text = _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.");
+						else
+							text = _("COULDN'T REACH") + " " + who + ".\n\n"
+								+ _("CHECK WI-FI, THEN TRY AGAIN. IF IT KEEPS FAILING, SIGN IN AGAIN UNDER CONNECT OR REPAIR CLOUD STORAGE.");
+						window->pushGui(new GuiMsgBox(window, text, _("OK")));
+					}));
+			}, "", false, true);
+
 
 		// Came here with the rest of NETWORK SETTINGS' cloud group, and was
 		// missed when that group was deleted -- which left the folder editable
@@ -5217,7 +5307,7 @@ void GuiMenu::openGamesSettings()
 		// like the two rows below; "both ways, nothing is deleted" is the
 		// dialog's to say. Each half reports itself to the card as it ends
 		// (">>> tier <label>|<rc>"), so a restore that finished under a
-		// backup that did not reads COMPLETED WITH GAPS rather than as the
+		// backup that did not is reported with that part's why rather than as the
 		// whole run failed (D-UI-028); the backup still waits on the restore.
 		cloudAddGatedEntry(s, window, cloudConfigured, _("SYNC SAVES WITH THE CLOUD"),
 			cloudLastRunDetail("sync-manual"), [window] {
@@ -6075,6 +6165,22 @@ static const std::vector<std::pair<std::string, std::string>> CLOUD_RECOMMENDED 
 	{ "b2",          "BACKBLAZE B2" },
 	{ "storj",       "STORJ" },
 };
+
+// rclone's word for a service ("drive") in the words the player chose it by
+// ("GOOGLE DRIVE"). The recommendation list above is the same mapping seen
+// from the other side, so it is the one table; a provider set up outside that
+// list falls back to rclone's own word, uppercased, which is at least the
+// name on the tin. Empty in, empty out -- the caller decides what to say when
+// nothing is connected.
+static std::string cloudProviderLabel(const std::string& type)
+{
+	if (type.empty())
+		return "";
+	for (auto& p : CLOUD_RECOMMENDED)
+		if (p.first == type)
+			return p.second;
+	return Utils::String::toUpper(type);
+}
 
 static std::vector<std::string> cloudRemoteLines(const std::string& args)
 {
@@ -8504,6 +8610,16 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	auto ip = std::make_shared<TextComponent>(mWindow, "", font, color);
 	s->addWithLabel(_("IP ADDRESS"), ip);
 
+	// What this device is called on the network. system.hostname keeps whatever
+	// the player typed; the network only takes letters, digits and hyphens, so
+	// network-base-setup applies the cleaned form at boot and this says what
+	// that form is -- shown only when it differs from the name they gave, since
+	// otherwise it repeats the HOSTNAME row below (#106).
+	const std::string deviceName = SystemConf::getInstance()->get("system.hostname");
+	const std::string networkName = cleanHostname(deviceName);
+	if (!networkName.empty() && networkName != deviceName)
+		s->addWithLabel(_("NETWORK NAME"), std::make_shared<TextComponent>(mWindow, networkName, font, color));
+
 	auto status = std::make_shared<TextComponent>(mWindow, _("CHECKING..."), font, color);
 	s->addWithLabel(_("INTERNET STATUS"), status);
 
@@ -8518,44 +8634,8 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	s->addGroup(_("SETTINGS"));
 
 #if !WIN32
-	// Hostname: letters, digits and hyphens are the only form the network
-	// takes. A space or an underscore becomes a hyphen as it is typed, and the
-	// player is told; anything else is refused with a word; what is saved is
-	// the clean form, said back when it differs from what was typed.
-	// network-base-setup applies the same rule (clean_hostname) to a value
-	// already stored, so what this row shows is what the network shows. Left
-	// to the default editor, "RG SP" was applied half and hostnamed made it
-	// RGSP behind the player's back (fork #106).
-	s->addInputTextConfigRow(_("HOSTNAME"), "system.hostname", false, false,
-		[](Window* window, std::string title, std::string value, const std::function<void(std::string)>& onsave)
-		{
-			auto kb = new GuiTextEditPopupKeyboard(window, title, value,
-				[window, onsave](const std::string& typed)
-				{
-					const std::string clean = cleanHostname(typed);
-					if (clean.empty())
-					{
-						window->displayNotificationMessage(_("A DEVICE NAME NEEDS AT LEAST ONE LETTER OR DIGIT. THE NAME WAS NOT CHANGED."), 3000);
-						return;
-					}
-					if (clean != typed)
-						window->displayNotificationMessage(Utils::String::format(_("DEVICE NAME SAVED AS %s").c_str(), clean.c_str()), 3000);
-					onsave(clean);
-				}, false);
-			kb->setCharacterFilter([](const std::string& ch, std::string& message) -> std::string
-			{
-				if (ch.size() == 1 && (hostnameChar(ch[0]) || ch[0] == '-'))
-					return ch;
-				if (ch == " " || ch == "_")
-				{
-					message = _("A SPACE BECOMES A HYPHEN IN A DEVICE NAME");
-					return "-";
-				}
-				message = _("THAT CHARACTER CAN'T BE USED IN A DEVICE NAME. LETTERS, DIGITS AND HYPHENS ONLY.");
-				return "";
-			});
-			window->pushGui(kb);
-		});
+	// Hostname
+	s->addInputTextConfigRow(_("HOSTNAME"), "system.hostname", false);
 #endif
 
 	// Wifi enable

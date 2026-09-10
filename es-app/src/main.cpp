@@ -554,7 +554,7 @@ static void startStartupSavesSync(Window* window)
 	//
 	// Both halves run whatever the first did, and each reports itself to
 	// the card as it ends (">>> tier <label>|<rc>"): a restore that finished
-	// under a backup that did not is COMPLETED WITH GAPS - BACKING UP SAVES
+	// under a backup that did not is reported as COULDN'T FINISH with that
 	// DID NOT FINISH, where the exit code alone read the whole run as
 	// failed (D-UI-028).
 	const std::string noNetwork = std::to_string(CloudExit::NoNetwork);
