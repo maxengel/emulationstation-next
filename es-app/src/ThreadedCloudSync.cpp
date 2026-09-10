@@ -361,7 +361,15 @@ void ThreadedCloudSync::run()
 	// Before the card says anything: the stamp is the answer that outlives
 	// the card, so it is written first, and written whether or not there is
 	// still a card to say it on.
-	recordOutcome(mOrigin, ret, token, mWhy);
+	//
+	// The manual stamp (last-sync-manual) is the SYNC SAVES WITH THE CLOUD
+	// row's. A manual backup or restore is stamped by its script (last-backup,
+	// last-restore), which the BACK UP and RESTORE rows read; writing
+	// last-sync-manual for those too put a backup's outcome under the sync
+	// row -- LAST 00:48 - COULDN'T FINISH on a row nobody had pressed (guest
+	// d, 2026-09-10). Automatic origins stamp whatever they ran.
+	if (mOrigin != Origin::Manual || verbOf(mCommand) == Verb::Sync)
+		recordOutcome(mOrigin, ret, token, mWhy);
 
 	// One surface for the whole event.
 	//
