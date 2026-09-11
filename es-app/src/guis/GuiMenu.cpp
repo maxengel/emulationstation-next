@@ -3932,6 +3932,11 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // these for the CLOUD FOLDER row and for rows that must stay visible
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
+
+void GuiMenu::openCloudFolderEditor(Window* window, const std::string& current)
+{
+	cloudSetupOpenSyncPathEditor(window, current, nullptr);
+}
 static std::map<std::string, std::string> cloudSetupInfo();
 
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
@@ -6391,6 +6396,8 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 			if (!values->count(f.name) && !f.deflt.empty())
 				(*values)[f.name] = f.deflt;
 			std::string current = values->count(f.name) ? (*values)[f.name] : "";
+			// The rclone name is the key the value is stored under; the row
+			// shows CloudText::fieldLabel's words for it (#123).
 			std::string fieldName = f.name;
 
 			// Match the widget to the option. Everything was a text box before,
@@ -6400,7 +6407,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 			{
 				auto sw = std::make_shared<SwitchComponent>(window);
 				sw->setState(current == "true");
-				s->addWithLabel(Utils::String::toUpper(fieldName), sw);
+				s->addWithLabel(CloudText::fieldLabel(fieldName), sw);
 				sw->setOnChangedCallback([values, fieldName, sw]
 				{
 					(*values)[fieldName] = sw->getState() ? "true" : "false";
@@ -6419,7 +6426,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 					choicesArgs += " " + cloudShellQuote(backend.subprovider);
 
 				auto list = std::make_shared<OptionListComponent<std::string>>(
-					window, Utils::String::toUpper(fieldName), false);
+					window, CloudText::fieldLabel(fieldName), false);
 				bool any = false;
 				for (auto& line : cloudRemoteLines(choicesArgs))
 				{
@@ -6456,12 +6463,12 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 						{
 							(*values)[fieldName] = picked;
 						});
-					s->addWithLabel(Utils::String::toUpper(fieldName), list);
+					s->addWithLabel(CloudText::fieldLabel(fieldName), list);
 					continue;
 				}
 			}
 
-			s->addInputTextRow(Utils::String::toUpper(fieldName), current, mask,
+			s->addInputTextRow(CloudText::fieldLabel(fieldName), current, mask,
 				cloudRemoteEditor(values, fieldName),
 				[values, fieldName](const std::string& newVal)
 				{
