@@ -60,6 +60,13 @@ namespace CloudText
 	// 640x480 row beside its value; the longest is SECRET ACCESS KEY.
 	std::string fieldLabel(const std::string& rcloneName);
 
+	// The line under a provider form's title: the provider as rclone
+	// describes it, unless that description is a paragraph -- s3's names
+	// sixty compatible services -- in which case the words the player chose
+	// it by (providerLabel). A subtitle is one short line on a 3.5" panel,
+	// never a paragraph in small text (#128, D-UI-023).
+	std::string providerSubtitle(const std::string& type, const std::string& label);
+
 	// The device name as the network takes it: ASCII letters and digits,
 	// any run of anything else as one hyphen, none at either end, at most
 	// 63. The same rule as the scripts' clean_hostname (001-functions),

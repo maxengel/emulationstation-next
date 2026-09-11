@@ -6337,7 +6337,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 	std::shared_ptr<std::map<std::string, std::string>> values, GuiSettings* prev)
 {
 	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
-	s->setSubTitle(Utils::String::toUpper(backend.label));
+	s->setSubTitle(CloudText::providerSubtitle(backend.name, backend.label));
 
 	std::vector<CloudBackendField> fields;
 	// The backend id is quoted: rclone has ids with spaces in them
@@ -6741,7 +6741,7 @@ static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
 	}
 
 	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
-	s->setSubTitle(Utils::String::toUpper(backend.label));
+	s->setSubTitle(CloudText::providerSubtitle(backend.name, backend.label));
 
 	// Showing this choice closes prev. Each action must replace this page,
 	// not the provider page that has already been deleted.
@@ -6769,7 +6769,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 	const CloudOAuthReady& ready)
 {
 	auto s = new GuiSettings(window, _("CONNECT CLOUD STORAGE"));
-	s->setSubTitle(Utils::String::toUpper(backend.label));
+	s->setSubTitle(CloudText::providerSubtitle(backend.name, backend.label));
 
 	// The address carries its own PIN in its path. ADDRESS and PIN are still
 	// reported by `info` for anything driving this from a shell, but the page
@@ -6917,7 +6917,7 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	GuiSettings* prev)
 {
 	auto s = new GuiSettings(window, _("CONNECTED"));
-	s->setSubTitle(Utils::String::toUpper(backend.label));
+	s->setSubTitle(CloudText::providerSubtitle(backend.name, backend.label));
 
 	cloudSetupAddProse(s, window,
 		Utils::String::format(_("%s IS CONNECTED").c_str(),

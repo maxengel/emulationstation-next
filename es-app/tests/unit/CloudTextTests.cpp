@@ -333,6 +333,18 @@ TEST_CASE("classifyProtocolLine reads an offer line")
 	CHECK(alone.args[0] == "/Saves");
 }
 
+TEST_CASE("providerSubtitle keeps a name and drops a paragraph")
+{
+	// rclone's own description of s3 is a list of sixty services; on a
+	// 640x480 panel it filled a third of the form in small text (#128).
+	CHECK(providerSubtitle("s3", "Amazon S3 Compliant Storage Providers including AWS, Alibaba, ArvanCloud, Ceph, and others") == "AMAZON S3 AND COMPATIBLE");
+	CHECK(providerSubtitle("webdav", "WebDAV") == "WEBDAV");
+	CHECK(providerSubtitle("sftp", "SSH/SFTP") == "SSH/SFTP");
+	CHECK(providerSubtitle("azureblob", "Microsoft Azure Blob Storage") == "MICROSOFT AZURE BLOB STORAGE");
+	CHECK(providerSubtitle("azureblob", "") == "AZUREBLOB");
+	CHECK(providerSubtitle("drive", "") == "GOOGLE DRIVE");
+}
+
 TEST_CASE("fieldLabel says the player's words for rclone's option names")
 {
 	// The WebDAV form, framed at 640x480 with rclone's names on it (#123).
