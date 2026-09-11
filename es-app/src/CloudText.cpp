@@ -40,6 +40,16 @@ std::string providerLabel(const std::string& type)
 	return Utils::String::toUpper(type);
 }
 
+std::string providerSubtitle(const std::string& type, const std::string& label)
+{
+	const std::string text = Utils::String::trim(label);
+	// One line's worth at 640 wide in the subtitle font, and no list: a
+	// label that enumerates is a description, not a name.
+	if (!text.empty() && text.size() <= 40 && text.find(',') == std::string::npos)
+		return Utils::String::toUpper(text);
+	return providerLabel(type);
+}
+
 std::string fieldLabel(const std::string& rcloneName)
 {
 	// The fields the recommended providers (recommendedProviders above)
