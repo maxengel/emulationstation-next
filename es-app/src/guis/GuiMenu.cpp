@@ -5882,14 +5882,18 @@ static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std
 		return;
 	}
 
-	const bool pwOk = !info["PASSWORD"].empty();
+	// cloud_setup --info says whether a password is set, never what it is:
+	// a credential that crosses a script boundary is one careless echo from
+	// a log (#116, D-INFRA-008). The value, where this page must show or
+	// pre-fill it, is read in-process from the device's own settings.
+	const bool pwOk = info["PASSWORD_SET"] == "1";
 	const bool sshOk = info["SSH_UP"] == "active";
 	LOG(LogInfo) << "cloud_setup wizard: step 1 ssh setup, password=" << pwOk << " sshd=" << info["SSH_UP"];
 
 	auto s = new GuiSettings(window, cloudSetupTitle(mode));
 	s->setSubTitle(_("STEP 1 OF 3 - SET UP SSH"));
 
-	const std::string current = info["PASSWORD"];
+	const std::string current = SystemConf::getInstance()->get("root.password");
 	s->addEntry((pwOk ? _U("\uF058  ") : _U("\uF071  ")) + _("SET SSH PASSWORD"), true, [window, s, mode, remote, preexisting, current]
 	{
 		cloudSetupOpenPasswordPage(window, current, [window, s, mode, remote, preexisting]
@@ -5941,7 +5945,9 @@ static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const
 
 	cloudSetupAddSpacer(s, window);
 	s->addGroup(_("CONNECTION DETAILS"));
-	const std::string current = info["PASSWORD"];
+	// Read in-process, not from the script (#116): this row exists so the
+	// player can type the password into their computer's ssh prompt.
+	const std::string current = SystemConf::getInstance()->get("root.password");
 	cloudSetupAddFact(s, window, _("CURRENT PASSWORD"), current, [window, s, mode, remote, preexisting, current]
 	{
 		cloudSetupOpenPasswordPage(window, current, [window, s, mode, remote, preexisting]
@@ -7327,6 +7333,11 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 				{
 					if (rc == 0)
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD IS ANSWERING.")));
+					else if (rc == 1)
+						// A restored device has no cloud tokens on purpose: backups never
+						// carry rclone.conf (#52). Say where to connect rather than
+						// reporting a cloud that is not there as not answering.
+						window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nBACKUPS NEVER CARRY YOUR CLOUD SIGN-IN. CONNECT IT AGAIN UNDER GAME SETTINGS > CLOUD SETTINGS > MANAGE CLOUD STORAGE.")));
 					else
 						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD ISN'T ANSWERING.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD SETTINGS > MANAGE CLOUD STORAGE.")));
 				}));
