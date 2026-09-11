@@ -127,6 +127,7 @@ private:
 	// GAPS rather than the last part's code (D-UI-028).
 	std::string					mWhy;
 	std::string					mOffer;   // a question the script asked us to put to the player once the run ends (#100)
+	std::vector<std::string>	mOfferArgs;   // what the question is about: the missing folder, then a near name beside it (#127)
 	bool						mMoved{false};
 	std::vector<std::pair<std::string, int>> mTiers;
 	// Whether SYNC SAVES WHEN EXITING A GAME is on, read in the constructor

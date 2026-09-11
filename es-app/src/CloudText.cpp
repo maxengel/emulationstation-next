@@ -40,6 +40,71 @@ std::string providerLabel(const std::string& type)
 	return Utils::String::toUpper(type);
 }
 
+std::string fieldLabel(const std::string& rcloneName)
+{
+	// The fields the recommended providers (recommendedProviders above)
+	// put in front of a player, as rclone 1.75 names them. Anything a
+	// provider adds later falls through to the spaced name below, which
+	// is readable if not chosen.
+	static const std::vector<std::pair<std::string, std::string>> words = {
+		// where
+		{ "url",                        "SERVER ADDRESS" },
+		{ "host",                       "SERVER ADDRESS" },
+		{ "endpoint",                   "ENDPOINT ADDRESS" },
+		{ "port",                       "PORT" },
+		{ "vendor",                     "SERVER TYPE" },
+		{ "provider",                   "PROVIDER" },
+		{ "region",                     "REGION" },
+		{ "location_constraint",        "LOCATION" },
+		{ "tenant",                     "TENANT" },
+		{ "domain",                     "DOMAIN" },
+		{ "spn",                        "SERVICE NAME" },
+		// who
+		{ "user",                       "USERNAME" },
+		{ "pass",                       "PASSWORD" },
+		{ "2fa",                        "TWO-FACTOR CODE" },
+		{ "bearer_token",               "ACCESS TOKEN" },
+		{ "access_token",               "ACCESS TOKEN" },
+		{ "token",                      "SIGN-IN TOKEN" },
+		{ "access_key_id",              "ACCESS KEY ID" },
+		{ "secret_access_key",          "SECRET ACCESS KEY" },
+		{ "env_auth",                   "KEYS FROM THE SYSTEM" },
+		{ "account",                    "ACCOUNT ID" },
+		{ "key",                        "APPLICATION KEY" },
+		{ "client_id",                  "APP ID" },
+		{ "client_secret",              "APP SECRET" },
+		{ "scope",                      "ACCESS SCOPE" },
+		{ "service_account_file",       "SERVICE ACCOUNT FILE" },
+		{ "box_config_file",            "BOX CONFIG FILE" },
+		{ "box_sub_type",               "ACCOUNT TYPE" },
+		{ "drive_type",                 "DRIVE TYPE" },
+		{ "use_kerberos",               "USE KERBEROS" },
+		// ssh
+		{ "key_pem",                    "PRIVATE KEY (PASTED)" },
+		{ "key_file",                   "PRIVATE KEY FILE" },
+		{ "key_file_pass",              "PRIVATE KEY PASSWORD" },
+		{ "pubkey",                     "PUBLIC KEY (PASTED)" },
+		{ "pubkey_file",                "PUBLIC KEY FILE" },
+		{ "key_use_agent",              "USE SSH AGENT" },
+		{ "use_insecure_cipher",        "ALLOW OLD CIPHERS" },
+		{ "disable_hashcheck",          "SKIP CHECKSUMS" },
+		{ "ssh",                        "SSH COMMAND" },
+		// how
+		{ "tls",                        "SECURE (IMPLICIT TLS)" },
+		{ "explicit_tls",               "SECURE (EXPLICIT TLS)" },
+		{ "acl",                        "ACCESS PERMISSIONS" },
+		{ "storage_class",              "STORAGE CLASS" },
+		{ "bucket_object_lock_enabled", "OBJECT LOCK ON BUCKET" },
+	};
+	const std::string name = Utils::String::toLower(Utils::String::trim(rcloneName));
+	if (name.empty())
+		return "";
+	for (auto& w : words)
+		if (w.first == name)
+			return w.second;
+	return Utils::String::toUpper(Utils::String::replace(name, "_", " "));
+}
+
 std::string cleanHostname(const std::string& in)
 {
 	std::string out;
@@ -226,7 +291,10 @@ ProtocolLine classifyProtocolLine(const std::string& clean)
 	else if (clean.rfind(">>> offer ", 0) == 0)
 	{
 		out.kind = ProtocolKind::Offer;
-		out.text = Utils::String::trim(clean.substr(10));
+		auto parts = Utils::String::split(clean.substr(10), '|', false);
+		out.text = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
+		for (size_t i = 1; i < parts.size(); i++)
+			out.args.push_back(Utils::String::trim(parts[i]));
 	}
 	else if (clean.rfind(">>> tier ", 0) == 0)
 	{

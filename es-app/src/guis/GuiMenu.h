@@ -41,6 +41,9 @@ public:
         static void editKeyboardMappings(Window *window, IKeyboardMapContainer* mapping, bool editable);
         static void openCloud(Window* window);
 	static void openCloudSetup(Window* window);
+	// The cloud folder editor (CHANGE CLOUD FOLDER), for a dialog that
+	// found the configured folder missing beside one with a near name (#127).
+	static void openCloudFolderEditor(Window* window, const std::string& current);
         static void openCloudAddRemote(Window* window);
         // consumeMarker: clear .restore-finish-pending on FINISH (the
         // post-restore boot); false when opened from the menu later.

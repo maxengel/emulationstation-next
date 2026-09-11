@@ -51,6 +51,15 @@ namespace CloudText
 	// say when nothing is connected.
 	std::string providerLabel(const std::string& type);
 
+	// rclone's name for a provider option ("bearer_token") in the words a
+	// player connecting a NAS or a bucket would use ("ACCESS TOKEN"), for
+	// the fields the recommended providers ask for; anything unmapped is
+	// the name itself with its underscores as spaces, upper case ("SOME
+	// OPTION", never "SOME_OPTION"). The rclone name still goes in the
+	// config -- only the row's label changes (#123). Every label fits a
+	// 640x480 row beside its value; the longest is SECRET ACCESS KEY.
+	std::string fieldLabel(const std::string& rcloneName);
+
 	// The device name as the network takes it: ASCII letters and digits,
 	// any run of anything else as one hyphen, none at either end, at most
 	// 63. The same rule as the scripts' clean_hostname (001-functions),
@@ -133,6 +142,10 @@ namespace CloudText
 		// without its full stop; offer: the question's name; tier: the
 		// part's label, upper case.
 		std::string text;
+		// offer: what follows the question's name, '|'-separated -- for
+		// create-saves-folder the folder that is missing, then a folder
+		// beside it whose name is close to it, when there is one (#127).
+		std::vector<std::string> args;
 		// pid: the process group; tier: that part's exit code, -1 when the
 		// line carried none.
 		int number = 0;

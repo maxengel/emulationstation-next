@@ -318,7 +318,46 @@ TEST_CASE("classifyProtocolLine reads an offer line")
 	const ProtocolLine offer = classifyProtocolLine(">>> offer create-saves-folder");
 	CHECK(offer.kind == ProtocolKind::Offer);
 	CHECK(offer.text == "create-saves-folder");
+	CHECK(offer.args.empty());
 	CHECK(classifyProtocolLine(">>> offer ").text == "");
+
+	// #127: the folder that is missing, then a near name beside it.
+	const ProtocolLine near = classifyProtocolLine(">>> offer create-saves-folder|/ROCKNIX/Savez|/ROCKNIX/Saves");
+	CHECK(near.kind == ProtocolKind::Offer);
+	CHECK(near.text == "create-saves-folder");
+	REQUIRE(near.args.size() == 2);
+	CHECK(near.args[0] == "/ROCKNIX/Savez");
+	CHECK(near.args[1] == "/ROCKNIX/Saves");
+	const ProtocolLine alone = classifyProtocolLine(">>> offer create-saves-folder|/Saves");
+	REQUIRE(alone.args.size() == 1);
+	CHECK(alone.args[0] == "/Saves");
+}
+
+TEST_CASE("fieldLabel says the player's words for rclone's option names")
+{
+	// The WebDAV form, framed at 640x480 with rclone's names on it (#123).
+	CHECK(fieldLabel("url") == "SERVER ADDRESS");
+	CHECK(fieldLabel("vendor") == "SERVER TYPE");
+	CHECK(fieldLabel("user") == "USERNAME");
+	CHECK(fieldLabel("pass") == "PASSWORD");
+	CHECK(fieldLabel("bearer_token") == "ACCESS TOKEN");
+	// S3 and SFTP.
+	CHECK(fieldLabel("access_key_id") == "ACCESS KEY ID");
+	CHECK(fieldLabel("secret_access_key") == "SECRET ACCESS KEY");
+	CHECK(fieldLabel("host") == "SERVER ADDRESS");
+	CHECK(fieldLabel("key_file_pass") == "PRIVATE KEY PASSWORD");
+	// Unmapped: the name in plain words, never SOME_OPTION.
+	CHECK(fieldLabel("some_option") == "SOME OPTION");
+	CHECK(fieldLabel("SOME_OPTION") == "SOME OPTION");
+	CHECK(fieldLabel(" url ") == "SERVER ADDRESS");
+	CHECK(fieldLabel("") == "");
+	// Nothing wider than the row can take beside a value on a 640 panel.
+	for (const char* f : { "url", "vendor", "user", "pass", "bearer_token", "env_auth", "access_key_id",
+	                       "secret_access_key", "region", "endpoint", "location_constraint", "acl",
+	                       "bucket_object_lock_enabled", "host", "port", "key_pem", "key_file",
+	                       "key_file_pass", "pubkey", "pubkey_file", "key_use_agent",
+	                       "use_insecure_cipher", "disable_hashcheck", "ssh" })
+		CHECK(fieldLabel(f).size() <= 21);
 }
 
 TEST_CASE("classifyProtocolLine reads a tier line")
