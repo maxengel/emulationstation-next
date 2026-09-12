@@ -71,7 +71,12 @@ struct GuiSettings {
     void save() { assert(saveAllowed); }
     void close() { save(); delete this; }
 };
-struct CloudBackend { std::string label = "Dropbox"; };
+struct CloudBackend { std::string name = "dropbox"; std::string label = "Dropbox"; };
+// CloudText is the pure text layer (es-app/src/CloudText.cpp), tested on its
+// own in es-app/tests/unit; the pages under test call one function of it.
+namespace CloudText {
+    static std::string providerSubtitle(const std::string&, const std::string& label) { return label; }
+}
 struct CloudOAuthReady { bool started = true; bool onDevice = true; };
 static bool lastPhone;
 static void cloudSetupSetButtons(GuiSettings*, std::nullptr_t) {}
