@@ -140,22 +140,53 @@ namespace CloudText
 	// Acting on it -- the pid to signal, the card's waiting text, the why
 	// to keep, the offer to put to the player, the tier to record -- stays
 	// with the caller.
-	enum class ProtocolKind { NotProtocol, Pid, Doing, Why, Offer, Tier, Unknown };
+	//
+	// Every shape any script emits is named here, whether or not the reader
+	// asking about it acts on one: the transfer page read ">>> unit" and
+	// ">>> removed" with a parser of its own and never knew about
+	// ">>> offer", so the empty-cloud question reached one of the two
+	// surfaces that run cloud_restore and not the other (#145). One parser,
+	// two readers, and Unknown means a marker newer than this build --
+	// never a marker this build simply forgot.
+	enum class ProtocolKind { NotProtocol, Pid, Doing, Why, Offer, Tier, Unit, Removed, Unknown };
+
+	// removed: one per system, out of the third field of
+	// ">>> removed 14|314572800|snes:12:300000000,gb:2:14572800". files is
+	// the count as the script spelt it, because the caller prints it and
+	// picks FILE or FILES by it; an item with fewer than two fields is not
+	// one and is dropped.
+	struct RemovedSystem
+	{
+		std::string system;   // upper case
+		std::string files;
+		long bytes = 0;
+	};
 
 	struct ProtocolLine
 	{
 		ProtocolKind kind = ProtocolKind::NotProtocol;
 		// doing: what is being waited on; why: the sentence, upper case and
 		// without its full stop; offer: the question's name; tier: the
-		// part's label, upper case.
+		// part's label, upper case; unit: the item's label as the script
+		// spelt it -- one announcement is matched against the next, so the
+		// case it arrived in is the case it is compared in.
 		std::string text;
 		// offer: what follows the question's name, '|'-separated -- for
 		// create-saves-folder the folder that is missing, then a folder
 		// beside it whose name is close to it, when there is one (#127).
 		std::vector<std::string> args;
 		// pid: the process group; tier: that part's exit code, -1 when the
-		// line carried none.
+		// line carried none; unit: the script's own number for this item,
+		// 0 when it carried none.
 		int number = 0;
+		// unit: how many items that script has, 0 when it did not say.
+		int count = 0;
+		// removed: how many files a match took off this device, and what
+		// they came to. A line that carried no number says zero, which is
+		// what the field means -- nothing went.
+		long files = 0;
+		long bytes = 0;
+		std::vector<RemovedSystem> systems;
 	};
 
 	ProtocolLine classifyProtocolLine(const std::string& clean);

@@ -316,6 +316,47 @@ ProtocolLine classifyProtocolLine(const std::string& clean)
 		out.text = parts.size() > 0 ? Utils::String::toUpper(Utils::String::trim(parts[0])) : "";
 		out.number = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : -1;
 	}
+	// ">>> unit nes|2|5" -- an item starts: a system, or a phase whose
+	// counts are empty ("SAVES||"). The label keeps the case it came in,
+	// because the reader that counts items compares one announcement with
+	// the next; the empty fields are zero, which is the reader's "the
+	// script did not say".
+	else if (clean.rfind(">>> unit ", 0) == 0)
+	{
+		out.kind = ProtocolKind::Unit;
+		auto parts = Utils::String::split(clean.substr(9), '|', false);
+		out.text   = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
+		out.number = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : 0;
+		out.count  = parts.size() > 2 ? atoi(Utils::String::trim(parts[2]).c_str()) : 0;
+	}
+	// ">>> removed 14|314572800|snes:12:300000000,gb:2:14572800" -- what a
+	// match took off this device, in total and per system. A match cut off
+	// by the network prints it before exiting, so what had already gone can
+	// still be said.
+	else if (clean.rfind(">>> removed ", 0) == 0)
+	{
+		out.kind = ProtocolKind::Removed;
+		auto parts = Utils::String::split(clean.substr(12), '|', false);
+		out.files = parts.size() > 0 ? atol(Utils::String::trim(parts[0]).c_str()) : 0;
+		out.bytes = parts.size() > 1 ? atol(Utils::String::trim(parts[1]).c_str()) : 0;
+		if (parts.size() > 2)
+		{
+			for (auto& item : Utils::String::split(Utils::String::trim(parts[2]), ',', true))
+			{
+				auto f = Utils::String::split(item, ':', false);
+				// A system and a count are what makes an item; anything
+				// shorter is a torn field, and a system named with no
+				// number beside it is worse than one not named at all.
+				if (f.size() < 2)
+					continue;
+				RemovedSystem sys;
+				sys.system = Utils::String::toUpper(Utils::String::trim(f[0]));
+				sys.files  = Utils::String::trim(f[1]);
+				sys.bytes  = f.size() > 2 ? atol(Utils::String::trim(f[2]).c_str()) : 0;
+				out.systems.push_back(sys);
+			}
+		}
+	}
 	else
 		out.kind = ProtocolKind::Unknown;
 

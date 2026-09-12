@@ -191,6 +191,13 @@ private:
 	std::vector<Failed> mPendingWhys;          // since the last tier line; label "" before any unit
 	std::vector<std::string> mUnitsSinceTier;  // items announced since the last tier line
 	std::string mWhy;                          // the last why of the run, for a command with no tiers
+	// ">>> offer create-saves-folder|<folder>[|<near>]" -- a question a
+	// script asked us to put to the player, and the fields it carries.
+	// Raised when the page is dismissed, not when the line arrives: the
+	// page ends when the player has read the outcome, and a dialog over a
+	// run still going has nothing to do with the run (#145).
+	std::string mOffer;
+	std::vector<std::string> mOfferArgs;
 	// The frame's copy of (mFinished, mPercent), taken in update() under the
 	// lock that also reads the text -- render() draws the bar from these, so
 	// the bar and the eight rows are always the same stats block. Reading

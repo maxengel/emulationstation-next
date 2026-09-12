@@ -1,12 +1,10 @@
 #include "ThreadedCloudSync.h"
 #include "CloudExit.h"
+#include "CloudOffer.h"
 #include "CloudText.h"
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
 #include "guis/GuiMsgBox.h"
-#include "guis/GuiMenu.h"
-#include "ApiSystem.h"
-#include "guis/GuiLoading.h"
 #include "SystemConf.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/Platform.h"
@@ -475,56 +473,13 @@ void ThreadedCloudSync::run()
 	}
 
 	// A question the run asked us to put to the player, once its card has
-	// had its say. Pushed on the interface thread, and only when the run
-	// completed -- an offer to create a folder on top of a failure is one
-	// thing too many to read at once.
-	if (completed && mOffer == "create-saves-folder")
-	{
-		Window* window = mWindow;
-		// What the script found: the folder it was told to read, and -- when
-		// the parent holds a folder whose name is within a typo of it -- that
-		// folder. A near name changes the question (#127): CREATE IT would
-		// put /ROCKNIX/Savez beside the real /ROCKNIX/Saves, after which
-		// every backup goes to the wrong folder and every restore finds
-		// nothing, so the first choice offered is to fix the name.
-		const std::string folder = mOfferArgs.size() > 0 ? mOfferArgs[0] : "";
-		const std::string near = mOfferArgs.size() > 1 ? mOfferArgs[1] : "";
-		window->postToUiThread([window, folder, near]()
-		{
-			auto create = [window]
-			{
-				window->pushGui(new GuiLoading<int>(window, _("SETTING UP YOUR CLOUD FOLDERS"),
-					[](auto gui)
-					{
-						return ApiSystem::executeScriptLegacy("timeout 90 /usr/bin/cloud_setup --seed-folders",
-							[](const std::string) {}).second;
-					},
-					[window](int rc)
-					{
-						window->pushGui(new GuiMsgBox(window, rc == 0
-							? _("DONE. YOUR SAVES WILL GO THERE THE NEXT TIME YOU BACK THEM UP.")
-							: _("COULDN'T CREATE IT. CHECK YOUR CONNECTION AND TRY AGAIN FROM MANAGE CLOUD STORAGE."),
-							_("OK")));
-					}));
-			};
-			if (!near.empty())
-			{
-				window->pushGui(new GuiMsgBox(window,
-					Utils::String::format(_("YOUR CLOUD HAS A FOLDER CALLED %s BUT NONE CALLED %s, SO THERE WAS NOTHING TO BRING BACK.\n\nIS THE FOLDER NAME RIGHT?").c_str(),
-						near.c_str(), folder.c_str()),
-					_("CHANGE FOLDER"), [window, folder] { GuiMenu::openCloudFolderEditor(window, folder); },
-					_("CREATE ANYWAY"), create,
-					_("NOT NOW"), nullptr));
-				return;
-			}
-			window->pushGui(new GuiMsgBox(window,
-				folder.empty()
-					? _("YOUR CLOUD HAS NO SAVES FOLDER YET, SO THERE WAS NOTHING TO BRING BACK.\n\nCREATE IT NOW, READY FOR YOUR FIRST BACKUP?")
-					: Utils::String::format(_("YOUR CLOUD HAS NO %s FOLDER YET, SO THERE WAS NOTHING TO BRING BACK.\n\nCREATE IT NOW, READY FOR YOUR FIRST BACKUP?").c_str(), folder.c_str()),
-				_("CREATE IT"), create,
-				_("NOT NOW"), nullptr));
-		});
-	}
+	// had its say -- and only when the run completed: an offer to create a
+	// folder on top of a failure is one thing too many to read at once. The
+	// dialog itself is CloudOffer's, shared with the transfer page, so the
+	// two surfaces that run these scripts cannot ask it in different words
+	// (#145). It pushes on the interface thread itself.
+	if (completed)
+		CloudOffer::present(mWindow, mOffer, mOfferArgs);
 
 	delete this;
 }

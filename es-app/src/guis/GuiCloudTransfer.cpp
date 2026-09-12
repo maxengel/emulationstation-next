@@ -1,6 +1,7 @@
 #include "guis/GuiCloudTransfer.h"
 
 #include "CloudExit.h"
+#include "CloudOffer.h"
 #include "CloudText.h"
 #include "ThreadedCloudSync.h"
 #include "Window.h"
@@ -187,6 +188,10 @@ void GuiCloudTransfer::reset()
 	mElapsedMs = 0;
 	mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear(); mUnitLabel.clear(); mDoing.clear(); mChecking.clear();
 	mTiers.clear(); mFailed.clear(); mPendingWhys.clear(); mUnitsSinceTier.clear(); mWhy.clear();
+	// TRY AGAIN runs the command again from this page, and the question the
+	// last run asked is the last run's: a retry that reached the cloud and
+	// found the folder there must not still end by offering to create it.
+	mOffer.clear(); mOfferArgs.clear();
 	if (mNote) mNote->setText("");
 	if (mCounter) mCounter->setText("");
 	if (mDetail) mDetail->setText("");
@@ -197,7 +202,9 @@ void GuiCloudTransfer::reset()
 // finished the page waits for the person rather than the other way round: any
 // button dismisses it, and when the run did not complete, A runs the same
 // command again from this page -- the surface that reported the failure
-// carries the retry (D-CLOUD-077, D-UI-028).
+// carries the retry (D-CLOUD-077, D-UI-028). A question the run asked us to
+// put to the player is raised as the page goes, once the outcome has been
+// read (#145).
 bool GuiCloudTransfer::input(InputConfig* config, Input input)
 {
 	std::unique_lock<std::mutex> lock(mMutex);
@@ -240,6 +247,26 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	std::function<void()> completedAction;
 	if (o.completed && mCompletedAction)
 		completedAction = mCompletedAction;
+	// A question a script asked us to put to the player (#100, #127, #145),
+	// raised here rather than when the line arrived: this page ends when it
+	// is dismissed (es-native-ui.md, the fourth tier), and the run's outcome
+	// is what it exists to show. Raising the offer mid-run would put a
+	// dialog over a page somebody is watching, and raising it the instant
+	// the run ended would cover the outcome with a question about why there
+	// was nothing to restore -- least-surprise.md: what the screen told them
+	// happens first, then what to do about it.
+	//
+	// Not when the completed run has an action instead of an exit: that
+	// action is a restart, and a dialog it is about to take away is worse
+	// than no dialog. Nothing composes the two today -- a settings restore
+	// is its own run -- and if one ever does, the restart owns the moment.
+	std::string offer;
+	std::vector<std::string> offerArgs;
+	if (o.completed && !completedAction)
+	{
+		offer = mOffer;
+		offerArgs = mOfferArgs;
+	}
 	lock.unlock();
 	Window* window = mWindow;
 	delete this;
@@ -250,6 +277,7 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	}
 	if (restored)
 		window->postToUiThread([] { SystemData::rescanChangedFolders(); });
+	CloudOffer::present(window, offer, offerArgs);
 	return true;
 }
 
@@ -798,7 +826,7 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	// the one somebody wants -- a count of files says nothing about how long
 	// this will take when the files are a save game and a disc image.
 	//
-	// The scripts talk to this page through three ">>> " markers on stdout:
+	// The scripts talk to this page through the ">>> " markers on stdout:
 	//
 	//   ">>> unit <label>|<i>|<n>" -- an item starts: a system ("nes|2|5")
 	//     or a phase ("SAVES||", "SETTINGS||"). Everything per-block is reset
@@ -832,127 +860,155 @@ void GuiCloudTransfer::handleLine(const std::string& line)
 	//   ">>> tier <label>|<rc>" -- GuiMenu's run composition reporting each
 	//     of its parts as it ends (SAVES, ROMS AND BIOS, SETTINGS), so the
 	//     done page can say which finished and which did not.
-	if (line.rfind(">>> why ", 0) == 0)
+	//   ">>> offer <name>|<arg>|..." -- a question the script wants put to
+	//     the player, and cannot put itself. Kept until the page is
+	//     dismissed and raised then (input); the words are CloudOffer's,
+	//     shared with the card.
+	//
+	// Which line is which is CloudText::classifyProtocolLine -- the one
+	// parser both cloud surfaces read this protocol with -- and what each
+	// kind does to this page stays here.
+	//
+	// It used to be a second parser living in this function, which knew
+	// ">>> unit" and ">>> removed" and had never heard of ">>> offer": so
+	// the empty-cloud question (#100, #127) was put to the player by the
+	// card and not by this page, on the very route a freshly set-up
+	// handheld takes (#145).
+	//
+	// Nothing carrying ">>> " is rclone's, so nothing carrying ">>> "
+	// reaches the rclone parsers below -- a marker newer than this build
+	// included. It is dropped deliberately here rather than left to fall
+	// through to matchers that were never asked about it.
+	const CloudText::ProtocolLine protocol = CloudText::classifyProtocolLine(line);
+	if (protocol.kind != CloudText::ProtocolKind::NotProtocol)
 	{
-		std::string why = Utils::String::toUpper(Utils::String::trim(line.substr(8)));
-		// Line 4 supplies its own punctuation; a full stop after the dash
-		// reads as a typo.
-		while (!why.empty() && why.back() == '.')
-			why.pop_back();
-		if (why.empty())
-			return;
-		mWhy = why;
-		mPendingWhys.push_back({ Utils::String::toUpper(mUnitLabel), why });
-		return;
-	}
-	if (line.rfind(">>> tier ", 0) == 0)
-	{
-		auto parts = Utils::String::split(line.substr(9), '|', false);
-		Tier t;
-		t.label = Utils::String::toUpper(parts.size() > 0 ? Utils::String::trim(parts[0]) : "");
-		t.rc = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : -1;
-		t.unitsAnnounced = (int) mUnitsSinceTier.size();
-		t.unitsFailed = 0;
-		t.tierLevelFail = false;
-		if (t.label.empty())
-			return;
-		const bool ok = t.rc == 0 || t.rc == 9;
-		if (!ok)
+		switch (protocol.kind)
 		{
-			std::vector<std::string> named;
-			for (auto& w : mPendingWhys)
-			{
-				// A why printed before any unit is the tier's own; the tier
-				// as a whole is the item that did not finish.
-				const std::string label = w.label.empty() ? t.label : w.label;
-				if (w.label.empty())
-					t.tierLevelFail = true;
-				else if (std::find(named.begin(), named.end(), w.label) == named.end())
-					named.push_back(w.label);
-				// The last why for an item wins; the scripts may say more
-				// than one thing about the same unit as they give up on it.
-				bool seen = false;
-				for (auto& f : mFailed)
-					if (f.label == label) { f.why = w.why; seen = true; }
-				if (!seen)
-					mFailed.push_back({ label, w.why });
-			}
-			t.unitsFailed = (int) named.size();
-			// A part that failed without a word: the part is the item, and
-			// the code supplies the why. Its units are not presumed to have
-			// finished, because nothing said they did.
-			if (mPendingWhys.empty())
-			{
-				t.tierLevelFail = true;
-				mFailed.push_back({ t.label, ThreadedCloudSync::whyForCode(t.rc) });
-			}
+		case CloudText::ProtocolKind::Why:
+		{
+			// An empty why is a why line with nothing in it: the one this
+			// page already had stands, and no item is blamed for it.
+			if (protocol.text.empty())
+				break;
+			mWhy = protocol.text;
+			mPendingWhys.push_back({ Utils::String::toUpper(mUnitLabel), protocol.text });
+			break;
 		}
-		mTiers.push_back(t);
-		mPendingWhys.clear();
-		mUnitsSinceTier.clear();
-		return;
-	}
-	if (line.rfind(">>> removed ", 0) == 0)
-	{
-		auto parts = Utils::String::split(line.substr(12), '|', false);
-		mRemovedFiles = parts.size() > 0 ? atol(Utils::String::trim(parts[0]).c_str()) : 0;
-		mRemovedBytes = parts.size() > 1 ? atol(Utils::String::trim(parts[1]).c_str()) : 0;
-		mRemovedDetail.clear();
-		if (parts.size() > 2)
+		case CloudText::ProtocolKind::Tier:
 		{
-			for (auto& item : Utils::String::split(Utils::String::trim(parts[2]), ',', true))
+			Tier t;
+			t.label = protocol.text;
+			t.rc = protocol.number;
+			t.unitsAnnounced = (int) mUnitsSinceTier.size();
+			t.unitsFailed = 0;
+			t.tierLevelFail = false;
+			// A tier with no label is no tier: nothing is recorded, and the
+			// whys waiting under it stay waiting for one that has a name.
+			if (t.label.empty())
+				break;
+			const bool ok = t.rc == 0 || t.rc == 9;
+			if (!ok)
 			{
-				auto f = Utils::String::split(item, ':', false);
-				if (f.size() < 2)
-					continue;
-				const std::string n = Utils::String::trim(f[1]);
-				std::string d = Utils::String::toUpper(Utils::String::trim(f[0])) + " " + n + " " + std::string(n == "1" ? _("FILE") : _("FILES"));
-				long b = f.size() > 2 ? atol(Utils::String::trim(f[2]).c_str()) : 0;
-				if (b > 0)
-					d += " · " + sizeLabel((unsigned long) b);
+				std::vector<std::string> named;
+				for (auto& w : mPendingWhys)
+				{
+					// A why printed before any unit is the tier's own; the tier
+					// as a whole is the item that did not finish.
+					const std::string label = w.label.empty() ? t.label : w.label;
+					if (w.label.empty())
+						t.tierLevelFail = true;
+					else if (std::find(named.begin(), named.end(), w.label) == named.end())
+						named.push_back(w.label);
+					// The last why for an item wins; the scripts may say more
+					// than one thing about the same unit as they give up on it.
+					bool seen = false;
+					for (auto& f : mFailed)
+						if (f.label == label) { f.why = w.why; seen = true; }
+					if (!seen)
+						mFailed.push_back({ label, w.why });
+				}
+				t.unitsFailed = (int) named.size();
+				// A part that failed without a word: the part is the item, and
+				// the code supplies the why. Its units are not presumed to have
+				// finished, because nothing said they did.
+				if (mPendingWhys.empty())
+				{
+					t.tierLevelFail = true;
+					mFailed.push_back({ t.label, ThreadedCloudSync::whyForCode(t.rc) });
+				}
+			}
+			mTiers.push_back(t);
+			mPendingWhys.clear();
+			mUnitsSinceTier.clear();
+			break;
+		}
+		case CloudText::ProtocolKind::Removed:
+		{
+			mRemovedFiles = protocol.files;
+			mRemovedBytes = protocol.bytes;
+			mRemovedDetail.clear();
+			for (auto& sys : protocol.systems)
+			{
+				std::string d = sys.system + " " + sys.files + " " + std::string(sys.files == "1" ? _("FILE") : _("FILES"));
+				if (sys.bytes > 0)
+					d += " · " + sizeLabel((unsigned long) sys.bytes);
 				mRemovedDetail.push_back(d);
 			}
+			break;
 		}
-		return;
-	}
-	if (line.rfind(">>> unit ", 0) == 0)
-	{
-		foldUnit();   // the unit that just ended: its last totals are the run's now
-		auto parts = Utils::String::split(line.substr(9), '|', false);
-		const std::string label = parts.size() > 0 ? Utils::String::trim(parts[0]) : "";
-		const int scriptIndex   = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : 0;
-		const int scriptCount   = parts.size() > 2 ? atoi(Utils::String::trim(parts[2]).c_str()) : 0;
-		// The next item, unless it is the current one announced again. The
-		// first announcement is an item whatever its label says.
-		if (mItemIndex == 0 || label != mUnitLabel)
+		case CloudText::ProtocolKind::Unit:
 		{
-			if (scriptCount > 0 && (mLastScriptIndex == 0 || scriptIndex <= mLastScriptIndex))
-				mScriptBase = mItemIndex;   // a script's first announcement: what came before it is its base
-			mItemIndex++;
-			mUnitsSinceTier.push_back(Utils::String::toUpper(label));
+			foldUnit();   // the unit that just ended: its last totals are the run's now
+			const std::string label = protocol.text;
+			const int scriptIndex   = protocol.number;
+			const int scriptCount   = protocol.count;
+			// The next item, unless it is the current one announced again. The
+			// first announcement is an item whatever its label says.
+			if (mItemIndex == 0 || label != mUnitLabel)
+			{
+				if (scriptCount > 0 && (mLastScriptIndex == 0 || scriptIndex <= mLastScriptIndex))
+					mScriptBase = mItemIndex;   // a script's first announcement: what came before it is its base
+				mItemIndex++;
+				mUnitsSinceTier.push_back(Utils::String::toUpper(label));
+			}
+			mLastScriptIndex = scriptCount > 0 ? scriptIndex : 0;
+			if (scriptCount > 0)
+				mItemCount = mScriptBase + scriptCount + mTrailing;
+			// Never ITEM 5 OF 4: a script that announced more than anybody
+			// expected grows the count rather than overrun it.
+			if (mItemCount > 0 && mItemIndex > mItemCount)
+				mItemCount = mItemIndex;
+			mUnitLabel = label;
+			mDoing.clear();
+			mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear(); mChecking.clear();
+			mFilesThisBlock = 0; mChecksThisBlock = 0; mSeenBlock = false;
+			mChecksDone = 0; mChecksTotal = 0; mListed = 0;
+			mBytePercent = -1; mFilePercent = -1; mCheckPercent = -1; mPercent = -1;
+			break;
 		}
-		mLastScriptIndex = scriptCount > 0 ? scriptIndex : 0;
-		if (scriptCount > 0)
-			mItemCount = mScriptBase + scriptCount + mTrailing;
-		// Never ITEM 5 OF 4: a script that announced more than anybody
-		// expected grows the count rather than overrun it.
-		if (mItemCount > 0 && mItemIndex > mItemCount)
-			mItemCount = mItemIndex;
-		mUnitLabel = label;
-		mDoing.clear();
-		mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear(); mChecking.clear();
-		mFilesThisBlock = 0; mChecksThisBlock = 0; mSeenBlock = false;
-		mChecksDone = 0; mChecksTotal = 0; mListed = 0;
-		mBytePercent = -1; mFilePercent = -1; mCheckPercent = -1; mPercent = -1;
+		case CloudText::ProtocolKind::Doing:
+			// Any keyword a newer script prints is ignored rather than shown
+			// raw: row 3 says what the item is doing in the player's words,
+			// and a word out of a script is not those.
+			if (protocol.text == "archive" || protocol.text == "unpack")
+				mDoing = protocol.text;
+			break;
+		case CloudText::ProtocolKind::Offer:
+			// A question for the player, kept until the run is over and the
+			// outcome has been read: while the page is running, the run is
+			// all it has to say (#145, and input() raises it).
+			mOffer = protocol.text;
+			mOfferArgs = protocol.args;
+			break;
+		default:
+			// Pid is the card's, for the process group it may have to
+			// signal; this page's run is not cancelled for a launch.
+			// Unknown is a marker newer than this build.
+			break;
+		}
 		return;
 	}
-	if (line.rfind(">>> doing ", 0) == 0)
-	{
-		const std::string what = Utils::String::trim(line.substr(10));
-		if (what == "archive" || what == "unpack")
-			mDoing = what;
-		return;
-	}
+
 	// From here on the line is rclone's, so whatever the item was busy with
 	// before rclone ran is over.
 	if (line.rfind("Transferred:", 0) == 0)
