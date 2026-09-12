@@ -5042,7 +5042,7 @@ void GuiMenu::openCloud(Window* window)
 	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
 	{
 		s->addWithDescription(_("FINISH RESTORE PROCESS"),
-			_("RE-ENTER PASSWORD INFO THAT'S NOT BACKED UP TO THE CLOUD (WI-FI, ACCOUNTS, ETC.)"), nullptr,
+			_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE (WI-FI, ACCOUNTS, THIS DEVICE)."), nullptr,
 			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
 	}
 

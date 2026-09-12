@@ -48,7 +48,7 @@ static void createSavesFolder(Window* window, const std::vector<std::string>& ar
 	if (!near.empty())
 	{
 		window->pushGui(new GuiMsgBox(window,
-			Utils::String::format(_("YOUR CLOUD HAS A %s FOLDER BUT NO %s FOLDER, SO THERE WAS NOTHING TO RESTORE.\n\nIS THE FOLDER NAME RIGHT?").c_str(),
+			Utils::String::format(_("NOTHING TO RESTORE: YOUR CLOUD HAS %s, NOT %s.\n\nIS THE NAME RIGHT?").c_str(),
 				near.c_str(), folder.c_str()),
 			_("CHANGE FOLDER"), [window, folder] { GuiMenu::openCloudFolderEditor(window, folder); },
 			_("CREATE ANYWAY"), create,
@@ -57,8 +57,8 @@ static void createSavesFolder(Window* window, const std::vector<std::string>& ar
 	}
 	window->pushGui(new GuiMsgBox(window,
 		folder.empty()
-			? _("YOUR CLOUD HAS NO SAVES FOLDER YET, SO THERE WAS NOTHING TO RESTORE.\n\nCREATE IT NOW, READY FOR YOUR FIRST BACKUP?")
-			: Utils::String::format(_("YOUR CLOUD HAS NO %s FOLDER YET, SO THERE WAS NOTHING TO RESTORE.\n\nCREATE IT NOW, READY FOR YOUR FIRST BACKUP?").c_str(), folder.c_str()),
+			? _("YOUR CLOUD HAS NO SAVES FOLDER YET.\n\nCREATE IT NOW?")
+			: Utils::String::format(_("YOUR CLOUD HAS NO %s FOLDER YET.\n\nCREATE IT NOW?").c_str(), folder.c_str()),
 		_("CREATE IT"), create,
 		_("NOT NOW"), nullptr));
 }
