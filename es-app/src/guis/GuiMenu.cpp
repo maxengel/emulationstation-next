@@ -5041,7 +5041,7 @@ void GuiMenu::openCloud(Window* window)
 	// Only while there is a restore to finish.
 	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
 	{
-		s->addWithDescription(_("FINALIZE RESTORE"),
+		s->addWithDescription(_("FINISH RESTORE PROCESS"),
 			_("RE-ENTER PASSWORD INFO THAT'S NOT BACKED UP TO THE CLOUD (WI-FI, ACCOUNTS, ETC.)"), nullptr,
 			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
 	}
@@ -7185,7 +7185,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	const std::string restoreMarker = "/storage/.config/.restore-finish-pending";
 
 	auto theme = ThemeData::getMenuTheme();
-	auto s = new GuiSettings(window, _("FINISH RESTORE SETUP"));
+	auto s = new GuiSettings(window, _("FINISH RESTORE PROCESS"));
 	s->setSubTitle(_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE"));
 
 	// A state row: check-circle when the credential is present, an empty
@@ -7356,7 +7356,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	// LATER keeps the marker, so this page returns on the next boot -- but
 	// nothing said so, leaving the player unable to tell defer from discard.
 	s->addWithDescription(_("LATER KEEPS THIS LIST"),
-		_("IT COMES BACK NEXT TIME YOU START UP, OR FIND IT IN NETWORK SETTINGS > FINISH RESTORE SETUP."),
+		_("IT COMES BACK NEXT TIME YOU START UP, OR FIND IT IN NETWORK SETTINGS > FINISH RESTORE PROCESS."),
 		nullptr, nullptr, "", false, true);
 
 	// FINISH consumes the marker; LATER leaves it so the next boot
@@ -9022,7 +9022,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	{
 		Window* restoreWindow = mWindow;
 		s->addGroup(_("RESTORE"));
-		s->addWithDescription(_("FINISH RESTORE SETUP"),
+		s->addWithDescription(_("FINISH RESTORE PROCESS"),
 			_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE (WI-FI, ACCOUNTS, THIS DEVICE)."),
 			nullptr, [restoreWindow] { GuiMenu::openRestoreRelink(restoreWindow, true); }, "", false, true);
 	}
