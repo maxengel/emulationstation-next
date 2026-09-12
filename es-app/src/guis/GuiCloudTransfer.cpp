@@ -677,7 +677,7 @@ void GuiCloudTransfer::update(int deltaTime)
 				note = moved ? _("WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.") : _("DON'T WORRY, NOTHING CHANGED.");
 		}
 		else if (contentRun && (mRemovedFiles > 0 || mAnyTransferred))
-			note = _("UPDATE GAME LISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
+			note = _("UPDATE GAMELISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
 		// A completed run whose only exit is an action says what that
 		// action does here, where a run that finished cleanly otherwise has
 		// nothing to put (setCompletedAction).
