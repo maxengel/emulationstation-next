@@ -30,7 +30,7 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	mBackground.setCornerSize(theme->Background.cornerSize);
 	mBackground.setPostProcessShader(theme->Background.menuShader);
 
-	mTitle = std::make_shared<TextComponent>(mWindow, _("SAVESTATE MANAGER"), theme->Title.font, theme->Title.color, ALIGN_CENTER);
+	mTitle = std::make_shared<TextComponent>(mWindow, _("SAVE STATE MANAGER"), theme->Title.font, theme->Title.color, ALIGN_CENTER);
 	mLayout.setEntry(mTitle, Vector2i(1, 1), false, true);
 
 	mGrid = std::make_shared<ImageGridComponent<SaveStateItem>>(mWindow);
