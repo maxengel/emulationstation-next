@@ -3,6 +3,9 @@
 #include "CloudExit.h"
 #include "utils/StringUtil.h"
 
+#include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <set>
 
@@ -342,6 +345,198 @@ std::string chooseThatFits(const std::vector<std::string>& candidates, float wid
 	}
 
 	return shown;
+}
+
+const std::vector<RcloneUnit>& rcloneUnits()
+{
+	static const std::vector<RcloneUnit> units = {
+		{ "TiB", "TB",  1024.0 * 1024 * 1024 * 1024 },
+		{ "GiB", "GB",  1024.0 * 1024 * 1024 },
+		{ "MiB", "MB",  1024.0 * 1024 },
+		{ "KiB", "KB",  1024.0 },
+		{ "Ti",  " TB", 1024.0 * 1024 * 1024 * 1024 },
+		{ "Gi",  " GB", 1024.0 * 1024 * 1024 },
+		{ "Mi",  " MB", 1024.0 * 1024 },
+		{ "Ki",  " KB", 1024.0 },
+		{ "B",   "B",   1.0 },
+	};
+	return units;
+}
+
+long parseBytes(const std::string& field)
+{
+	const std::string t = Utils::String::trim(field);
+	char* end = nullptr;
+	const double v = strtod(t.c_str(), &end);
+	if (end == t.c_str() || !std::isfinite(v) || v < 0)
+		return -1;
+	const std::string unit = Utils::String::trim(std::string(end));
+	for (const auto& u : rcloneUnits())
+		if (unit == u.rclone)
+			return (long) (v * u.bytes + 0.5);
+	return -1;
+}
+
+std::string sizeLabel(unsigned long bytes)
+{
+	char buf[32];
+	const unsigned long kb = (bytes + 1023UL) / 1024UL;
+	const double mb = bytes / (1024.0 * 1024.0);
+	if (kb < 1024UL)
+		snprintf(buf, sizeof(buf), "%lu KB", kb);
+	else if (mb < 1023.95)
+		snprintf(buf, sizeof(buf), "%.1f MB", mb);
+	else
+		snprintf(buf, sizeof(buf), "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
+	return buf;
+}
+
+std::string roundSizes(const std::string& f)
+{
+	std::string out;
+	size_t i = 0;
+	while (i < f.size())
+	{
+		// a number starts at a digit that does not continue a token ("3m2s")
+		const bool starts = isdigit((unsigned char) f[i]) && (i == 0 || !(isalnum((unsigned char) f[i - 1]) || f[i - 1] == '.'));
+		if (!starts)
+		{
+			out += f[i++];
+			continue;
+		}
+		size_t j = i;
+		while (j < f.size() && (isdigit((unsigned char) f[j]) || f[j] == '.'))
+			j++;
+		size_t k = j;
+		while (k < f.size() && f[k] == ' ')
+			k++;
+		const RcloneUnit* unit = nullptr;
+		for (const auto& u : rcloneUnits())
+		{
+			const std::string spelt = u.rclone;
+			if (f.compare(k, spelt.size(), spelt) == 0 && (k + spelt.size() == f.size() || !isalpha((unsigned char) f[k + spelt.size()])))
+			{
+				unit = &u;
+				break;
+			}
+		}
+		const size_t end = unit == nullptr ? j : k + std::string(unit->rclone).size();
+		const long bytes = unit == nullptr ? -1 : parseBytes(f.substr(i, end - i));
+		out += bytes < 0 ? f.substr(i, end - i) : sizeLabel((unsigned long) bytes);
+		i = end;
+	}
+	return out;
+}
+
+namespace
+{
+	// "<a> / <b>[, <pct>%[, <speed>]]" -- the body of a Transferred: or
+	// Checks: line once its label is gone. False when there is no pair.
+	bool readPair(const std::string& body, std::string& a, std::string& b, int& percent)
+	{
+		const auto fields = Utils::String::split(body, ',', true);
+		if (fields.empty())
+			return false;
+		const std::string pair = Utils::String::trim(fields[0]);
+		const auto slash = pair.find(" / ");
+		if (slash == std::string::npos)
+			return false;
+		a = Utils::String::trim(pair.substr(0, slash));
+		b = Utils::String::trim(pair.substr(slash + 3));
+		percent = -1;
+		for (size_t i = 1; i < fields.size(); i++)
+		{
+			const std::string t = Utils::String::trim(fields[i]);
+			if (t.empty() || t.back() != '%')
+				continue;
+			const std::string digits = t.substr(0, t.size() - 1);
+			if (!digits.empty() && digits.find_first_not_of("0123456789") == std::string::npos)
+			{
+				const int value = atoi(digits.c_str());
+				if (value >= 0 && value <= 100)
+					percent = value;
+			}
+			break;
+		}
+		return !a.empty() && !b.empty();
+	}
+
+	bool allDigits(const std::string& s)
+	{
+		return !s.empty() && s.find_first_not_of("0123456789") == std::string::npos;
+	}
+}
+
+LiveLine liveLine(const std::string& clean)
+{
+	LiveLine out;
+	static const std::string XFER = "Transferred:";
+	static const std::string CHECKS = "Checks:";
+
+	const size_t xfer = clean.rfind(XFER);
+	const size_t checks = clean.rfind(CHECKS);
+
+	if (xfer != std::string::npos && (checks == std::string::npos || xfer > checks))
+	{
+		std::string body = Utils::String::trim(clean.substr(xfer + XFER.size()));
+		// speed and ETA are for a terminal; the card has a bar
+		const auto eta = body.find(", ETA ");
+		if (eta != std::string::npos)
+			body = body.substr(0, eta);
+		std::string a, b;
+		int percent = -1;
+		if (!readPair(body, a, b, percent))
+			return out;
+		if (allDigits(a) && allDigits(b))
+		{
+			// the count line has no unit: "0 / 3, 0%"
+			out.kind = LiveLine::Kind::Files;
+			out.sent = atol(a.c_str());
+			out.total = atol(b.c_str());
+			return out;
+		}
+		const long sent = parseBytes(a);
+		const long total = parseBytes(b);
+		if (sent < 0 || total < 0)
+			return out;
+		out.kind = LiveLine::Kind::Bytes;
+		out.sent = sent;
+		out.total = total;
+		out.percent = percent;
+		return out;
+	}
+
+	if (checks != std::string::npos)
+	{
+		// rclone's check counter -- "Checks: 12 / 70, 17%, Listed 313" --
+		// is a comparison, not a transfer, and its percentage is not the
+		// bar's: drawn as one it reads as seventy uploads.
+		std::string a, b;
+		int percent = -1;
+		if (!readPair(Utils::String::trim(clean.substr(checks + CHECKS.size())), a, b, percent))
+			return out;
+		if (!allDigits(a) || !allDigits(b))
+			return out;
+		out.kind = LiveLine::Kind::Checks;
+		out.sent = atol(a.c_str());
+		out.total = atol(b.c_str());
+		return out;
+	}
+
+	// A per-file line (" * name: 32% /292.969Ki, 95.996Ki/s, 2s") is
+	// written for a log; the card's title already says what is moving.
+	if (clean.rfind("* ", 0) == 0)
+		return out;
+
+	// Anything else carries progress if it has a percentage or an "x / y"
+	// count, and is shown as it came. rclone's headers, the elapsed time
+	// and the scripts' banners have neither, and stay off the card.
+	if (clean.find('%') != std::string::npos || clean.find(" / ") != std::string::npos)
+	{
+		out.kind = LiveLine::Kind::Other;
+		out.text = clean;
+	}
+	return out;
 }
 
 } // namespace CloudText

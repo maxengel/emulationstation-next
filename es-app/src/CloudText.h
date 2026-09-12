@@ -172,6 +172,66 @@ namespace CloudText
 	// right answer then.
 	std::string chooseThatFits(const std::vector<std::string>& candidates, float width,
 		const std::function<float(const std::string&)>& measure);
+
+	// rclone's size units, once: how each is spelt in its output (the torn
+	// "Ki"/"Mi"/"Gi" is a per-file line cut at 80 columns), what the pages
+	// call it, and how many bytes it is. roundSizes finds a size by this
+	// table, parseBytes reads it and sizeLabel re-renders it; the transfer
+	// page's rename of a token that did not parse uses the same table. So a
+	// unit a page can show is a unit it can add up. Longest spelling first:
+	// "GiB" must be matched before "Gi".
+	struct RcloneUnit { const char* rclone; const char* shown; double bytes; };
+	const std::vector<RcloneUnit>& rcloneUnits();
+
+	// The bytes in one rclone size field: "80 KiB" -> 81920, "1.4 GiB" ->
+	// 1503238554, "0 B" -> 0. -1 when the field carries no number or a unit
+	// the table does not know: a value that was not printed is never added
+	// to a total that will be shown. strtod also reads "inf" and "nan",
+	// which no size is and whose cast to long is undefined; rclone never
+	// prints them, and they are refused all the same.
+	long parseBytes(const std::string& field);
+
+	// A size at the precision it has: "200 KB", "1.2 MB", "1.20 GB" -- a
+	// whole KB below a megabyte, one decimal below a gigabyte, two above
+	// (#85). The one formatter for every size a cloud surface prints, so no
+	// two of them disagree on a number. A size that is not zero rounds up,
+	// so one byte reads "1 KB", never "0 KB"; the unit is chosen from the
+	// value as it will print, so nothing reads "1024 KB" a byte short of
+	// the next unit.
+	std::string sizeLabel(unsigned long bytes);
+
+	// Every size and speed in an rclone fragment at sizeLabel's precision:
+	// "16.521 MiB / 16.521 MiB, 100%, 519.844 KiB/s" -> "16.5 MB / 16.5 MB,
+	// 100%, 520 KB/s". A "/s" after the unit stays: a speed is a size per
+	// second. Percentages and times carry no unit from the table and pass
+	// through untouched; so does a number whose unit did not parse.
+	std::string roundSizes(const std::string& fragment);
+
+	// One line of rclone's output as the sync card should read it (#140).
+	//
+	// Piped, rclone writes its stats block with no newline after the last
+	// line, so the next block's "Transferred:" arrives glued to whatever
+	// ended the block before -- "Elapsed time: 2.0sTransferred: 0 B / 0 B"
+	// on the card that produced #140, a per-file line on a busier run. The
+	// marker's last occurrence is where the line that matters starts, and
+	// everything in front of it is the tail of a block already shown.
+	//
+	// What comes back is the fact, not the words: how many bytes of how
+	// many (Bytes), how many files of how many (Files), how far the
+	// comparison has got (Checks), or a line that carries progress in some
+	// other shape (Other, text as it came). The caller says it in the
+	// player's language. None is a line the card should not repeat: a
+	// per-file line, rclone's headers, the elapsed time, prose.
+	struct LiveLine
+	{
+		enum class Kind { None, Bytes, Files, Checks, Other };
+		Kind kind = Kind::None;
+		long sent = -1;      // Bytes: bytes moved so far; Files/Checks: done
+		long total = -1;     // Bytes: bytes in all; Files/Checks: of how many
+		int percent = -1;    // the byte line's percentage, else -1 (no bar change)
+		std::string text;    // Other: the line as it came
+	};
+	LiveLine liveLine(const std::string& clean);
 }
 
 #endif // ES_APP_CLOUD_TEXT_H

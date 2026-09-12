@@ -1,6 +1,7 @@
 #include "guis/GuiCloudTransfer.h"
 
 #include "CloudExit.h"
+#include "CloudText.h"
 #include "ThreadedCloudSync.h"
 #include "Window.h"
 #include "ThemeData.h"
@@ -390,116 +391,23 @@ std::string GuiCloudTransfer::fitSentences(const std::shared_ptr<Font>& font, st
 	return fitOneLine(font, text, width);
 }
 
-// rclone's size units, once: how each is spelt in its output (the torn
-// "Ki"/"Mi"/"Gi" is a per-file line cut at 80 columns), what the page calls
-// it, and how many bytes it is. roundSizes finds a size by this table,
-// parseBytes reads it and sizeLabel re-renders it; prettyRclone's rename by
-// the same table is the fallback for a token that did not parse. So a unit
-// the page can show is a unit it can add up. Longest spelling first: "GiB"
-// must be matched before "Gi".
-namespace
-{
-	struct RcloneUnit { const char* rclone; const char* shown; double bytes; };
-	const RcloneUnit RCLONE_UNITS[] = {
-		{ "TiB", "TB",  1024.0 * 1024 * 1024 * 1024 },
-		{ "GiB", "GB",  1024.0 * 1024 * 1024 },
-		{ "MiB", "MB",  1024.0 * 1024 },
-		{ "KiB", "KB",  1024.0 },
-		{ "Ti",  " TB", 1024.0 * 1024 * 1024 * 1024 },
-		{ "Gi",  " GB", 1024.0 * 1024 * 1024 },
-		{ "Mi",  " MB", 1024.0 * 1024 },
-		{ "Ki",  " KB", 1024.0 },
-		{ "B",   "B",   1.0 },
-	};
-}
-
-// "200 KB", "1.2 MB", "1.20 GB": a whole KB below a megabyte, one decimal
-// below a gigabyte, two above. That is the precision a listing has and the
-// precision a player can act on. kiloBytesToString prints two decimals of
-// whatever unit it lands on, and fed a size already rounded up to a whole
-// KB it read "200.00 KB" -- two digits that could only ever be zero (#85).
-// A size that is not zero rounds up, so one byte reads "1 KB", never "0 KB".
-// The unit is chosen from the value as it will print, so nothing reads
-// "1024 KB" or "1024.0 MB" a byte short of the next unit.
+// The units table, the size parser and the two formatters live in
+// CloudText (#140), where the sync card shares them and the unit tests can
+// reach them. These three stay as the names this page's callers -- and the
+// content picker and the match confirmation, through sizeLabel -- use.
 std::string GuiCloudTransfer::sizeLabel(unsigned long bytes)
 {
-	char buf[32];
-	const unsigned long kb = (bytes + 1023UL) / 1024UL;
-	const double mb = bytes / (1024.0 * 1024.0);
-	if (kb < 1024UL)
-		snprintf(buf, sizeof(buf), "%lu KB", kb);
-	else if (mb < 1023.95)
-		snprintf(buf, sizeof(buf), "%.1f MB", mb);
-	else
-		snprintf(buf, sizeof(buf), "%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0));
-	return buf;
+	return CloudText::sizeLabel(bytes);
 }
 
-// The bytes in one rclone size field: "80 KiB" -> 81920, "1.4 GiB" ->
-// 1503238553, "0 B" -> 0. -1 when the field carries no number or a unit
-// the table above does not know: a value that was not printed is never
-// added to a total that will be shown. strtod also reads "inf" and "nan",
-// which no size is and whose cast to long is undefined; rclone never prints
-// them, and they are refused all the same.
 long GuiCloudTransfer::parseBytes(const std::string& field)
 {
-	const std::string t = Utils::String::trim(field);
-	char* end = nullptr;
-	const double v = strtod(t.c_str(), &end);
-	if (end == t.c_str() || !std::isfinite(v) || v < 0)
-		return -1;
-	const std::string unit = Utils::String::trim(std::string(end));
-	for (const auto& u : RCLONE_UNITS)
-		if (unit == u.rclone)
-			return (long) (v * u.bytes + 0.5);
-	return -1;
+	return CloudText::parseBytes(field);
 }
 
-// Every size and speed in an rclone fragment at sizeLabel's precision:
-// "16.521 MiB / 16.521 MiB, 100%, 519.844 KiB/s" -> "16.5 MB / 16.5 MB,
-// 100%, 520 KB/s". rclone prints three decimals of whatever unit it lands
-// on, and on a 640px panel the totals row ran past its width and lost the
-// time left to the ellipsis (VM frames, 2026-09-09). Each number-and-unit is
-// parsed (parseBytes) and re-rendered (sizeLabel) rather than trimmed, so
-// the page prints one precision for every size it shows, live or summed.
-// A "/s" after the unit stays: a speed is a size per second. Percentages
-// and times carry no unit from the table and pass through untouched; so
-// does a number whose unit did not parse.
 std::string GuiCloudTransfer::roundSizes(const std::string& f)
 {
-	std::string out;
-	size_t i = 0;
-	while (i < f.size())
-	{
-		// a number starts at a digit that does not continue a token ("3m2s")
-		const bool starts = isdigit((unsigned char) f[i]) && (i == 0 || !(isalnum((unsigned char) f[i - 1]) || f[i - 1] == '.'));
-		if (!starts)
-		{
-			out += f[i++];
-			continue;
-		}
-		size_t j = i;
-		while (j < f.size() && (isdigit((unsigned char) f[j]) || f[j] == '.'))
-			j++;
-		size_t k = j;
-		while (k < f.size() && f[k] == ' ')
-			k++;
-		const RcloneUnit* unit = nullptr;
-		for (const auto& u : RCLONE_UNITS)
-		{
-			const std::string spelt = u.rclone;
-			if (f.compare(k, spelt.size(), spelt) == 0 && (k + spelt.size() == f.size() || !isalpha((unsigned char) f[k + spelt.size()])))
-			{
-				unit = &u;
-				break;
-			}
-		}
-		const size_t end = unit == nullptr ? j : k + std::string(unit->rclone).size();
-		const long bytes = unit == nullptr ? -1 : parseBytes(f.substr(i, end - i));
-		out += bytes < 0 ? f.substr(i, end - i) : sizeLabel((unsigned long) bytes);
-		i = end;
-	}
-	return out;
+	return CloudText::roundSizes(f);
 }
 
 // The unit's last "Transferred:" pair becomes the run's. Called with mMutex
@@ -559,7 +467,7 @@ std::string GuiCloudTransfer::prettyRclone(std::string f)
 	}
 	f = roundSizes(f);
 	auto rep = [&f](const std::string& from, const std::string& to) { f = Utils::String::replace(f, from, to); };
-	for (const auto& u : RCLONE_UNITS)
+	for (const auto& u : CloudText::rcloneUnits())
 		if (std::string(u.rclone) != u.shown)
 			rep(u.rclone, u.shown);
 	rep("ETA ", "");

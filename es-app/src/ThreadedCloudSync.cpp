@@ -235,69 +235,62 @@ void ThreadedCloudSync::run()
 			// SAVES. Those are written for a log read afterwards, not for
 			// somebody watching a handheld.
 			//
-			// So: transfer progress, and nothing else. A line carries
-			// progress if it has a percentage or a "x / y" count. What went
-			// wrong arrives on the protocol line above, in the scripts' own
-			// words, and is said once at the end.
-			const bool hasPercent = clean.find('%') != std::string::npos;
-			const bool hasCount   = clean.find(" / ") != std::string::npos;
-			const bool informative = hasPercent || hasCount;
-
-			// rclone's own line is written for a terminal:
-			// "Transferred: 12.345 MiB / 45.678 MiB, 27%, 1.234 MiB/s, ETA 27s".
-			// On a handheld card the useful part is the front of it, and the
-			// speed and ETA push everything else off the end.
-			auto eta = clean.find(", ETA ");
-			if (eta != std::string::npos)
-				clean = clean.substr(0, eta);
-			if (clean.rfind("Transferred:", 0) == 0)
+			// So: transfer progress, and nothing else, in the player's words.
+			// What the line carries is CloudText::liveLine's to read (#140;
+			// it is what found "Elapsed time: 2.0sTransferred: 0 B / 0 B" on
+			// the card -- rclone glues one block's last line to the next
+			// block's first when it writes to a pipe). What went wrong
+			// arrives on the protocol line above, in the scripts' own words,
+			// and is said once at the end.
+			//
+			// The byte line is the one shown: it moves as the saves do, and
+			// its percentage is the bar's. The count line ("0 / 3, 0%") is
+			// the same progress counted another way, and alternating the two
+			// each second flickered both the words and the bar. The check
+			// counter is a comparison, not a transfer: it is named as one and
+			// leaves the bar alone, or seventy checks read as seventy uploads.
+			const CloudText::LiveLine live = CloudText::liveLine(clean);
+			std::string shown;
+			switch (live.kind)
 			{
-				clean = Utils::String::trim(clean.substr(12));
-				// The byte line of a stats block ("80 KiB / 300 KiB, 27%"; the
-				// count line has no unit) leaving "0 B" is the one fact the
-				// in-place clause turns on: something reached the other side.
-				const bool byteLine = clean.find("iB") != std::string::npos || clean.find(" B") != std::string::npos;
-				if (byteLine && clean.rfind("0 B /", 0) != 0)
+			case CloudText::LiveLine::Kind::Bytes:
+				// The byte line leaving "0 B" is the one fact the in-place
+				// clause turns on: something reached the other side.
+				if (live.sent > 0)
 					mMoved = true;
-			}
-
-			// rclone's check counter -- "Checks: 12 / 70, 17%, Listed 313" --
-			// is a comparison, not a transfer. Drawn as a bar it reads as
-			// seventy uploads, and somebody who has just exited one game asks
-			// why every game is being synced. Say what it is, and leave the
-			// bar to the transfer line.
-			const bool isChecks = clean.rfind("Checks:", 0) == 0;
-			if (isChecks)
-			{
-				auto comma = clean.find(',');
-				const std::string count = Utils::String::trim(
-					clean.substr(7, comma == std::string::npos ? std::string::npos : comma - 7));
-				clean = _("COMPARING YOUR SAVES WITH THE CLOUD") + std::string(" ") + count;
-			}
-
-			if (informative && !clean.empty() && mWndNotification != nullptr)
-			{
-				mWndNotification->updateText(clean);
-
-				// rclone's --stats-one-line already carries the percentage --
-				// "Transferred: 12.3 MiB / 45.6 MiB, 27%, 1.2 MiB/s, ETA 27s"
-				// -- and it was being thrown away: the bar sat at -1, which
-				// means indeterminate, for the whole transfer. Take it from
-				// the line already passing through rather than asking rclone
-				// for it a second way.
-				auto pct = clean.find('%');
-				if (!isChecks && pct != std::string::npos && pct > 0)
+				if (live.sent <= 0 && live.total <= 0)
 				{
-					size_t start = pct;
-					while (start > 0 && isdigit((unsigned char)clean[start - 1]))
-						start--;
-					if (start < pct)
+					// "0 B / 0 B, -, 0 B/s": nothing listed yet, or nothing
+					// to move. Said in the direction the title promised.
+					switch (CloudText::verbOf(mCommand))
 					{
-						int value = atoi(clean.substr(start, pct - start).c_str());
-						if (value >= 0 && value <= 100)
-							mWndNotification->updatePercent(value);
+					case CloudText::Verb::Backup:  shown = _("NOTHING SENT YET"); break;
+					case CloudText::Verb::Restore: shown = _("NOTHING RECEIVED YET"); break;
+					default:                       shown = _("NOTHING SYNCED YET"); break;
 					}
 				}
+				else
+					shown = Utils::String::format(_("%s OF %s").c_str(),
+						CloudText::sizeLabel((unsigned long) live.sent).c_str(),
+						CloudText::sizeLabel((unsigned long) live.total).c_str());
+				break;
+			case CloudText::LiveLine::Kind::Checks:
+				shown = _("COMPARING SAVES") + std::string(" \xC2\xB7 ")
+					+ Utils::String::format(_("%d OF %d").c_str(), (int) live.sent, (int) live.total);
+				break;
+			case CloudText::LiveLine::Kind::Other:
+				shown = live.text;
+				break;
+			case CloudText::LiveLine::Kind::Files:
+			case CloudText::LiveLine::Kind::None:
+				break;
+			}
+
+			if (!shown.empty() && mWndNotification != nullptr)
+			{
+				mWndNotification->updateText(shown);
+				if (live.percent >= 0)
+					mWndNotification->updatePercent(live.percent);
 			}
 		}
 

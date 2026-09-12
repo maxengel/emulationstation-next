@@ -450,3 +450,139 @@ TEST_CASE("chooseThatFits takes the first candidate that fits")
 	// Nothing offered, nothing shown.
 	CHECK(chooseThatFits({}, 100.0f, measure) == "");
 }
+
+// ------------------------------------------------------------------- sizes
+
+TEST_CASE("parseBytes reads rclone's size fields")
+{
+	CHECK(parseBytes("0 B") == 0);
+	CHECK(parseBytes("80 KiB") == 81920);
+	CHECK(parseBytes("1.4 GiB") == 1503238554);   // 1503238553.6, rounded
+	CHECK(parseBytes("  878.906 KiB ") == 900000);
+	// the torn units of a per-file line cut at 80 columns
+	CHECK(parseBytes("292.969Ki") == 300000);
+	CHECK(parseBytes("2.5Mi") == 2621440);
+
+	// no number, an unknown unit, or something no size ever is
+	CHECK(parseBytes("") == -1);
+	CHECK(parseBytes("KiB") == -1);
+	CHECK(parseBytes("12 furlongs") == -1);
+	CHECK(parseBytes("inf") == -1);
+	CHECK(parseBytes("nan B") == -1);
+	CHECK(parseBytes("-5 KiB") == -1);
+}
+
+TEST_CASE("sizeLabel prints a size at the precision it has")
+{
+	CHECK(sizeLabel(0) == "0 KB");
+	CHECK(sizeLabel(1) == "1 KB");          // never "0 KB" for something
+	CHECK(sizeLabel(204800) == "200 KB");
+	CHECK(sizeLabel(900000) == "879 KB");
+	CHECK(sizeLabel(1258291) == "1.2 MB");
+	CHECK(sizeLabel(1288490189) == "1.20 GB");
+	// the unit is chosen from the value as it will print: a byte short of
+	// the next unit rounds into it rather than reading "1024 KB" or
+	// "1024.0 MB"
+	CHECK(sizeLabel(1048575) == "1.0 MB");
+	CHECK(sizeLabel(1073741823) == "1.00 GB");
+	CHECK(sizeLabel(1073689395) == "1023.9 MB"); // and just under the threshold stays in MB
+}
+
+TEST_CASE("roundSizes re-renders every size in a fragment and nothing else")
+{
+	CHECK(roundSizes("16.521 MiB / 16.521 MiB, 100%, 519.844 KiB/s") == "16.5 MB / 16.5 MB, 100%, 520 KB/s");
+	CHECK(roundSizes("0 B / 0 B, -, 0 B/s") == "0 KB / 0 KB, -, 0 KB/s");
+	// percentages and times have no unit from the table and pass through
+	CHECK(roundSizes("3m2s left, 27%") == "3m2s left, 27%");
+	// a number whose unit did not parse is left as it was
+	CHECK(roundSizes("12 furlongs") == "12 furlongs");
+	CHECK(roundSizes("") == "");
+}
+
+// --------------------------------------------------------------- live line
+
+TEST_CASE("liveLine reads the byte line wherever the glue put it")
+{
+	// The card that produced #140: the block before ended without a
+	// newline, so its last line arrived in front of the next block's first.
+	auto l = liveLine("Elapsed time:         2.0sTransferred:            0 B / 0 B, -, 0 B/s, ETA -");
+	CHECK(l.kind == LiveLine::Kind::Bytes);
+	CHECK(l.sent == 0);
+	CHECK(l.total == 0);
+	CHECK(l.percent == -1);
+
+	// a busier run glues a per-file line on instead
+	l = liveLine("* f3.srm: 98% /292.969Ki, 71.998Ki/s, 0sTransferred:         864 KiB / 878.906 KiB, 98%, 223.999 KiB/s, ETA 0s");
+	CHECK(l.kind == LiveLine::Kind::Bytes);
+	CHECK(l.sent == 884736);
+	CHECK(l.total == 900000);
+	CHECK(l.percent == 98);
+
+	// and a line that arrived on its own reads the same
+	l = liveLine("Transferred:        288 KiB / 878.906 KiB, 33%, 287.998 KiB/s, ETA 2s");
+	CHECK(l.kind == LiveLine::Kind::Bytes);
+	CHECK(l.sent == 294912);
+	CHECK(l.total == 900000);
+	CHECK(l.percent == 33);
+
+	// the tab after the label is already gone by the time the card reads
+	// it (the pipe loop keeps printable ASCII), but a stray one is harmless
+	l = liveLine("Transferred:\t  878.906 KiB / 878.906 KiB, 100%, 217.241 KiB/s, ETA 0s");
+	CHECK(l.kind == LiveLine::Kind::Bytes);
+	CHECK(l.percent == 100);
+}
+
+TEST_CASE("liveLine tells the count line and the check counter apart")
+{
+	auto l = liveLine("Transferred:            0 / 3, 0%");
+	CHECK(l.kind == LiveLine::Kind::Files);
+	CHECK(l.sent == 0);
+	CHECK(l.total == 3);
+	CHECK(l.percent == -1);   // never the bar's
+
+	l = liveLine("Checks:                12 / 70, 17%, Listed 313");
+	CHECK(l.kind == LiveLine::Kind::Checks);
+	CHECK(l.sent == 12);
+	CHECK(l.total == 70);
+	CHECK(l.percent == -1);   // a comparison is not a transfer
+
+	// a block with both: the byte line came later, so it is the one read
+	l = liveLine("Checks: 1 / 1, 100%Transferred: 4 KiB / 8 KiB, 50%, 4 KiB/s");
+	CHECK(l.kind == LiveLine::Kind::Bytes);
+	CHECK(l.percent == 50);
+}
+
+TEST_CASE("liveLine keeps rclone's own lines off the card")
+{
+	CHECK(liveLine("* f2.srm: 32% /292.969Ki, 95.996Ki/s, 2s").kind == LiveLine::Kind::None);
+	CHECK(liveLine("Transferring:").kind == LiveLine::Kind::None);
+	CHECK(liveLine("Elapsed time:         2.0s").kind == LiveLine::Kind::None);
+	CHECK(liveLine("====================================").kind == LiveLine::Kind::None);
+	CHECK(liveLine("CLOUD BACKUP UTILITY").kind == LiveLine::Kind::None);
+	CHECK(liveLine("").kind == LiveLine::Kind::None);
+
+	// a Transferred: that carries no pair, or a unit nobody knows, is not
+	// guessed at
+	CHECK(liveLine("Transferred:").kind == LiveLine::Kind::None);
+	CHECK(liveLine("Transferred: 3 furlongs / 9 furlongs, 33%").kind == LiveLine::Kind::None);
+	CHECK(liveLine("Checks: many / few").kind == LiveLine::Kind::None);
+}
+
+TEST_CASE("liveLine passes any other line with progress in it as it came")
+{
+	auto l = liveLine("Saves: 2 / 5 sent");
+	CHECK(l.kind == LiveLine::Kind::Other);
+	CHECK(l.text == "Saves: 2 / 5 sent");
+	CHECK(l.percent == -1);
+
+	l = liveLine("Packing 40%");
+	CHECK(l.kind == LiveLine::Kind::Other);
+	CHECK(l.text == "Packing 40%");
+}
+
+TEST_CASE("liveLine refuses a percentage that is not one")
+{
+	CHECK(liveLine("Transferred: 4 KiB / 8 KiB, 150%").percent == -1);
+	CHECK(liveLine("Transferred: 4 KiB / 8 KiB, -%").percent == -1);
+	CHECK(liveLine("Transferred: 4 KiB / 8 KiB, -, 0 B/s").percent == -1);
+}
