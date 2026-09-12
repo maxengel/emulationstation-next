@@ -353,13 +353,13 @@ void GuiMenu::openResetOptions()
 
 	s->addGroup(_("DATA MANAGEMENT"));
 	s->addEntry(_("BACK UP SETTINGS TO THIS DEVICE"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/?\n\nWI-FI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR TURN ON SETTINGS BACKUP UNDER CLOUD SETTINGS."), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("BACK UP YOUR SETTINGS TO /storage/roms/backup/?\n\nWI-FI AND ACCOUNT PASSWORDS ARE NOT INCLUDED. COPY THE FILE SOMEWHERE SAFE, OR BACK UP TO THE CLOUD FROM GAME SETTINGS > MANAGE CLOUD STORAGE."), _("YES"),
 		[window] {
 		// backuptool names the archive it wrote to the system log only, so
 		// the dialog says where the backups live rather than which file this
 		// one is -- a filename is not something to read off a 3.5-inch panel.
 		runMaintenanceCommand(window, "/usr/bin/backuptool backup", _("PACKING UP YOUR SETTINGS..."),
-			_("SETTINGS BACKED UP TO THIS DEVICE.\n\nCOPY IT SOMEWHERE SAFE, OR BACK UP SETTINGS TO THE CLOUD FROM GAME SETTINGS."),
+			_("SETTINGS BACKED UP TO THIS DEVICE.\n\nCOPY IT SOMEWHERE SAFE, OR BACK UP TO THE CLOUD FROM GAME SETTINGS > MANAGE CLOUD STORAGE."),
 			_("THE BACKUP COULDN'T FINISH. YOUR LAST BACKUP IS UNCHANGED."));
 		}, _("NO"), nullptr));
 	});
@@ -6523,7 +6523,7 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 						if (out.find("OK=") != std::string::npos)
 						{
 							window->pushGui(new GuiMsgBox(window,
-								_("YOUR CLOUD IS ANSWERING.\n\nGAME SETTINGS > CLOUD SETTINGS IS NOW AVAILABLE."),
+								_("YOUR CLOUD IS ANSWERING.\n\nYOU CAN NOW SYNC, BACK UP, AND RESTORE YOUR SAVES FROM GAME SETTINGS."),
 								_("OK"), [s] { s->close(); }));
 							return;
 						}
@@ -6933,7 +6933,7 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	// an "in" line, so the list reads as what you can do once you are there
 	// rather than as three unrelated facts (maintainer, 2026-09-06).
 	s->addGroup(_("WHAT YOU CAN DO NOW"));
-	cloudSetupAddInfoRow(s, window, _("IN GAME SETTINGS > CLOUD SETTINGS:"), true);
+	cloudSetupAddInfoRow(s, window, _("IN GAME SETTINGS:"), true);
 	cloudSetupAddInfoRow(s, window, "1.  " + _("SYNC SAVES WITH THE CLOUD"));
 	cloudSetupAddInfoRow(s, window, "2.  " + _("BACK UP SAVES TO THE CLOUD, OR RESTORE THEM"));
 	cloudSetupAddInfoRow(s, window, "3.  " + _("MANAGE CLOUD STORAGE"));
@@ -7344,9 +7344,9 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 						// A restored device has no cloud tokens on purpose: backups never
 						// carry rclone.conf (#52). Say where to connect rather than
 						// reporting a cloud that is not there as not answering.
-						window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nBACKUPS NEVER CARRY YOUR CLOUD SIGN-IN. CONNECT IT AGAIN UNDER GAME SETTINGS > CLOUD SETTINGS > MANAGE CLOUD STORAGE.")));
+						window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nBACKUPS NEVER CARRY YOUR CLOUD SIGN-IN. CONNECT IT AGAIN UNDER GAME SETTINGS > MANAGE CLOUD STORAGE.")));
 					else
-						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD ISN'T ANSWERING.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > CLOUD SETTINGS > MANAGE CLOUD STORAGE.")));
+						window->pushGui(new GuiMsgBox(window, _("YOUR CLOUD ISN'T ANSWERING.\n\nUSE CONNECT OR REPAIR CLOUD STORAGE IN GAME SETTINGS > MANAGE CLOUD STORAGE.")));
 				}));
 		});
 	}
@@ -8730,7 +8730,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
         auto internal_wifi = std::make_shared<SwitchComponent>(mWindow);
         bool internalmoduleEnabled = SystemConf::getInstance()->get("internal.wifi") == "1";
         internal_wifi->setState(internalmoduleEnabled);
-        s->addWithLabel(_("ENABLE WIFI GPIO"), internal_wifi);
+        s->addWithLabel(_("ENABLE WI-FI GPIO"), internal_wifi);
         internal_wifi->setOnChangedCallback([internal_wifi] {
                 if (internal_wifi->getState() == false) {
                         Utils::Platform::runSystemCommand("/usr/bin/internalwifi disable", "", nullptr);

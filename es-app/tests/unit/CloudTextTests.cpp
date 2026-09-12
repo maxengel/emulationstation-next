@@ -395,12 +395,164 @@ TEST_CASE("classifyProtocolLine reads a tier line")
 	CHECK(classifyProtocolLine(">>> tier ").number == -1);
 }
 
+TEST_CASE("classifyProtocolLine reads a unit line")
+{
+	const ProtocolLine unit = classifyProtocolLine(">>> unit nes|2|5");
+	CHECK(unit.kind == ProtocolKind::Unit);
+	CHECK(unit.text == "nes");
+	CHECK(unit.number == 2);
+	CHECK(unit.count == 5);
+
+	// A phase announces itself with its counts empty ("SAVES||"): one item,
+	// and a script that is not counting. Zero is the reader's "it did not
+	// say". The label keeps the case it arrived in, because the page that
+	// counts items compares one announcement with the next.
+	const ProtocolLine phase = classifyProtocolLine(">>> unit SAVES||");
+	CHECK(phase.kind == ProtocolKind::Unit);
+	CHECK(phase.text == "SAVES");
+	CHECK(phase.number == 0);
+	CHECK(phase.count == 0);
+
+	const ProtocolLine spaced = classifyProtocolLine(">>> unit  snes | 2 | 5 ");
+	CHECK(spaced.text == "snes");
+	CHECK(spaced.number == 2);
+	CHECK(spaced.count == 5);
+
+	// The junk. Every one of these is still a unit line -- something
+	// started, and the reader decides what to make of a nameless item --
+	// and none of them invents a number nobody printed.
+	CHECK(classifyProtocolLine(">>> unit ").kind == ProtocolKind::Unit);
+	CHECK(classifyProtocolLine(">>> unit ").text == "");
+	CHECK(classifyProtocolLine(">>> unit ").number == 0);
+	CHECK(classifyProtocolLine(">>> unit ").count == 0);
+	CHECK(classifyProtocolLine(">>> unit nes").number == 0);
+	CHECK(classifyProtocolLine(">>> unit nes").count == 0);
+	CHECK(classifyProtocolLine(">>> unit nes|x|y").number == 0);
+	CHECK(classifyProtocolLine(">>> unit nes|x|y").count == 0);
+	CHECK(classifyProtocolLine(">>> unit |2|5").text == "");
+	CHECK(classifyProtocolLine(">>> unit |2|5").number == 2);
+
+	// Without the space it is not the unit line at all.
+	CHECK(classifyProtocolLine(">>> unit").kind == ProtocolKind::Unknown);
+}
+
+TEST_CASE("classifyProtocolLine reads a removed line")
+{
+	// cloud_content_restore's match summary: the total, then the same per
+	// system. A match cut off by the network prints it before it exits, so
+	// what had already gone can still be said.
+	const ProtocolLine rm = classifyProtocolLine(">>> removed 14|314572800|snes:12:300000000,gb:2:14572800");
+	CHECK(rm.kind == ProtocolKind::Removed);
+	CHECK(rm.files == 14);
+	CHECK(rm.bytes == 314572800);
+	REQUIRE(rm.systems.size() == 2);
+	CHECK(rm.systems[0].system == "SNES");
+	CHECK(rm.systems[0].files == "12");
+	CHECK(rm.systems[0].bytes == 300000000);
+	CHECK(rm.systems[1].system == "GB");
+	CHECK(rm.systems[1].files == "2");
+	CHECK(rm.systems[1].bytes == 14572800);
+
+	// A match that removed nothing still says so, and says it with no
+	// systems under it.
+	const ProtocolLine none = classifyProtocolLine(">>> removed 0|0|");
+	CHECK(none.kind == ProtocolKind::Removed);
+	CHECK(none.files == 0);
+	CHECK(none.bytes == 0);
+	CHECK(none.systems.empty());
+
+	// A system with no size beside it: the count is what it has.
+	const ProtocolLine nosize = classifyProtocolLine(">>> removed 3|0|nes:3");
+	REQUIRE(nosize.systems.size() == 1);
+	CHECK(nosize.systems[0].system == "NES");
+	CHECK(nosize.systems[0].files == "3");
+	CHECK(nosize.systems[0].bytes == 0);
+
+	// A system named with no number beside it is worse than one not named:
+	// the torn item goes, and the ones around it survive it.
+	const ProtocolLine torn = classifyProtocolLine(">>> removed 3|0|nes,gb:2:100,");
+	REQUIRE(torn.systems.size() == 1);
+	CHECK(torn.systems[0].system == "GB");
+	CHECK(torn.systems[0].files == "2");
+
+	// The junk.
+	CHECK(classifyProtocolLine(">>> removed ").kind == ProtocolKind::Removed);
+	CHECK(classifyProtocolLine(">>> removed ").files == 0);
+	CHECK(classifyProtocolLine(">>> removed ").bytes == 0);
+	CHECK(classifyProtocolLine(">>> removed ").systems.empty());
+	CHECK(classifyProtocolLine(">>> removed x|y").files == 0);
+	CHECK(classifyProtocolLine(">>> removed x|y").bytes == 0);
+	CHECK(classifyProtocolLine(">>> removed 14").files == 14);
+	CHECK(classifyProtocolLine(">>> removed 14").bytes == 0);
+	CHECK(classifyProtocolLine(">>> removed  14 | 314572800 ").files == 14);
+	CHECK(classifyProtocolLine(">>> removed  14 | 314572800 ").bytes == 314572800);
+
+	// Without the space it is not the removed line at all.
+	CHECK(classifyProtocolLine(">>> removed").kind == ProtocolKind::Unknown);
+}
+
+// Every distinct ">>> " shape anything in the two repos prints, with where
+// it is printed and what the readers must make of it.
+//
+// The column that matters is the kind. Unknown here is a shape one of the
+// two readers drops on the floor -- which is exactly how the empty-cloud
+// offer never reached the transfer page: that page's own parser knew
+// ">>> unit" and ">>> removed" and had never heard of ">>> offer" (#145).
+// A new marker added to a script without a kind here fails this case.
+TEST_CASE("every protocol shape an emitter prints classifies to a known kind")
+{
+	struct Shape { const char* line; ProtocolKind kind; const char* from; };
+
+	// projects/ROCKNIX/packages/network/rclone/sources/ and
+	// projects/ROCKNIX/packages/rocknix/sources/scripts/, on next.
+	static const Shape shapes[] = {
+		{ ">>> why COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN", ProtocolKind::Why, "cloud_restore:430, cloud_backup:409" },
+		{ ">>> why YOUR CLOUD STORAGE ISN'T SET UP YET", ProtocolKind::Why, "cloud_content_backup:95, :104; cloud_content_restore:96, :105" },
+		{ ">>> why THE UPLOAD COULDN'T FINISH", ProtocolKind::Why, "cloud_content_backup:158, cloud_content_restore:162" },
+		{ ">>> why COULDN'T TELL WHICH CARD YOUR SAVES ARE ON", ProtocolKind::Why, "cloud_saves_root:125" },
+		{ ">>> why YOUR SAVES ARE ON A DIFFERENT CARD", ProtocolKind::Why, "cloud_saves_root:144" },
+		{ ">>> why YOUR SAVES CHANGED CARDS PART-WAY THROUGH", ProtocolKind::Why, "cloud_saves_root:157" },
+		{ ">>> why THE BACKUP COULDN'T FINISH", ProtocolKind::Why, "backuptool:145" },
+		{ ">>> doing network", ProtocolKind::Doing, "cloud_net_ready:169" },
+		{ ">>> unit SAVES||", ProtocolKind::Unit, "cloud_restore:912, cloud_backup:884" },
+		{ ">>> unit SETTINGS||", ProtocolKind::Unit, "cloud_restore:1133, cloud_backup:1149" },
+		{ ">>> unit everything|1|1", ProtocolKind::Unit, "cloud_content_backup:531, cloud_content_restore:1031" },
+		{ ">>> unit snes|2|5", ProtocolKind::Unit, "cloud_content_restore:628" },
+		{ ">>> removed 14|314572800|snes:12:300000000,gb:2:14572800", ProtocolKind::Removed, "cloud_content_restore:694, :724" },
+		{ ">>> offer create-saves-folder|/ROCKNIX/Savez|/ROCKNIX/Saves", ProtocolKind::Offer, "cloud_restore:980" },
+		{ ">>> offer create-saves-folder|/ROCKNIX/Saves", ProtocolKind::Offer, "cloud_restore:989" },
+
+		// EmulationStation's own: the wrapper, and the run compositions
+		// that chain several scripts into one page or one card.
+		{ ">>> pid 1234", ProtocolKind::Pid, "ThreadedCloudSync.cpp:141" },
+		{ ">>> doing network", ProtocolKind::Doing, "main.cpp:571" },
+		{ ">>> doing unpack", ProtocolKind::Doing, "GuiMenu.cpp:4584" },
+		{ ">>> doing archive", ProtocolKind::Doing, "GuiMenu.cpp:4632" },
+		{ ">>> unit SETTINGS||", ProtocolKind::Unit, "GuiMenu.cpp:4583, :4632" },
+		{ ">>> tier RESTORING SAVES|0", ProtocolKind::Tier, "main.cpp:578, :838; GuiMenu.cpp:5427" },
+		{ ">>> tier BACKING UP SAVES|0", ProtocolKind::Tier, "main.cpp:580, GuiMenu.cpp:5428" },
+		{ ">>> tier RESTORING ROMS AND BIOS|5", ProtocolKind::Tier, "main.cpp:837" },
+		{ ">>> tier ROMS AND BIOS|0", ProtocolKind::Tier, "GuiMenu.cpp:4557" },
+	};
+
+	for (auto& shape : shapes)
+	{
+		INFO(std::string(shape.from) << "  ->  " << std::string(shape.line));
+		const ProtocolLine p = classifyProtocolLine(shape.line);
+		CHECK(p.kind == shape.kind);
+		// Said twice on purpose: the assertion above is the shape, this one
+		// is the rule -- no emitter's line is a line a reader cannot place.
+		CHECK(p.kind != ProtocolKind::Unknown);
+		CHECK(p.kind != ProtocolKind::NotProtocol);
+	}
+}
+
 TEST_CASE("classifyProtocolLine on everything else")
 {
-	// A protocol line this reader does not know -- the transfer page's own
-	// markers, or one added after this build -- still says the wait is over.
-	CHECK(classifyProtocolLine(">>> unit nes|2|5").kind == ProtocolKind::Unknown);
-	CHECK(classifyProtocolLine(">>> removed 3|1024|nes").kind == ProtocolKind::Unknown);
+	// A protocol line this build does not know -- a marker added to a
+	// script after this image was made -- still says the wait is over, and
+	// is never handed to the parsers that read rclone's own output.
+	CHECK(classifyProtocolLine(">>> sometime-later a|b").kind == ProtocolKind::Unknown);
 	CHECK(classifyProtocolLine(">>> ").kind == ProtocolKind::Unknown);
 
 	// And a line the scripts printed for the player is not a protocol line.
