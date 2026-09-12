@@ -905,7 +905,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 		&& Utils::FileSystem::exists("/usr/bin/cloud_backup")
 		&& !ThreadedCloudSync::isRunning())
 	{
-		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent",
+		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent --automatic",
 			_("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
 	}
 

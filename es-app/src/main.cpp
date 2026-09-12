@@ -574,9 +574,9 @@ static void startStartupSavesSync(Window* window)
 		" done;"
 		" [ \"$_up\" = 1 ] || exit " + noNetwork + ";"
 		" fi;"
-		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only; _r=$?;"
+		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only --automatic; _r=$?;"
 		" echo \">>> tier RESTORING SAVES|$_r\";"
-		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only; _b=$?;"
+		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only --automatic; _b=$?;"
 		" echo \">>> tier BACKING UP SAVES|$_b\";"
 		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";
 
