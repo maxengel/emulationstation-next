@@ -5039,7 +5039,10 @@ void GuiMenu::openCloud(Window* window)
 		nullptr, [window] { GuiMenu::openCloudAddRemote(window); }, "", false, true);
 
 	// Only while there is a restore to finish.
-	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
+	// Read uncached: exists() remembers its answer for the session, and this
+	// marker is written by a restore that ran after boot -- a cached "absent"
+	// from startup hid the row until the next restart (guest b, 2026-09-13).
+	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending", false))
 	{
 		s->addWithDescription(_("FINISH RESTORE PROCESS"),
 			_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE (WI-FI, ACCOUNTS, THIS DEVICE)."), nullptr,
@@ -9018,7 +9021,10 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	// BACKUP/RESTORE SYSTEM DATA, but that entry is gated on a configured
 	// remote, so a player who restored and pressed LATER had no way back to
 	// it except another reboot.
-	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending"))
+	// Read uncached: exists() remembers its answer for the session, and this
+	// marker is written by a restore that ran after boot -- a cached "absent"
+	// from startup hid the row until the next restart (guest b, 2026-09-13).
+	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending", false))
 	{
 		Window* restoreWindow = mWindow;
 		s->addGroup(_("RESTORE"));
