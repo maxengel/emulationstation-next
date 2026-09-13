@@ -23,7 +23,11 @@ protected:
 	GuiGameAchievements(Window *window, GameInfoAndUserProgress ra);
 
 	void	centerWindow();
+	float	headerTextColumn();
 
 	FileData* mFile;
 	std::shared_ptr<RetroAchievementProgress> mProgress;
+	// The completion bar has its own row under the header lines, because they
+	// end past where it would sit beside them (#160).
+	bool mProgressBelow = false;
 };

@@ -17,6 +17,11 @@
 #define WINDOW_WIDTH (float)Math::min(Renderer::getScreenHeight() * 1.125f, Renderer::getScreenWidth() * 0.90f)
 #define IMAGESIZE (Renderer::getScreenHeight() * (48.0 / 720.0))
 #define IMAGESPACER (Renderer::getScreenHeight() * (10.0 / 720.0))
+// Where the completion bar sits when the header lines leave it room: the
+// layout as it has always been at 1280x800, as fractions of the header's
+// text column (the part of the header left of the game image).
+#define PROGRESS_LEFT  0.55f
+#define PROGRESS_WIDTH 0.36f
 
 void GuiGameAchievements::show(Window* window, int gameId)
 {
@@ -144,15 +149,17 @@ GuiGameAchievements::GuiGameAchievements(Window* window, GameInfoAndUserProgress
 		totalPoints += Utils::String::toInteger(game.Points);
 	}
 
+	std::string header;
+
 	if (ra.Achievements.size() == 0)
 		setSubTitle(_("THIS GAME HAS NO ACHIEVEMENTS YET"));
 	else
 	{
-		auto txt = _("Achievements (softcore)") + ": \t" + std::to_string(ra.NumAwardedToUser) + "/" + std::to_string(ra.NumAchievements);
-		txt += "\r\n" + _("Achievements (hardcore)") + ": \t" + std::to_string(ra.NumAwardedToUserHardcore) + "/" + std::to_string(ra.NumAchievements);
-		txt += "\r\n" + _("Points") + ": \t" + std::to_string(userPoints) + "/" + std::to_string(totalPoints);
+		header = _("Achievements (softcore)") + ": \t" + std::to_string(ra.NumAwardedToUser) + "/" + std::to_string(ra.NumAchievements);
+		header += "\r\n" + _("Achievements (hardcore)") + ": \t" + std::to_string(ra.NumAwardedToUserHardcore) + "/" + std::to_string(ra.NumAchievements);
+		header += "\r\n" + _("Points") + ": \t" + std::to_string(userPoints) + "/" + std::to_string(totalPoints);
 
-		setSubTitle(txt);
+		setSubTitle(header);
 	}
 
 	auto image = std::make_shared<WebImageComponent>(mWindow);
@@ -179,6 +186,39 @@ GuiGameAchievements::GuiGameAchievements(Window* window, GameInfoAndUserProgress
 	}
 
 	centerWindow();	
+
+	// The bar goes beside the header lines where they end before its place,
+	// and under them where they do not (#160: at 640x480 with a larger menu
+	// font the lines ran past it, and the bar and its percentage were drawn
+	// over them). Decided once, here, because the second layout needs the
+	// header one line taller and the header's height is the subtitle's:
+	// an empty fourth line is the bar's row. Measured on the subtitle as
+	// the menu draws it -- its font, its tab stops, its padding -- so a
+	// larger font setting or a longer translation moves the decision, not
+	// the bar over the text.
+	auto lines = mMenu.getSubTitle();
+	if (mProgress != nullptr && lines != nullptr)
+	{
+		const float textRight = lines->getPosition().x() + lines->getPadding().x()
+			+ lines->getFont()->sizeTabbedText(lines->getText(), lines->getLineSpacing()).x();
+
+		if (textRight > headerTextColumn() * PROGRESS_LEFT)
+		{
+			mProgressBelow = true;
+			setSubTitle(header + "\r\n");
+			centerWindow();
+		}
+	}
+}
+
+// The header's text column: what is left of the menu's width once the game
+// image has its share, as MenuComponent::setTitleImage divides it.
+float GuiGameAchievements::headerTextColumn()
+{
+	float width = (float)Math::min((int)Renderer::getScreenHeight(), (int)(Renderer::getScreenWidth() * 0.90f));
+	float iw = mMenu.getTitleHeight() / width;
+
+	return mMenu.getSize().x() - (mMenu.getSize().x() * iw);
 }
 
 void GuiGameAchievements::centerWindow()
@@ -197,24 +237,37 @@ void GuiGameAchievements::render(const Transform4x4f& parentTrans)
 {
 	GuiSettings::render(parentTrans);
 
-	if (mProgress != nullptr)
+	if (mProgress == nullptr)
+		return;
+
+	auto lines = mMenu.getSubTitle();
+	if (lines == nullptr)
+		return;
+
+	// One header line is the bar's height: the bar in its upper half, the
+	// percentage in its lower.
+	const float lineHeight = lines->getFont()->getHeight(lines->getLineSpacing());
+	const float textTop = lines->getPosition().y();
+
+	if (mProgressBelow)
 	{
-		auto theme = ThemeData::getMenuTheme();
+		// Its own row: the empty last line of the header, as wide as the
+		// lines above it and starting where they start.
+		const Vector2f text = lines->getFont()->sizeTabbedText(lines->getText(), lines->getLineSpacing());
 
-		float h = theme->TextSmall.font->sizeText("A8O\rA8O", 1.1).y();
-		float sz = mMenu.getHeaderGridHeight() + Renderer::getScreenHeight() * 0.005;
-
-		float width = (float)Math::min((int)Renderer::getScreenHeight(), (int)(Renderer::getScreenWidth() * 0.90f));
-		float iw = mMenu.getTitleHeight() / width;
-
-		float xx = mMenu.getSize().x() - (mMenu.getSize().x() * iw);
-
-		mProgress->setPosition(xx * 0.55f, sz);
-		mProgress->setSize(xx * 0.36f, h);
-
-		Transform4x4f trans = parentTrans * mMenu.getTransform();
-		mProgress->render(trans);
+		mProgress->setPosition(lines->getPosition().x() + lines->getPadding().x(), textTop + text.y() - lineHeight);
+		mProgress->setSize(text.x(), lineHeight);
 	}
+	else
+	{
+		const float column = headerTextColumn();
+
+		mProgress->setPosition(column * PROGRESS_LEFT, textTop + Renderer::getScreenHeight() * 0.005f);
+		mProgress->setSize(column * PROGRESS_WIDTH, lineHeight);
+	}
+
+	Transform4x4f trans = parentTrans * mMenu.getTransform();
+	mProgress->render(trans);
 }
 
 bool GuiGameAchievements::input(InputConfig* config, Input input)

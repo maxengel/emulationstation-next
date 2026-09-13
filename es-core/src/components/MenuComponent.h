@@ -82,6 +82,11 @@ public:
 	void clearButtons();
 
 	std::shared_ptr<ComponentList> getList() { return mList; };
+	// The subtitle as the header lays it out -- its font, text, padding,
+	// position and the width of the header's text column (the game image's
+	// column begins where it ends). A page that draws beside or under the
+	// header lines measures them here rather than guessing a fraction (#160).
+	std::shared_ptr<TextComponent> getSubTitle() { return mSubtitle; };
 	
 	static void addMenuIcon(Window* window, ComponentListRow& row, const std::string& iconName);
 

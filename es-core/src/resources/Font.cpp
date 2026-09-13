@@ -797,6 +797,119 @@ Vector2f Font::sizeWrappedText(const std::string& text, float xLen, float lineSp
 	return sizeText(wrapped, lineSpacing);
 }
 
+// The gap a tab column keeps after the widest text before it.
+#define TAB_STOP_GAP (Renderer::getScreenWidth() * 0.01f)
+
+std::map<int, float> Font::getTabStops(const std::string& text, float lineSpacing)
+{
+	std::map<int, float> stops;
+	if (text.find('\t') == std::string::npos)
+		return stops;
+
+	// Each line is scanned on its own, from its own start. The scan this
+	// replaces walked the whole text once per line, so every column's stop
+	// was the FIRST line's text before its tab: a longer label on a later
+	// line ("Achievements (hardcore): ", "Succes (mode difficile): ") ran
+	// into the value beside it.
+	const float lineHeight = getHeight(lineSpacing);
+
+	for (auto line : Utils::String::split(text, '\n', true))
+	{
+		if (line.find('\t') == std::string::npos)
+			continue;
+
+		int tabIndex = 0;
+		float xpos = 0.0f;
+
+		size_t pos = 0;
+		while (pos < line.length())
+		{
+			unsigned int character = Utils::String::chars2Unicode(line, pos); // also advances pos
+			if (character == 0 || character == '\r')
+				continue;
+
+			if (substituableChars.find(character) != substituableChars.cend())
+			{
+				xpos += lineHeight;
+				continue;
+			}
+
+			if (character == '\t')
+			{
+				auto it = stops.find(tabIndex);
+				if (it != stops.cend())
+					it->second = Math::max(it->second, xpos);
+				else
+					stops[tabIndex] = xpos;
+
+				tabIndex++;
+			}
+
+			Glyph* glyph = getGlyph(character);
+			if (glyph != NULL)
+				xpos += glyph->advance.x();
+		}
+	}
+
+	return stops;
+}
+
+Vector2f Font::sizeTabbedText(const std::string& text, float lineSpacing)
+{
+	// The same walk buildTextCache renders with, without the vertices: '\r'
+	// is nothing, '\n' a new line, a '\t' the jump to its stop.
+	const std::map<int, float> stops = getTabStops(text, lineSpacing);
+	const float lineHeight = getHeight(lineSpacing);
+
+	float lineWidth = 0.0f;
+	float highestWidth = 0.0f;
+	float y = lineHeight;
+	int tabIndex = 0;
+
+	size_t i = 0;
+	while (i < text.length())
+	{
+		unsigned int character = Utils::String::chars2Unicode(text, i); // also advances i
+		if (character == 0 || character == '\r')
+			continue;
+
+		if (character == '\n')
+		{
+			highestWidth = Math::max(highestWidth, lineWidth);
+			lineWidth = 0.0f;
+			y += lineHeight;
+			tabIndex = 0;
+			continue;
+		}
+
+		if (substituableChars.find(character) != substituableChars.cend())
+		{
+			lineWidth += lineHeight;
+			continue;
+		}
+
+		if (character == '\t')
+		{
+			auto it = stops.find(tabIndex);
+			tabIndex++;
+
+			if (it != stops.cend())
+			{
+				lineWidth = it->second + TAB_STOP_GAP;
+				continue;
+			}
+
+			character = ' ';
+		}
+
+		Glyph* glyph = getGlyph(character);
+		if (glyph != NULL)
+			lineWidth += glyph->advance.x();
+	}
+
+	return Vector2f(Math::max(highestWidth, lineWidth), y);
+}
+
 Vector2f Font::getWrappedTextCursorOffset(const std::string& text, float xLen, size_t stop, float lineSpacing)
 {
 	std::string wrappedText = wrapText(text, xLen);
@@ -877,53 +990,10 @@ TextCache* Font::buildTextCache(const std::string& _text, Vector2f offset, unsig
 
 	std::string text = EsLocale::isRTL() ? tryFastBidi(_text) : _text;
 
-	std::map<int, int> tabStops;
+	// A left-aligned text lines its tab columns up; centred or right-aligned,
+	// a tab is a space (below).
+	const std::map<int, float> tabStops = alignment == ALIGN_LEFT ? getTabStops(text, lineSpacing) : std::map<int, float>();
 	int tabIndex = 0;
-
-	if (alignment == ALIGN_LEFT && text.find("\t") != std::string::npos)
-	{
-		for (auto line : Utils::String::split(text, '\n', true))
-		{
-			if (line.find("\t") == std::string::npos)
-				continue;
-
-			tabIndex = 0;
-			int curTab = 0;
-			int xpos = x;
-
-			size_t pos = 0;
-			while (pos < text.length())
-			{
-				unsigned int character = Utils::String::chars2Unicode(text, pos); // also advances cursor
-				if (character == 0 || character == '\r')
-					continue;
-
-				if (substituableChars.find(character) != substituableChars.cend())
-				{
-					x += yBot;
-					continue;
-				}
-
-				if (character == '\t')
-				{
-					auto it = tabStops.find(tabIndex);
-					if (it != tabStops.cend())
-						it->second = Math::max(it->second, xpos);
-					else
-						tabStops[tabIndex] = xpos;
-
-					curTab = xpos;
-					tabIndex++;
-				}
-
-				auto glyph = getGlyph(character);
-				if (glyph == NULL)
-					continue;
-
-				xpos += glyph->advance.x();
-			}
-		}
-	}
 
 	std::vector<TextImageSubstitute> imageSubstitutes;
 
@@ -998,7 +1068,7 @@ TextCache* Font::buildTextCache(const std::string& _text, Vector2f offset, unsig
 			auto it = tabStops.find(tabIndex);
 			if (it != tabStops.cend())
 			{
-				x = it->second + Renderer::getScreenWidth() * 0.01f;
+				x = offset[0] + it->second + TAB_STOP_GAP;
 				tabIndex++;
 				continue;
 			}
