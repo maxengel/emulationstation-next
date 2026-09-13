@@ -29,6 +29,7 @@ public:
 
 	bool input(InputConfig* config, Input input) override;
 	void onSizeChanged() override;
+	void render(const Transform4x4f& parentTrans) override;
 	float helpRowPerc(float sheetHeight);
 	std::vector<HelpPrompt> getHelpPrompts() override;
 

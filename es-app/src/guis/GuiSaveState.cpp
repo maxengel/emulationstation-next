@@ -2,6 +2,7 @@
 #include "SystemData.h"
 #include "FileData.h"
 #include "utils/StringUtil.h"
+#include "utils/TimeUtil.h"
 #include "utils/FileSystemUtil.h"
 #include "ApiSystem.h"
 #include "HelpStyle.h"
@@ -70,10 +71,35 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	for (int c = 32; c < 127; c++)
 		ascii.push_back((char)c);
 	theme->TextSmall.font->sizeText(ascii);
+
+	// The widest line a tile shows is a slot's date and time. A tile is the
+	// grid's width over the columns it lays out (the same arithmetic as
+	// ImageGridComponent::calcGridDimension: the sheet less its two 0.01
+	// side columns, less a margin between columns), and on a 640x480 panel
+	// that is about 152 px while the date in the small font is about 150:
+	// the labels of neighbouring tiles ran into each other ("21:4709/12/
+	// 2026", 02f368914e). Where the date would take more than 0.86 of the
+	// tile, the label font shrinks so it fits with a gap either side; the
+	// two-line height below is then measured on that smaller font.
+	const int columns = (int)(slots * screenProportion / cellProportion);
+	const float marginX = 0.01f * (float)Renderer::getScreenWidth();
+	const float tileWidth = ((float)Renderer::getScreenWidth() * 0.98f - marginX * (columns - 1)) / (float)Math::max(1, columns);
+	std::shared_ptr<Font> labelFont = theme->TextSmall.font;
+	{
+		const std::string widest = Utils::Time::DateTime::now().toLocalTimeString();
+		const float widestPx = labelFont->sizeText(widest).x();
+		if (widestPx > tileWidth * 0.86f && widestPx > 0)
+		{
+			const int shrunk = (int)((float)labelFont->getSize() * tileWidth * 0.86f / widestPx);
+			labelFont = Font::get(Math::max(shrunk, 1), labelFont->getPath());
+			labelFont->sizeText(ascii);
+			sh = (float)labelFont->getSize() / (float)Math::min(Renderer::getScreenHeight(), Renderer::getScreenWidth());
+		}
+	}
 	const float sheetHeight = WINDOW_HEIGHT;
 	const float titlePerc = theme->Title.font->getHeight(2.0f) / sheetHeight;
 	const float gridHeight = sheetHeight * (1.0f - 0.02f - titlePerc - 0.02f - helpRowPerc(sheetHeight));
-	const float twoLines = 2.0f * theme->TextSmall.font->getHeight(1.5f) + 4.0f;
+	const float twoLines = 2.0f * labelFont->getHeight(1.5f) + 4.0f;
 	float labelPerc = gridHeight > 0 ? twoLines / gridHeight : 0.30f;
 	labelPerc = Math::max(0.30f, Math::min(0.50f, labelPerc));
 
@@ -242,6 +268,21 @@ void GuiSaveState::onSizeChanged()
 	mLayout.setRowHeightPerc(4, helpSize );
 
 	mLayout.setSize(mSize);
+}
+
+void GuiSaveState::render(const Transform4x4f& parentTrans)
+{
+	GuiComponent::render(parentTrans);
+
+	// The layout keeps its bottom row free for the help prompts
+	// (onSizeChanged), but with full-screen menus on -- every handheld
+	// panel -- Window draws no help while a second page is open, so on a
+	// 640x480 panel this page never showed BACK / LAUNCH / DELETE / COPY TO
+	// FREE SLOT at all (2026-09-13, found framing #27). Draw them here, as
+	// ViewController does when it is the top page, into the row kept for
+	// them; Window then skips its own draw for this frame.
+	if (mWindow->peekGui() == this && Renderer::ScreenSettings::fullScreenMenus())
+		mWindow->renderHelpPromptsEarly(parentTrans);
 }
 
 void GuiSaveState::centerWindow()
