@@ -10,11 +10,12 @@
 #include "SaveStateRepository.h"
 #include "ThreadedCloudSync.h"
 
-// Half the screen: the sheet has to hold a tile whose label is two lines
-// of the small font over a thumbnail still worth looking at. At 0.40 a
-// 640x480 panel left a 92 px grid row, one line of label, and START NEW
-// GAME / START NEW AUTO SAVE ending in "..." (#27).
-#define WINDOW_HEIGHT Renderer::getScreenHeight() * 0.50f
+// 0.55 of the screen: the sheet has to hold a tile whose label is two
+// lines of the small font over a thumbnail still worth looking at. At 0.40
+// a 640x480 panel left a 92 px grid row, one line of label, and START NEW
+// GAME / START NEW AUTO SAVE ending in "..." (#27); at 0.50 two lines left
+// the thumbnail 74 px tall there.
+#define WINDOW_HEIGHT Renderer::getScreenHeight() * 0.55f
 
 static int slots = 6; // 5;
 
@@ -50,19 +51,31 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	sh = (float) theme->TextSmall.font->getSize() / sh;
 
 	// The label's share of a tile is whatever two lines of the tile's font
-	// are of the tile's height, never less than the 0.30 it was (#27). The
+	// are of the tile's height, never less than the 0.30 it was nor more than half (#27). The
 	// tile is the grid's one row: the sheet less its spacing, title and help
 	// rows, laid out by onSizeChanged with the same arithmetic. TextComponent
 	// wraps on its own once its height clears 1.8 lines, so two full lines
 	// make START NEW GAME, START NEW AUTO SAVE and a slot's number-and-date
 	// wrap where they used to end in "...". The strings themselves are
 	// untouched: they are msgids in every locale.
+	// Font::getHeight is the tallest glyph rasterised SO FAR, so measured
+	// before the labels have drawn it under-reports: at 640x480 the share
+	// computed from it fell to the 0.30 floor while the renderer, measuring
+	// later with more glyphs loaded, found the area under its two-line
+	// threshold and ellipsised every label (878ec8863b, 2026-09-13).
+	// Rasterise the printable range first, so this height is the one the
+	// labels are laid out with; and the tile text is told to wrap outright
+	// (<multiLine>true</multiLine>) rather than left to that threshold.
+	std::string ascii;
+	for (int c = 32; c < 127; c++)
+		ascii.push_back((char)c);
+	theme->TextSmall.font->sizeText(ascii);
 	const float sheetHeight = WINDOW_HEIGHT;
 	const float titlePerc = theme->Title.font->getHeight(2.0f) / sheetHeight;
 	const float gridHeight = sheetHeight * (1.0f - 0.02f - titlePerc - 0.02f - helpRowPerc(sheetHeight));
 	const float twoLines = 2.0f * theme->TextSmall.font->getHeight(1.5f) + 4.0f;
 	float labelPerc = gridHeight > 0 ? twoLines / gridHeight : 0.30f;
-	labelPerc = Math::max(0.30f, Math::min(0.45f, labelPerc));
+	labelPerc = Math::max(0.30f, Math::min(0.50f, labelPerc));
 
 	std::string xml =
 		"<theme defaultView=\"Tiles\">"
@@ -92,6 +105,7 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 		"  <fontSize>" + std::to_string(sh) + "</fontSize>"
 		"  <alignment>center</alignment>"
 		"  <singleLineScroll>false</singleLineScroll>"
+		"  <multiLine>true</multiLine>"
 		"  <size>1 " + std::to_string(labelPerc) + "</size>"
 		"</text>"
 		"<text name=\"gridtile:selected\">"

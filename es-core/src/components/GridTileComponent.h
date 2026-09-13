@@ -105,6 +105,15 @@ public:
 		text->setGlowColor(glowColor);
 		text->setGlowSize(glowSize);
 		text->setAutoScroll(autoScroll);
+		// "true" / "false" force the mode; anything else leaves TextComponent's
+		// AUTO, which wraps only when the area clears 1.8 lines of the font's
+		// tallest glyph seen so far -- a moving threshold (see GuiSaveState).
+		if (multiLine == "true")
+			text->setMultiLine(TextComponent::MultiLineType::MULTILINE);
+		else if (multiLine == "false")
+			text->setMultiLine(TextComponent::MultiLineType::SINGLELINE);
+		else
+			text->setMultiLine(TextComponent::MultiLineType::AUTO);
 		text->setFont(fontPath, fontSize * Math::min(Renderer::getScreenHeight(), Renderer::getScreenWidth()));
 	}
 	
@@ -123,6 +132,7 @@ public:
 	std::string  fontPath;
 	float fontSize;
 	bool autoScroll;
+	std::string multiLine;
 	Vector4f padding;
 };
 

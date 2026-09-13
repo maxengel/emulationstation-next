@@ -697,6 +697,9 @@ bool GridTextProperties::applyTheme(const ThemeData::ThemeElement* elem)
 	if (elem->has("singleLineScroll"))
 		autoScroll = elem->get<bool>("singleLineScroll");
 
+	if (elem->has("multiLine"))
+		multiLine = elem->get<std::string>("multiLine");
+
 	return true;
 }
 
