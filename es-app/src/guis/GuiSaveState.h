@@ -30,7 +30,7 @@ public:
 	bool input(InputConfig* config, Input input) override;
 	void onSizeChanged() override;
 	void render(const Transform4x4f& parentTrans) override;
-	float helpRowPerc(float sheetHeight);
+	float helpRowPerc(float sheetHeight, const HelpStyle& help);
 	std::vector<HelpPrompt> getHelpPrompts() override;
 
 	bool hitTest(int x, int y, Transform4x4f& parentTransform, std::vector<GuiComponent*>* pResult = nullptr) override;

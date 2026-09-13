@@ -113,7 +113,11 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	sh = (float)requested / minSide;
 	const float sheetHeight = WINDOW_HEIGHT;
 	const float titlePerc = theme->Title.font->getHeight(2.0f) / sheetHeight;
-	const float gridHeight = sheetHeight * (1.0f - 0.02f - titlePerc - 0.02f - helpRowPerc(sheetHeight));
+	// The same style onSizeChanged measures, so the two agree (see
+	// helpRowPerc); the debug line is how that is checked in es_log.txt.
+	const float helpPerc = helpRowPerc(sheetHeight, getHelpStyle());
+	LOG(LogDebug) << "GuiSaveState: help row " << helpPerc << " of a " << sheetHeight << " px sheet (constructor)";
+	const float gridHeight = sheetHeight * (1.0f - 0.02f - titlePerc - 0.02f - helpPerc);
 	const float twoLines = 2.0f * labelFont->getHeight(1.5f) + 4.0f;
 	float labelPerc = gridHeight > 0 ? twoLines / gridHeight : 0.30f;
 	labelPerc = Math::max(0.30f, Math::min(0.50f, labelPerc));
@@ -238,16 +242,20 @@ void GuiSaveState::loadGrid()
 
 // The help row's share of a sheet of the given height -- shared by the
 // layout and by the label arithmetic in the constructor, so the two agree.
-float GuiSaveState::helpRowPerc(float sheetHeight)
+// The style is the caller's, and both pass getHelpStyle(): the one Window
+// draws the bar with (the default theme's helpsystem), which needs nothing
+// of this page. It used to be built here from mTheme, which the
+// constructor has not made yet when it needs this number, behind a null
+// guard that let the two calls measure different styles without a word
+// (#151 PL-17). Both callers log the result at debug level, so the
+// acceptance -- equal values at 640x480 and 1280x800 -- reads straight
+// out of es_log.txt with --debug.
+float GuiSaveState::helpRowPerc(float sheetHeight, const HelpStyle& help)
 {
 	float helpSize = 0.02;
 
 	if (Settings::getInstance()->getBool("ShowHelpPrompts"))
 	{
-		HelpStyle help;
-		if (mTheme != nullptr)
-			help.applyTheme(mTheme, "system");
-
 		const float height = Math::round(help.font->getLetterHeight() * 1.25f);
 
 		float helpBottom = help.position.y() + (height * mOrigin.y());
@@ -267,7 +275,8 @@ void GuiSaveState::onSizeChanged()
 {	
 	GuiComponent::onSizeChanged();
 
-	float helpSize = helpRowPerc(mSize.y());
+	float helpSize = helpRowPerc(mSize.y(), getHelpStyle());
+	LOG(LogDebug) << "GuiSaveState: help row " << helpSize << " of a " << mSize.y() << " px sheet (onSizeChanged)";
 
 	mBackground.fitTo(mSize, Vector3f::Zero(), Vector2f(-32, -32));
 
