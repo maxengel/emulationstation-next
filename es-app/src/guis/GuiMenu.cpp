@@ -9038,8 +9038,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	{
 		Window* restoreWindow = mWindow;
 		s->addGroup(_("RESTORE"));
+		// The same words as the row in openCloud: one door, one label, one
+		// line under it on both panels (D-UI-023; the budget is noted at
+		// openRestoreRelink's DEVICE PASSWORD row). The longer sentence this
+		// replaced wrapped to a third line at 640x480 (#155).
 		s->addWithDescription(_("FINISH RESTORE PROCESS"),
-			_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE (WI-FI, ACCOUNTS, THIS DEVICE)."),
+			_("RE-ENTER THE PASSWORDS BACKUPS LEAVE OUT (WI-FI, ACCOUNTS, DEVICE)."),
 			nullptr, [restoreWindow] { GuiMenu::openRestoreRelink(restoreWindow, true); }, "", false, true);
 	}
 
