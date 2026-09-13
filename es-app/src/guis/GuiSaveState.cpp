@@ -84,18 +84,33 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	const int columns = (int)(slots * screenProportion / cellProportion);
 	const float marginX = 0.01f * (float)Renderer::getScreenWidth();
 	const float tileWidth = ((float)Renderer::getScreenWidth() * 0.98f - marginX * (columns - 1)) / (float)Math::max(1, columns);
-	std::shared_ptr<Font> labelFont = theme->TextSmall.font;
+	//
+	// The font a tile ends up with is not the theme's object: the tile makes
+	// its own from the size it is handed, through Font::get with the screen's
+	// font scale (1.31 under 720 px), and the theme's small font was ALREADY
+	// made with the menu scale. Handing the theme font's size straight
+	// through -- what this page did from the start -- scaled it twice: on a
+	// 640x480 panel a 16 px small font became 20, then 26, which is half of
+	// why the labels never fit and why a date measured on the theme's font
+	// read narrower than the tile drew it (5776ede212). Ask for the size that
+	// comes out equal to the theme's, and measure with the font the tile
+	// will use. At 1280x800 the scale is 1 and nothing changes.
+	const float minSide = (float)Math::min(Renderer::getScreenHeight(), Renderer::getScreenWidth());
+	const float screenScale = Renderer::ScreenSettings::fontScale() > 0.0f ? Renderer::ScreenSettings::fontScale() : 1.0f;
+	int requested = Math::max(1, (int)((float)theme->TextSmall.font->getSize() / screenScale + 0.5f));
+	std::shared_ptr<Font> labelFont = Font::get(requested, theme->TextSmall.font->getPath());
+	labelFont->sizeText(ascii);
 	{
 		const std::string widest = Utils::Time::DateTime::now().toLocalTimeString();
 		const float widestPx = labelFont->sizeText(widest).x();
 		if (widestPx > tileWidth * 0.86f && widestPx > 0)
 		{
-			const int shrunk = (int)((float)labelFont->getSize() * tileWidth * 0.86f / widestPx);
-			labelFont = Font::get(Math::max(shrunk, 1), labelFont->getPath());
+			requested = Math::max(1, (int)((float)requested * tileWidth * 0.86f / widestPx));
+			labelFont = Font::get(requested, theme->TextSmall.font->getPath());
 			labelFont->sizeText(ascii);
-			sh = (float)labelFont->getSize() / (float)Math::min(Renderer::getScreenHeight(), Renderer::getScreenWidth());
 		}
 	}
+	sh = (float)requested / minSide;
 	const float sheetHeight = WINDOW_HEIGHT;
 	const float titlePerc = theme->Title.font->getHeight(2.0f) / sheetHeight;
 	const float gridHeight = sheetHeight * (1.0f - 0.02f - titlePerc - 0.02f - helpRowPerc(sheetHeight));
