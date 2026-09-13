@@ -557,7 +557,11 @@ static void startStartupSavesSync(Window* window)
 	// the card as it ends (">>> tier <label>|<rc>"): a restore that finished
 	// under a backup that did not is reported as COULDN'T FINISH with that
 	// DID NOT FINISH, where the exit code alone read the whole run as
-	// failed (D-UI-028).
+	// failed (D-UI-028). Each half also announces itself before it starts
+	// (">>> doing receive", ">>> doing send"), which is what gives the card's
+	// bar its two halves and its line the half's name -- RECEIVING, then
+	// SENDING, in front of each compare count -- so the second "113 OF 113"
+	// is visibly a different step from the first (D-UI-052, #157).
 	const std::string noNetwork = std::to_string(CloudExit::NoNetwork);
 	const std::string command =
 		"if [ -x /usr/bin/cloud_net_ready ]; then"
@@ -574,8 +578,10 @@ static void startStartupSavesSync(Window* window)
 		" done;"
 		" [ \"$_up\" = 1 ] || exit " + noNetwork + ";"
 		" fi;"
+		" echo \">>> doing receive\";"
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only --automatic; _r=$?;"
 		" echo \">>> tier RESTORING SAVES|$_r\";"
+		" echo \">>> doing send\";"
 		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only --automatic; _b=$?;"
 		" echo \">>> tier BACKING UP SAVES|$_b\";"
 		" [ \"$_r\" != 0 ] && exit \"$_r\"; exit \"$_b\"";

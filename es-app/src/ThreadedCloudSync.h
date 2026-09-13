@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 #include <sys/types.h>
+#include "CloudText.h"
 #include "components/AsyncNotificationComponent.h"
 
 // Runs a headless cloud sync command in the background with a native
@@ -135,6 +136,17 @@ private:
 	// says the saves go when the game exits only if something will send
 	// them then.
 	bool						mGameExitSync{false};
+
+	// The two-half bar of a composed sync (D-UI-052, #157), read and
+	// written by run() alone: the half the command announced last (">>>
+	// doing receive" / ">>> doing send"; None for a command that announces
+	// no halves, whose bar is the run's own percentage as it always was),
+	// the bar as last drawn, so it never moves back once a half is known,
+	// and whether this half's byte totals have left zero -- from then on
+	// the byte line is the fact and the compare count stays off the words.
+	CloudText::Phase			mPhase{CloudText::Phase::None};
+	int							mBar{-1};
+	bool						mBytesMoving{false};
 
 	Window*						mWindow;
 	AsyncNotificationComponent* mWndNotification;

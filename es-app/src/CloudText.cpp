@@ -580,4 +580,30 @@ LiveLine liveLine(const std::string& clean)
 	return out;
 }
 
+Phase phaseOf(const std::string& doingWord)
+{
+	const std::string word = Utils::String::toLower(Utils::String::trim(doingWord));
+	if (word == "receive")
+		return Phase::Receiving;
+	if (word == "send")
+		return Phase::Sending;
+	return Phase::None;
+}
+
+int phaseBar(Phase phase, int percentInPhase)
+{
+	const int p = percentInPhase > 100 ? 100 : percentInPhase;
+	switch (phase)
+	{
+		case Phase::Receiving: return p < 0 ? 0 : p / 2;
+		case Phase::Sending:   return p < 0 ? 50 : 50 + p / 2;
+		default:               return p < 0 ? -1 : p;
+	}
+}
+
+int forwardOnly(int shown, int proposed)
+{
+	return proposed > shown ? proposed : shown;
+}
+
 } // namespace CloudText

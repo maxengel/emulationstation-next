@@ -289,6 +289,12 @@ TEST_CASE("classifyProtocolLine reads a doing line")
 	CHECK(classifyProtocolLine(">>> doing archive").text == "archive");
 	CHECK(classifyProtocolLine(">>> doing ").text == "");
 	CHECK(classifyProtocolLine(">>> doing   network  ").text == "network");
+
+	// The halves of a composed sync are doing lines too (D-UI-052); which
+	// half each one names is phaseOf's, below.
+	CHECK(classifyProtocolLine(">>> doing receive").kind == ProtocolKind::Doing);
+	CHECK(classifyProtocolLine(">>> doing receive").text == "receive");
+	CHECK(classifyProtocolLine(">>> doing send").text == "send");
 }
 
 TEST_CASE("classifyProtocolLine reads a why line")
@@ -525,13 +531,15 @@ TEST_CASE("every protocol shape an emitter prints classifies to a known kind")
 		// EmulationStation's own: the wrapper, and the run compositions
 		// that chain several scripts into one page or one card.
 		{ ">>> pid 1234", ProtocolKind::Pid, "ThreadedCloudSync.cpp:141" },
-		{ ">>> doing network", ProtocolKind::Doing, "main.cpp:571" },
+		{ ">>> doing network", ProtocolKind::Doing, "main.cpp:575" },
+		{ ">>> doing receive", ProtocolKind::Doing, "main.cpp:581" },
+		{ ">>> doing send", ProtocolKind::Doing, "main.cpp:584" },
 		{ ">>> doing unpack", ProtocolKind::Doing, "GuiMenu.cpp:4584" },
 		{ ">>> doing archive", ProtocolKind::Doing, "GuiMenu.cpp:4632" },
 		{ ">>> unit SETTINGS||", ProtocolKind::Unit, "GuiMenu.cpp:4583, :4632" },
-		{ ">>> tier RESTORING SAVES|0", ProtocolKind::Tier, "main.cpp:578, :838; GuiMenu.cpp:5427" },
-		{ ">>> tier BACKING UP SAVES|0", ProtocolKind::Tier, "main.cpp:580, GuiMenu.cpp:5428" },
-		{ ">>> tier RESTORING ROMS AND BIOS|5", ProtocolKind::Tier, "main.cpp:837" },
+		{ ">>> tier RESTORING SAVES|0", ProtocolKind::Tier, "main.cpp:583, :844; GuiMenu.cpp:5427" },
+		{ ">>> tier BACKING UP SAVES|0", ProtocolKind::Tier, "main.cpp:586, GuiMenu.cpp:5428" },
+		{ ">>> tier RESTORING ROMS AND BIOS|5", ProtocolKind::Tier, "main.cpp:843" },
 		{ ">>> tier ROMS AND BIOS|0", ProtocolKind::Tier, "GuiMenu.cpp:4557" },
 	};
 
@@ -737,4 +745,84 @@ TEST_CASE("liveLine refuses a percentage that is not one")
 	CHECK(liveLine("Transferred: 4 KiB / 8 KiB, 150%").percent == -1);
 	CHECK(liveLine("Transferred: 4 KiB / 8 KiB, -%").percent == -1);
 	CHECK(liveLine("Transferred: 4 KiB / 8 KiB, -, 0 B/s").percent == -1);
+}
+
+// ------------------------------------------------------------------- phase
+
+TEST_CASE("phaseOf names the half a doing word announces")
+{
+	CHECK(phaseOf("receive") == Phase::Receiving);
+	CHECK(phaseOf("send") == Phase::Sending);
+	CHECK(phaseOf(" Send ") == Phase::Sending);
+
+	// The other words a doing line carries are not halves: the network
+	// wait, the settings archive's two steps, nothing, or a word a newer
+	// script made up.
+	CHECK(phaseOf("network") == Phase::None);
+	CHECK(phaseOf("archive") == Phase::None);
+	CHECK(phaseOf("unpack") == Phase::None);
+	CHECK(phaseOf("") == Phase::None);
+	CHECK(phaseOf("receiving") == Phase::None);
+	CHECK(phaseOf("sometime-later") == Phase::None);
+}
+
+TEST_CASE("phaseBar maps a half's percentage into the whole bar")
+{
+	// Receiving is the first half of the bar, sending the second
+	// (D-UI-052): a half that ends full leaves the bar half full, or full.
+	CHECK(phaseBar(Phase::Receiving, 0) == 0);
+	CHECK(phaseBar(Phase::Receiving, 50) == 25);
+	CHECK(phaseBar(Phase::Receiving, 100) == 50);
+	CHECK(phaseBar(Phase::Sending, 0) == 50);
+	CHECK(phaseBar(Phase::Sending, 50) == 75);
+	CHECK(phaseBar(Phase::Sending, 100) == 100);
+
+	// A compare has no percentage, and parks at the half's start -- never
+	// at zero for the second half, which is the reset the maintainer saw.
+	CHECK(phaseBar(Phase::Receiving, -1) == 0);
+	CHECK(phaseBar(Phase::Sending, -1) == 50);
+
+	// A run with no halves keeps its own percentage, and a compare leaves
+	// its bar alone: the after-a-game backup draws as it always did.
+	CHECK(phaseBar(Phase::None, 0) == 0);
+	CHECK(phaseBar(Phase::None, 37) == 37);
+	CHECK(phaseBar(Phase::None, 100) == 100);
+	CHECK(phaseBar(Phase::None, -1) == -1);
+
+	// Nothing past the end of a half, whatever rclone said.
+	CHECK(phaseBar(Phase::Receiving, 150) == 50);
+	CHECK(phaseBar(Phase::Sending, 150) == 100);
+	CHECK(phaseBar(Phase::None, 150) == 100);
+}
+
+TEST_CASE("forwardOnly never moves the bar back")
+{
+	CHECK(forwardOnly(-1, -1) == -1);
+	CHECK(forwardOnly(-1, 0) == 0);
+	CHECK(forwardOnly(0, 25) == 25);
+	CHECK(forwardOnly(25, 25) == 25);
+	CHECK(forwardOnly(25, 10) == 25);
+	CHECK(forwardOnly(25, -1) == 25);
+	CHECK(forwardOnly(50, 100) == 100);
+
+	// The sequence the maintainer saw (#157), through the two halves: a
+	// compare in the first half, nothing moved, a compare in the second,
+	// nothing moved -- the bar goes 0, 0, 50, 50 and then the outcome
+	// fills it, where it used to sit still throughout.
+	int bar = -1;
+	bar = forwardOnly(bar, phaseBar(Phase::Receiving, -1));  CHECK(bar == 0);   // receive announced
+	bar = forwardOnly(bar, phaseBar(Phase::Receiving, -1));  CHECK(bar == 0);   // 113 of 113 compared
+	bar = forwardOnly(bar, phaseBar(Phase::Sending, -1));    CHECK(bar == 50);  // send announced
+	bar = forwardOnly(bar, phaseBar(Phase::Sending, -1));    CHECK(bar == 50);  // 113 of 113 compared
+
+	// And with saves moving both ways: each half's transfer fills its half
+	// and a late compare count cannot pull it back.
+	bar = -1;
+	bar = forwardOnly(bar, phaseBar(Phase::Receiving, -1));  CHECK(bar == 0);
+	bar = forwardOnly(bar, phaseBar(Phase::Receiving, 40));  CHECK(bar == 20);
+	bar = forwardOnly(bar, phaseBar(Phase::Receiving, -1));  CHECK(bar == 20);
+	bar = forwardOnly(bar, phaseBar(Phase::Receiving, 100)); CHECK(bar == 50);
+	bar = forwardOnly(bar, phaseBar(Phase::Sending, -1));    CHECK(bar == 50);
+	bar = forwardOnly(bar, phaseBar(Phase::Sending, 30));    CHECK(bar == 65);
+	bar = forwardOnly(bar, phaseBar(Phase::Sending, 100));   CHECK(bar == 100);
 }

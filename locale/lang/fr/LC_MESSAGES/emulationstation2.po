@@ -4162,3 +4162,33 @@ msgstr "VÉRIFICATION…"
 
 msgid "BACK UP"
 msgstr "SAUVEGARDER"
+
+msgid "RECEIVING"
+msgstr "RÉCEPTION"
+
+msgid "SENDING"
+msgstr "ENVOI"
+
+msgid "COMPARING SAVES"
+msgstr "COMPARAISON DES SAUVEGARDES"
+
+msgid "%d OF %d"
+msgstr "%d SUR %d"
+
+msgid "%s OF %s"
+msgstr "%s SUR %s"
+
+msgid "NOTHING RECEIVED YET"
+msgstr "RIEN DE REÇU POUR L’INSTANT"
+
+msgid "NOTHING SENT YET"
+msgstr "RIEN D’ENVOYÉ POUR L’INSTANT"
+
+msgid "NOTHING SYNCED YET"
+msgstr "RIEN DE SYNCHRONISÉ POUR L’INSTANT"
+
+msgid "STARTING..."
+msgstr "DÉMARRAGE…"
+
+msgid "WAITING FOR THE NETWORK..."
+msgstr "EN ATTENTE DU RÉSEAU…"

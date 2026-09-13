@@ -129,6 +129,36 @@ void ThreadedCloudSync::run()
 	// sees live status (rclone --stats-one-line lines, phase banners, ...).
 	int ret = -1;
 
+	// What the card says and where its bar stands go through one pair of
+	// hands, so that a half of a composed sync is named in front of every
+	// line and the bar never moves back within it (D-UI-052, #157). The
+	// half's word first, then the line -- RECEIVING . COMPARING SAVES . 113
+	// OF 113 -- so the second compare count is visibly a different step
+	// from the first. A command that announces no halves (the after-a-game
+	// backup, the manual rows) reads and draws exactly as it did.
+	auto say = [this](const std::string& line)
+	{
+		if (mWndNotification == nullptr)
+			return;
+		std::string half;
+		if (mPhase == CloudText::Phase::Receiving)
+			half = _("RECEIVING");
+		else if (mPhase == CloudText::Phase::Sending)
+			half = _("SENDING");
+		mWndNotification->updateText(half.empty() ? line : half + std::string(" \xC2\xB7 ") + line);
+	};
+	auto bar = [this](int percentInPhase)
+	{
+		int next = CloudText::phaseBar(mPhase, percentInPhase);
+		if (mPhase != CloudText::Phase::None)
+			next = CloudText::forwardOnly(mBar, next);
+		if (next < 0)
+			return;
+		mBar = next;
+		if (mWndNotification != nullptr)
+			mWndNotification->updatePercent(next);
+	};
+
 	// Every command runs in a session of its own and says so on its first
 	// line: setsid makes the shell a process group leader, and ">>> pid N"
 	// tells cancelForLaunch which group to signal, so the shell, the
@@ -161,7 +191,10 @@ void ThreadedCloudSync::run()
 			// says it is waiting for the network, the one wait this card
 			// shows -- the startup sync (fork #94) gives the network up to a
 			// minute to come up after boot, and a card reading "Working..."
-			// for that minute says nothing about why. ">>> why <sentence>" is
+			// for that minute says nothing about why; ">>> doing receive" and
+			// ">>> doing send" are a composed sync announcing each of its
+			// halves before it starts, which is what gives the bar its two
+			// halves (D-UI-052). ">>> why <sentence>" is
 			// the scripts saying, at the point of failure and in the
 			// player's words, what went wrong -- the last one is the outcome
 			// line's why (D-UI-028; it replaced a filter that showed any line
@@ -192,8 +225,25 @@ void ThreadedCloudSync::run()
 					// line just read.
 					const bool network = (protocol.text == "network");
 					mWaitingForNetwork = network;
-					if (network && mWndNotification != nullptr)
-						mWndNotification->updateText(_("WAITING FOR THE NETWORK..."));
+					if (network)
+						say(_("WAITING FOR THE NETWORK..."));
+
+					// A half of a composed sync starting (">>> doing receive",
+					// ">>> doing send"; D-UI-052): the words carry its name from
+					// here, the bar parks at its start -- 0, then 50 -- and the
+					// last half's bytes are forgotten, so the compare that
+					// opens this half is shown as one. Announced before the
+					// script runs, so the seconds it spends reaching the cloud
+					// before rclone prints anything already read as this
+					// half's, rather than as the last half standing still.
+					const CloudText::Phase phase = CloudText::phaseOf(protocol.text);
+					if (phase != CloudText::Phase::None)
+					{
+						mPhase = phase;
+						mBytesMoving = false;
+						say(_("STARTING..."));
+						bar(-1);
+					}
 					break;
 				}
 				case CloudText::ProtocolKind::Why:
@@ -241,26 +291,42 @@ void ThreadedCloudSync::run()
 			// arrives on the protocol line above, in the scripts' own words,
 			// and is said once at the end.
 			//
-			// The byte line is the one shown: it moves as the saves do, and
-			// its percentage is the bar's. The count line ("0 / 3, 0%") is
-			// the same progress counted another way, and alternating the two
-			// each second flickered both the words and the bar. The check
-			// counter is a comparison, not a transfer: it is named as one and
-			// leaves the bar alone, or seventy checks read as seventy uploads.
+			// The byte line is the one shown once a transfer is under way: it
+			// moves as the saves do, and its percentage is the bar's. The
+			// count line ("0 / 3, 0%") is the same progress counted another
+			// way, and alternating the two each second flickered both the
+			// words and the bar. The check counter is a comparison, not a
+			// transfer: it is named as one and never moves the bar by its
+			// own percentage, or seventy checks read as seventy uploads.
+			// rclone prints the two in a fixed order in every block -- the
+			// bytes, then the checks -- so whichever is not the fact of the
+			// moment has to stay off the words rather than overwrite them.
 			const CloudText::LiveLine live = CloudText::liveLine(clean);
 			std::string shown;
 			switch (live.kind)
 			{
 			case CloudText::LiveLine::Kind::Bytes:
+			{
 				// The byte line leaving "0 B" is the one fact the in-place
 				// clause turns on: something reached the other side.
 				if (live.sent > 0)
 					mMoved = true;
+				// A total means rclone has queued something to move: from
+				// here the byte line is this half's fact, and the compare
+				// count below stays off the words.
+				if (live.total > 0)
+					mBytesMoving = true;
 				if (live.sent <= 0 && live.total <= 0)
 				{
 					// "0 B / 0 B, -, 0 B/s": nothing listed yet, or nothing
-					// to move. Said in the direction the title promised.
-					switch (CloudText::verbOf(mCommand))
+					// to move. Said in the direction the title promised --
+					// or, inside a half of a composed sync, that half's.
+					CloudText::Verb verb = CloudText::verbOf(mCommand);
+					if (mPhase == CloudText::Phase::Receiving)
+						verb = CloudText::Verb::Restore;
+					else if (mPhase == CloudText::Phase::Sending)
+						verb = CloudText::Verb::Backup;
+					switch (verb)
 					{
 					case CloudText::Verb::Backup:  shown = _("NOTHING SENT YET"); break;
 					case CloudText::Verb::Restore: shown = _("NOTHING RECEIVED YET"); break;
@@ -272,9 +338,18 @@ void ThreadedCloudSync::run()
 						CloudText::sizeLabel((unsigned long) live.sent).c_str(),
 						CloudText::sizeLabel((unsigned long) live.total).c_str());
 				break;
+			}
 			case CloudText::LiveLine::Kind::Checks:
-				shown = _("COMPARING SAVES") + std::string(" \xC2\xB7 ")
-					+ Utils::String::format(_("%d OF %d").c_str(), (int) live.sent, (int) live.total);
+				// Not once this half's bytes are moving: the count follows
+				// the bytes in every block, so it used to hold the words for
+				// the whole second until the next block while the bar moved
+				// underneath COMPARING SAVES. And not before rclone has a
+				// total to count against -- "0 / 0, -, Listed 40" is a
+				// listing still under way, and 0 OF 0 is the shape of the
+				// count that went by between the two compares (#157).
+				if (!mBytesMoving && live.total > 0)
+					shown = _("COMPARING SAVES") + std::string(" \xC2\xB7 ")
+						+ Utils::String::format(_("%d OF %d").c_str(), (int) live.sent, (int) live.total);
 				break;
 			case CloudText::LiveLine::Kind::Other:
 				shown = live.text;
@@ -284,12 +359,15 @@ void ThreadedCloudSync::run()
 				break;
 			}
 
-			if (!shown.empty() && mWndNotification != nullptr)
-			{
-				mWndNotification->updateText(shown);
-				if (live.percent >= 0)
-					mWndNotification->updatePercent(live.percent);
-			}
+			if (!shown.empty())
+				say(shown);
+			// The bar: the byte line's percentage, mapped into the half when
+			// there is one; a compare parks at the half's start, and leaves
+			// the bar of a run with no halves alone (D-UI-052).
+			if (live.kind == CloudText::LiveLine::Kind::Bytes)
+				bar(live.percent);
+			else if (live.kind == CloudText::LiveLine::Kind::Checks)
+				bar(-1);
 		}
 
 		int status = pclose(pipe);

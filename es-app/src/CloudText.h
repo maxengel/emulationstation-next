@@ -263,6 +263,36 @@ namespace CloudText
 		std::string text;    // Other: the line as it came
 	};
 	LiveLine liveLine(const std::string& clean);
+
+	// The halves of a composed sync, for the card's bar (D-UI-052, #157).
+	//
+	// A startup sync is two rclone runs back to back -- a restore, then a
+	// backup -- each with a compare of its own and a transfer of its own. A
+	// bar that followed each run's own percentage stood still through both
+	// compares and reset between them, so the card read "113 OF 113" twice
+	// with nothing visibly moving. The command now announces each half
+	// before it starts (">>> doing receive", ">>> doing send"), and the bar
+	// has two halves: receiving fills 0-50, sending 50-100, a percentage
+	// within a half maps into it, a compare parks at the half's start, and
+	// the bar only ever moves forward. None is a command that announces no
+	// halves -- the after-a-game backup, the manual rows -- whose bar is the
+	// run's own percentage, as it always was.
+	enum class Phase { None, Receiving, Sending };
+
+	// The half a ">>> doing" word names; None for every other word,
+	// "network" included.
+	Phase phaseOf(const std::string& doingWord);
+
+	// Where a percentage within a phase lands on the whole bar: 0..100 in
+	// Receiving is 0..50, in Sending 50..100, in None itself. A percentage
+	// that is not one (-1: a compare, or "0 B / 0 B, -") is the phase's
+	// start -- 0, 50 -- so the bar parks there; in None it stays -1, which
+	// the caller reads as "leave the bar alone".
+	int phaseBar(Phase phase, int percentInPhase);
+
+	// The bar never moves back once a phase is known: the larger of what is
+	// drawn and what is proposed, with -1 on either side meaning nothing.
+	int forwardOnly(int shown, int proposed);
 }
 
 #endif // ES_APP_CLOUD_TEXT_H
