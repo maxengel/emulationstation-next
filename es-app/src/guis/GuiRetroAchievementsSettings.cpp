@@ -5,6 +5,8 @@
 #include "ApiSystem.h"
 #include "RetroAchievements.h"
 #include "utils/Platform.h"
+#include "utils/FileSystemUtil.h"
+#include "utils/StringUtil.h"
 
 #include "guis/GuiMsgBox.h"
 #include "components/SwitchComponent.h"
@@ -35,7 +37,87 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 
 	addGroup(_("OPTIONS"));
 
-	addSwitch(_("HARDCORE MODE"), _("Disable loading states, rewind and cheats for more points."), "global.retroachievements.hardcore", false, nullptr);
+	auto hardcore = addSwitch(_("HARDCORE MODE"), _("Disable loading states, rewind and cheats for more points."), "global.retroachievements.hardcore", false, nullptr);
+
+#if defined(ROCKNIX)
+	// OFFLINE RETROACHIEVEMENTS (fork #165; D-RA-001, D-RA-002). One
+	// system-wide switch, off by default, backed by raofflineproxy-ctl:
+	// enable starts the RAOfflineProxy service, records hardcore as it was
+	// and turns it off -- the proxy is casual-only and refuses hardcore
+	// awards -- and sets the toggle the launch scripts read at every game
+	// start; disable stops the service and puts hardcore back as recorded.
+	// Written by hand rather than through addSwitch: the script is the
+	// writer, not this page's save, and turning it on asks first, because it
+	// changes the HARDCORE MODE row above (never silently). The script's
+	// last stdout line, hardcore=<0|1>, is what that row is set from
+	// afterwards, so the row shows what system.cfg holds; the same values
+	// are mirrored into SystemConf so the page's own save at close writes
+	// what the script wrote rather than what it read at open.
+	if (Utils::FileSystem::exists("/usr/bin/raofflineproxy-ctl"))
+	{
+		auto offline = std::make_shared<SwitchComponent>(mWindow);
+		offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
+		addWithDescription(_("OFFLINE RETROACHIEVEMENTS"), _("BETA. CASUAL ACHIEVEMENTS ONLY, EVEN WITHOUT A CONNECTION."), offline);
+
+		// Raw pointers on purpose: the callback lives inside the switch it
+		// captures, and the HARDCORE MODE switch is a row of the same page,
+		// so a shared_ptr here would be a cycle that keeps the page alive
+		// forever. setState fires the change callback too, so a revert made
+		// from inside it would re-enter it: quiet while the code, not the
+		// player, sets the state.
+		SwitchComponent* offlineRow = offline.get();
+		SwitchComponent* hardcoreRow = hardcore.get();
+		auto quiet = std::make_shared<bool>(false);
+		auto setQuietly = [offlineRow, quiet](bool state) { *quiet = true; offlineRow->setState(state); *quiet = false; };
+
+		auto apply = [window, offlineRow, hardcoreRow, setQuietly](bool on)
+		{
+			std::string last;
+			// executeScriptLegacy: the public route that hands back the real
+			// exit status and every line, as the cloud pages use it.
+			auto result = ApiSystem::executeScriptLegacy(std::string("/usr/bin/raofflineproxy-ctl ") + (on ? "enable" : "disable") + " 2>/dev/null",
+				[&last](const std::string line) { last = line; });
+			if (result.second != 0 || !Utils::String::startsWith(last, "hardcore="))
+			{
+				setQuietly(!on);
+				window->pushGui(new GuiMsgBox(window,
+					on ? _("OFFLINE RETROACHIEVEMENTS COULDN'T BE TURNED ON.") : _("OFFLINE RETROACHIEVEMENTS COULDN'T BE TURNED OFF."),
+					_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
+				return;
+			}
+			bool hardcoreNow = (last == "hardcore=1");
+			hardcoreRow->setState(hardcoreNow);
+			SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
+			SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
+		};
+
+		offline->setOnChangedCallback([window, offlineRow, quiet, setQuietly, apply]
+		{
+			if (*quiet)
+				return;
+
+			if (!offlineRow->getState())
+			{
+				apply(false);
+				return;
+			}
+
+			// NOT NOW is the last button, so B answers NOT NOW (GuiMsgBox's
+			// accelerator) and the switch goes back to off.
+			window->pushGui(new GuiMsgBox(window,
+				_("THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING IT ON TURNS HARDCORE MODE OFF.") + "\n\n" +
+				_("ACHIEVEMENTS YOU EARN OFFLINE ARE SENT TO RETROACHIEVEMENTS WHEN YOU'RE BACK ONLINE."),
+				_("TURN ON"), [apply] { apply(true); },
+				_("NOT NOW"), [setQuietly] { setQuietly(false); }));
+		});
+	}
+
+	// RetroArch's disconnected badge, explained where the RetroAchievements
+	// choices are made (fork #162): rcheevos shows it while an award or a
+	// score is waiting to reach the server, and says nothing about what it
+	// means.
+	setSubTitle(_("!RA! IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
+#endif
 	addSwitch(_("LEADERBOARDS"), _("Compete in high-score and best time leaderboards (requires hardcore)."), "global.retroachievements.leaderboards", false, nullptr);
 	addSwitch(_("VERBOSE MODE"), _("Show achievement progression on game launch and other notifications."), "global.retroachievements.verbose", false, nullptr);
 	addSwitch(_("RICH PRESENCE"), "global.retroachievements.richpresence", false);
