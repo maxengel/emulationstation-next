@@ -4153,3 +4153,12 @@ msgstr "TERMINER"
 
 msgid "finish"
 msgstr "terminer"
+
+msgid "RESTORE"
+msgstr "RESTAURER"
+
+msgid "CHECKING..."
+msgstr "VÉRIFICATION..."
+
+msgid "BACK UP"
+msgstr "SAUVEGARDER"
