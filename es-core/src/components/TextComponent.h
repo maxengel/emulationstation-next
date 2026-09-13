@@ -46,6 +46,7 @@ public:
 
 	inline std::shared_ptr<Font> getFont() const { return mFont; }
 	inline float getLineSpacing() const { return mLineSpacing; }
+	inline Alignment getHorizontalAlignment() const { return mHorizontalAlignment; }
 
 	virtual void applyTheme(const std::shared_ptr<ThemeData>& theme, const std::string& view, const std::string& element, unsigned int properties) override;
 

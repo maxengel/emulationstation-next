@@ -383,37 +383,43 @@ float MenuComponent::getButtonGridHeight() const
 
 void MenuComponent::updateSize()
 {
-	// GPI
+	// GPI: a full-screen menu is the screen, there is nothing to fit.
 	if (Renderer::ScreenSettings::fullScreenMenus())
-	{
 		setSize(Renderer::getScreenWidth(), Renderer::getScreenHeight());
-		return;
-	}
-
-	const float maxHeight = mMaxHeight <= 0 ? Renderer::getScreenHeight() * 0.75f : mMaxHeight;
-
-	float height = TITLE_HEIGHT + mList->getTotalRowHeight() + getButtonGridHeight() + 2;
-	if (mTabs != nullptr && mTabs->size())
-		height += mTabs->getSize().y();
-
-	if(height > maxHeight)
+	else
 	{
-		height = TITLE_HEIGHT + getButtonGridHeight();
-		int i = 0;
-		while(i < mList->size())
+		const float maxHeight = mMaxHeight <= 0 ? Renderer::getScreenHeight() * 0.75f : mMaxHeight;
+
+		float height = TITLE_HEIGHT + mList->getTotalRowHeight() + getButtonGridHeight() + 2;
+		if (mTabs != nullptr && mTabs->size())
+			height += mTabs->getSize().y();
+
+		if(height > maxHeight)
 		{
-			float rowHeight = mList->getRowHeight(i);
-			if(height + rowHeight < maxHeight)
-				height += rowHeight;
-			else
-				break;
-			i++;
+			height = TITLE_HEIGHT + getButtonGridHeight();
+			int i = 0;
+			while(i < mList->size())
+			{
+				float rowHeight = mList->getRowHeight(i);
+				if(height + rowHeight < maxHeight)
+					height += rowHeight;
+				else
+					break;
+				i++;
+			}
 		}
+
+		float width = (float)Math::min((int)Renderer::getScreenHeight(), (int)(Renderer::getScreenWidth() * 0.90f));
+		setSize(width, height);
 	}
 
-	float width = (float)Math::min((int)Renderer::getScreenHeight(), (int)(Renderer::getScreenWidth() * 0.90f));
-	setSize(width, height);
-	
+	// A header with an image beside it reads from the left: title and
+	// subtitle line up on the column's edge instead of centring in it, and
+	// the subtitle's tabs become columns (a centred text draws a tab as a
+	// space). In both modes -- this block used to sit behind the full-screen
+	// return above, so on every handheld panel the lines stayed centred while
+	// GuiGameAchievements measured their right edge as if they were not, and
+	// placed its bar over them (#160).
 	if (mTitleImage != nullptr && mTitle != nullptr && mTitle->isVisible())
 	{
 		float pad = Renderer::getScreenWidth() * 0.012;

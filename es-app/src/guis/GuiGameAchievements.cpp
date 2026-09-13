@@ -196,13 +196,21 @@ GuiGameAchievements::GuiGameAchievements(Window* window, GameInfoAndUserProgress
 	// the menu draws it -- its font, its tab stops, its padding -- so a
 	// larger font setting or a longer translation moves the decision, not
 	// the bar over the text.
+	//
+	// The measure is a left-aligned block's right edge, and the menu
+	// left-aligns the header wherever it has a title image (in both menu
+	// modes since #160's second half: under full-screen menus the block
+	// stayed centred, and the bar landed on lines whose measured edge said
+	// there was room). A centred block has no fixed right edge -- it moves
+	// with the column -- so if the header ever comes back centred the bar
+	// takes the row below, the one place it cannot overlap.
 	auto lines = mMenu.getSubTitle();
 	if (mProgress != nullptr && lines != nullptr)
 	{
 		const float textRight = lines->getPosition().x() + lines->getPadding().x()
 			+ lines->getFont()->sizeTabbedText(lines->getText(), lines->getLineSpacing()).x();
 
-		if (textRight > headerTextColumn() * PROGRESS_LEFT)
+		if (lines->getHorizontalAlignment() != ALIGN_LEFT || textRight > headerTextColumn() * PROGRESS_LEFT)
 		{
 			mProgressBelow = true;
 			setSubTitle(header + "\r\n");
@@ -252,10 +260,15 @@ void GuiGameAchievements::render(const Transform4x4f& parentTrans)
 	if (mProgressBelow)
 	{
 		// Its own row: the empty last line of the header, as wide as the
-		// lines above it and starting where they start.
+		// lines above it and starting where they start -- which for a
+		// centred header is where the widest line starts.
 		const Vector2f text = lines->getFont()->sizeTabbedText(lines->getText(), lines->getLineSpacing());
 
-		mProgress->setPosition(lines->getPosition().x() + lines->getPadding().x(), textTop + text.y() - lineHeight);
+		float left = lines->getPosition().x() + lines->getPadding().x();
+		if (lines->getHorizontalAlignment() == ALIGN_CENTER)
+			left += (lines->getSize().x() - lines->getPadding().x() - lines->getPadding().z() - text.x()) / 2.0f;
+
+		mProgress->setPosition(left, textTop + text.y() - lineHeight);
 		mProgress->setSize(text.x(), lineHeight);
 	}
 	else
