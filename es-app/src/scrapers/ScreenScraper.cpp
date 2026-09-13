@@ -5,6 +5,7 @@
 #include "utils/StringUtil.h"
 #include "FileData.h"
 #include "Log.h"
+#include "LocaleES.h"
 #include "PlatformId.h"
 #include "Settings.h"
 #include "SystemData.h"
@@ -962,18 +963,54 @@ ScreenScraperUser ScreenScraperRequest::processUserInfo(const pugi::xml_document
 	return user;
 }
 
+// What the screen says when ScreenScraper refuses the first request of a
+// scrape (#66). The API answers every failure with a French sentence, and
+// asked with a bad developer pair together with an account it blames the
+// account ("Verifier les identifiants utilisateurs"), while asked with the
+// pair alone it blames the pair ("Verifier vos identifiants developpeur").
+// EmulationStation used to put that body on screen as it came. So: the body
+// goes to the log; a login failure is told apart by one call with the pair
+// alone -- made only after a failure, so a scrape that starts makes no
+// extra request -- and the screen names the credential and the tab it lives
+// under, in English. No code on screen: it is in the log (D-UI-028).
+static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraperRequest::ScreenScraperConfig& config)
+{
+	const int status = req.status();
+	const std::string body = Utils::String::trim(Utils::String::removeHtmlTags(req.getErrorMsg()));
+	LOG(LogError) << "ScreenScraper refused the user-info request: HTTP " << status << ": " << body;
+	const std::string lower = Utils::String::toLower(body);
+
+	if (lower.find("maximum threads") != std::string::npos || lower.find("maximum requests") != std::string::npos)
+		return _("SCREENSCRAPER IS BUSY. TRY AGAIN IN A MINUTE.");
+	if (lower.find("maintenance") != std::string::npos || lower.find("ferm") != std::string::npos)
+		return _("SCREENSCRAPER IS DOWN FOR MAINTENANCE. TRY AGAIN LATER.");
+
+	const bool login = status == HttpReq::REQ_401_FORBIDDEN || status == HttpReq::REQ_403_BADLOGIN
+		|| lower.find("identifiant") != std::string::npos || lower.find("login") != std::string::npos;
+	if (!login)
+		return _("SCREENSCRAPER ANSWERED WITH AN ERROR. TRY AGAIN LATER.");
+
+	// The pair alone. A rejected pair answers 200 with a sentence, not XML.
+	HttpReq probe(config.API_URL_BASE + "/systemesListe.php?" + screenScraperDevLogin()
+		+ "&softname=" + HttpReq::urlEncode(VERSIONED_SOFT_NAME) + "&output=xml");
+	probe.wait();
+	const std::string probeBody = Utils::String::trim(probe.getContent());
+	const bool pairOk = probe.status() == HttpReq::REQ_SUCCESS && probeBody.find("<?xml") == 0;
+	LOG(LogInfo) << "ScreenScraper developer pair alone: HTTP " << probe.status() << (pairOk ? ", accepted" : ", rejected");
+	if (!pairOk)
+		return _("SCREENSCRAPER REJECTED THE DEVELOPER ID OR PASSWORD.\nCHECK THEM UNDER SCRAPER > OPTIONS.");
+	return _("SCREENSCRAPER REJECTED YOUR USERNAME OR PASSWORD.\nCHECK THEM UNDER SCRAPER > ACCOUNTS.");
+}
+
 int ScreenScraperScraper::getThreadCount(std::string &result)
 {
 	ScreenScraperRequest::ScreenScraperConfig ssConfig;
 	std::string url = ssConfig.getUserInfoUrl();
-
 	HttpReq httpreq(url);
 	httpreq.wait();
-	
 	if (httpreq.status() != HttpReq::REQ_SUCCESS)
 	{
-		result = httpreq.getErrorMsg();
-		result = Utils::String::trim(Utils::String::replace(result, "<br>", "\r\n"));
+		result = screenScraperFailureMessage(httpreq, ssConfig);
 		return -1;
 	}
 
