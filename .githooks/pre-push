@@ -15,6 +15,31 @@
 # .githooks/ at all, so the guard would silently not run. A path naming a
 # directory that does not exist runs nothing and says nothing either --
 # check `ls "$(git config core.hooksPath)"` lists pre-push.
+#
+# What each guard reads, and why (#151 PL-08, 2026-09-13):
+#   - The secret scan reads every line ADDED by every commit in the push, not
+#     the files at the pushed tip. A tip-only scan let a secret that one
+#     commit added and a later one removed travel unread; the history keeps it.
+#   - pr/* is decided from the REMOTE ref -- the name the push creates -- not
+#     the local branch. `git push origin feature/x:refs/heads/pr/x` used to
+#     skip the personal-path guard entirely.
+#   - A pr/* push with no upstream/master, or whose base diff fails, is
+#     refused rather than passed on an empty list.
+# Proven in a scratch repo (a bare remote per hook, hooksPath pointing here;
+# the "secret" is sixteen letters that spell nothing after devpassword=):
+#   feature/x: base; add devpassword=<16 letters> to src/x.txt; remove it again
+#   feature/y: base; add CLAUDE.md
+#   old hook   git push r1 feature/x                     -> pushed (tip is clean)
+#              git push r1 feature/y:refs/heads/pr/y     -> pushed (local name not pr/*)
+#   this hook  git push r2 feature/x
+#     pre-push: feature/x -> feature/x: a commit in this push adds a credential-shaped line:
+#         <sha>:src/x.txt: +[REDACTED]          (the whole match is redacted)
+#              git push r2 feature/y:refs/heads/pr/y
+#     pre-push: feature/y -> pr/y differs from upstream/master in a personal path: CLAUDE.md
+#              git remote remove upstream; git push r2 feature/y:refs/heads/pr/y
+#     pre-push: feature/y -> pr/y: no upstream/master to compare against; git fetch upstream first
+#              git push r2 feature/y                     -> pushed (not pr/*, no secret)
+#   Each refusal ends: pre-push: refused. ...   and exits 1.
 set -u
 PERSONAL_PATTERNS=(
   'CLAUDE.md'
@@ -37,39 +62,54 @@ base_ref=""
 for cand in upstream/master upstream/HEAD origin/master; do
   git rev-parse --verify --quiet "${cand}^{commit}" >/dev/null && { base_ref="${cand}"; break; }
 done
-while read -r local_ref local_sha _remote_ref remote_sha; do
+while read -r local_ref local_sha remote_ref remote_sha; do
   [ "${local_sha}" = "${zero}" ] && continue      # a deletion
   branch="${local_ref#refs/heads/}"
+  dest="${remote_ref#refs/heads/}"
+  where="${branch} -> ${dest}"
 
-  # 2. credential-shaped lines, every branch: the files this push adds or
-  #    changes, read whole at the pushed tip. A first push has no remote
-  #    tip, so the range starts at the oldest commit no remote has.
+  # The commits this push adds. A first push has no remote tip, so the range
+  # starts at the oldest commit no remote has.
   if [ "${remote_sha}" = "${zero}" ]; then
     oldest="$(git rev-list "${local_sha}" --not --remotes 2>/dev/null | tail -1)"
     if [ -n "${oldest}" ] && git rev-parse --verify --quiet "${oldest}^" >/dev/null; then range="${oldest}^..${local_sha}"; else range="${local_sha}^..${local_sha}"; fi
   else
     range="${remote_sha}..${local_sha}"
   fi
+
+  # 2. credential-shaped lines, every branch: every line ADDED by every
+  #    commit in the range, not the files at the tip, which a later commit
+  #    can have cleaned. Merges are shown against their first parent so a
+  #    conflict resolution is read too; a line a merge carries in from a
+  #    side branch is then reported twice, which costs nothing. The awk
+  #    keeps the commit and file each added line came from; grep decides.
+  hits="$(git log --format='@@commit %h' -p --no-color --diff-merges=first-parent --diff-filter=AM "${range}" -- 2>/dev/null \
+    | awk 'BEGIN { c = ""; f = "" }
+           /^@@commit / { c = substr($0, 10); next }
+           /^\+\+\+ b\// { f = substr($0, 7); next }
+           /^\+\+\+ / { next }
+           /^\+/ { print c ":" f ": " $0 }' \
+    | grep -E "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -5 || true)"
+  if [ -n "${hits}" ]; then
+    echo "pre-push: ${where}: a commit in this push adds a credential-shaped line:" >&2
+    echo "${hits}" | sed 's/^/    /' >&2
+    status=1
+  fi
+
+  # 1. personal paths, pr/* only -- pr/* as the remote will name it.
+  case "${dest}" in pr/*) ;; *) continue ;; esac
+  [ -n "${base_ref}" ] || { echo "pre-push: ${where}: no upstream/master to compare against; git fetch upstream first" >&2; status=1; continue; }
+  if ! changed="$(git diff --name-only "${base_ref}...${local_sha}" 2>/dev/null)"; then
+    echo "pre-push: ${where}: git diff ${base_ref}...${local_sha} failed; nothing was compared" >&2; status=1; continue
+  fi
   while IFS= read -r f; do
     [ -n "${f}" ] || continue
-    hit="$(git show "${local_sha}:${f}" 2>/dev/null | grep -nE "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -3 || true)"
-    if [ -n "${hit}" ]; then
-      echo "pre-push: ${branch}: ${f} carries a credential-shaped line:" >&2
-      echo "${hit}" | sed 's/^/    /' >&2
-      status=1
-    fi
-  done < <(git diff --name-only --diff-filter=AM "${range}" 2>/dev/null || git ls-tree -r --name-only "${local_sha}")
-
-  # 1. personal paths, pr/* only.
-  case "${branch}" in pr/*) ;; *) continue ;; esac
-  [ -n "${base_ref}" ] || { echo "pre-push: no upstream/master to compare ${branch} against; git fetch upstream first" >&2; status=1; continue; }
-  while IFS= read -r f; do
     for pat in "${PERSONAL_PATTERNS[@]}"; do
       case "${f}" in "${pat}"*|*/"${pat}"*)
-        echo "pre-push: ${branch} differs from ${base_ref} in a personal path: ${f}" >&2; status=1 ;;
+        echo "pre-push: ${where} differs from ${base_ref} in a personal path: ${f}" >&2; status=1 ;;
       esac
     done
-  done < <(git diff --name-only "${base_ref}...${local_sha}" 2>/dev/null)
+  done <<< "${changed}"
 done
 [ "${status}" -eq 0 ] || echo "pre-push: refused. Build pr/* by content from test/qa-integration, naming source paths only." >&2
 exit ${status}
