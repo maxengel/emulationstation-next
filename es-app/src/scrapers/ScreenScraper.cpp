@@ -1009,6 +1009,14 @@ static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraper
 		break;
 	}
 
+	// No account configured: the API needs one on this request and on every
+	// game request (tested with the public JELOS pair, 2026-09-13: the pair
+	// alone lists systems and is refused everything else), so the pair may
+	// be fine and the player has simply not added an account yet. Say that,
+	// rather than that a password they never typed was rejected.
+	if (Settings::getInstance()->getString("ScreenScraperUser").empty() || Settings::getInstance()->getString("ScreenScraperPass").empty())
+		return _("SCREENSCRAPER NEEDS YOUR ACCOUNT TO SCRAPE.\nADD IT UNDER SCRAPER > ACCOUNTS.");
+
 	// The pair alone. A rejected pair answers 200 with a sentence, not XML.
 	HttpReq probe(config.API_URL_BASE + "/systemesListe.php?" + screenScraperDevLogin()
 		+ "&softname=" + HttpReq::urlEncode(VERSIONED_SOFT_NAME) + "&output=xml");
