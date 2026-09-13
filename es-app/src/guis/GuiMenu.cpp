@@ -5889,7 +5889,7 @@ static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std
 
 	// cloud_setup --info says whether a password is set, never what it is:
 	// a credential that crosses a script boundary is one careless echo from
-	// a log (#116, D-INFRA-008). The value, where this page must show or
+	// a log (#116, D-INFRA-010). The value, where this page must show or
 	// pre-fill it, is read in-process from the device's own settings.
 	const bool pwOk = info["PASSWORD_SET"] == "1";
 	const bool sshOk = info["SSH_UP"] == "active";
