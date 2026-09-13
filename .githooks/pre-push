@@ -7,11 +7,14 @@
 #      feature branches cut from it;
 #   2. every pushed branch is scanned for credential-shaped lines.
 #
-# Enable once per clone (shared by every worktree):
-#   git config core.hooksPath "$(git rev-parse --show-toplevel)/.githooks"
+# Enable once per clone (shared by every worktree), pointing at the worktree
+# that always holds test/qa-integration -- this file lives on that branch:
+#   git config core.hooksPath ~/Development/emulationstation-next.worktrees/qa-integration/.githooks
 # The absolute path matters: a relative core.hooksPath resolves against the
 # worktree being pushed from, and a correctly built pr/* branch has no
-# .githooks/ at all, so the guard would silently not run.
+# .githooks/ at all, so the guard would silently not run. A path naming a
+# directory that does not exist runs nothing and says nothing either --
+# check `ls "$(git config core.hooksPath)"` lists pre-push.
 set -u
 PERSONAL_PATTERNS=(
   'CLAUDE.md'
@@ -29,12 +32,24 @@ esac
 
 status=0
 zero=0000000000000000000000000000000000000000
+# The upstream here is ROCKNIX/emulationstation-next, whose branch is master.
+base_ref=""
+for cand in upstream/master upstream/HEAD origin/master; do
+  git rev-parse --verify --quiet "${cand}^{commit}" >/dev/null && { base_ref="${cand}"; break; }
+done
 while read -r local_ref local_sha _remote_ref remote_sha; do
   [ "${local_sha}" = "${zero}" ] && continue      # a deletion
   branch="${local_ref#refs/heads/}"
 
-  # 2. credential-shaped lines, every branch: the files this push adds or changes.
-  if [ "${remote_sha}" = "${zero}" ]; then range="${local_sha}"; else range="${remote_sha}..${local_sha}"; fi
+  # 2. credential-shaped lines, every branch: the files this push adds or
+  #    changes, read whole at the pushed tip. A first push has no remote
+  #    tip, so the range starts at the oldest commit no remote has.
+  if [ "${remote_sha}" = "${zero}" ]; then
+    oldest="$(git rev-list "${local_sha}" --not --remotes 2>/dev/null | tail -1)"
+    if [ -n "${oldest}" ] && git rev-parse --verify --quiet "${oldest}^" >/dev/null; then range="${oldest}^..${local_sha}"; else range="${local_sha}^..${local_sha}"; fi
+  else
+    range="${remote_sha}..${local_sha}"
+  fi
   while IFS= read -r f; do
     [ -n "${f}" ] || continue
     hit="$(git show "${local_sha}:${f}" 2>/dev/null | grep -nE "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -3 || true)"
@@ -47,14 +62,14 @@ while read -r local_ref local_sha _remote_ref remote_sha; do
 
   # 1. personal paths, pr/* only.
   case "${branch}" in pr/*) ;; *) continue ;; esac
-  git rev-parse -q --verify upstream/next >/dev/null 2>&1 || { echo "pre-push: no upstream/next to compare ${branch} against; git fetch upstream first" >&2; status=1; continue; }
+  [ -n "${base_ref}" ] || { echo "pre-push: no upstream/master to compare ${branch} against; git fetch upstream first" >&2; status=1; continue; }
   while IFS= read -r f; do
     for pat in "${PERSONAL_PATTERNS[@]}"; do
       case "${f}" in "${pat}"*|*/"${pat}"*)
-        echo "pre-push: ${branch} differs from upstream/next in a personal path: ${f}" >&2; status=1 ;;
+        echo "pre-push: ${branch} differs from ${base_ref} in a personal path: ${f}" >&2; status=1 ;;
       esac
     done
-  done < <(git diff --name-only "upstream/next...${local_sha}" 2>/dev/null)
+  done < <(git diff --name-only "${base_ref}...${local_sha}" 2>/dev/null)
 done
 [ "${status}" -eq 0 ] || echo "pre-push: refused. Build pr/* by content from test/qa-integration, naming source paths only." >&2
 exit ${status}

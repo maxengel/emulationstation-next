@@ -36,8 +36,11 @@ tools/register-check` (register citations). Comments before a translatable
 **Upstream.** `upstream` is `ROCKNIX/emulationstation-next`. A PR branch is
 `pr/<name>`, built by content from `test/qa-integration` and containing only
 source; this file, `.githooks/` and `.claude/` never travel -- `.githooks/pre-push`
-refuses a `pr/*` push that carries them. Enable it once per clone:
+refuses a `pr/*` push that carries them. Enable it once per clone, pointing at
+the worktree that always holds `test/qa-integration` (the main checkout may be
+on a feature branch without it), and check the directory exists:
 
 ```bash
-git config core.hooksPath "$(git rev-parse --show-toplevel)/.githooks"
+git config core.hooksPath ~/Development/emulationstation-next.worktrees/qa-integration/.githooks
+ls "$(git config core.hooksPath)"     # must list pre-push
 ```
