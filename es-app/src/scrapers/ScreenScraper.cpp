@@ -980,15 +980,34 @@ static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraper
 	LOG(LogError) << "ScreenScraper refused the user-info request: HTTP " << status << ": " << body;
 	const std::string lower = Utils::String::toLower(body);
 
-	if (lower.find("maximum threads") != std::string::npos || lower.find("maximum requests") != std::string::npos)
-		return _("SCREENSCRAPER IS BUSY. TRY AGAIN IN A MINUTE.");
-	if (lower.find("maintenance") != std::string::npos || lower.find("ferm") != std::string::npos)
+	// The status is the one thing the API says in a form a program can
+	// read; HttpReq names every code it documents. Only 403 covers both
+	// credentials, and on this endpoint its body always says "utilisateurs"
+	// -- with a bad pair, with no pair at all -- so the body cannot say
+	// which; the probe below can.
+	switch (status)
+	{
+	case HttpReq::REQ_401_FORBIDDEN:
+		return _("SCREENSCRAPER IS OPEN TO ITS MEMBERS ONLY RIGHT NOW. TRY AGAIN LATER.");
+	case HttpReq::REQ_426_SERVERMAINTENANCE:
 		return _("SCREENSCRAPER IS DOWN FOR MAINTENANCE. TRY AGAIN LATER.");
-
-	const bool login = status == HttpReq::REQ_401_FORBIDDEN || status == HttpReq::REQ_403_BADLOGIN
-		|| lower.find("identifiant") != std::string::npos || lower.find("login") != std::string::npos;
-	if (!login)
-		return _("SCREENSCRAPER ANSWERED WITH AN ERROR. TRY AGAIN LATER.");
+	case HttpReq::REQ_426_BLACKLISTED:
+		return _("SCREENSCRAPER HAS BLOCKED THIS VERSION OF THE SCRAPER.");
+	case HttpReq::REQ_429_TOOMANYREQUESTS:
+		return _("SCREENSCRAPER IS BUSY. TRY AGAIN IN A MINUTE.");
+	case HttpReq::REQ_430_TOOMANYSCRAPS:
+		return _("YOU HAVE REACHED TODAY'S SCREENSCRAPER QUOTA. TRY AGAIN TOMORROW.");
+	case HttpReq::REQ_430_TOOMANYFAILURES:
+		return _("TOO MANY FAILED SCREENSCRAPER REQUESTS TODAY. TRY AGAIN TOMORROW.");
+	case HttpReq::REQ_403_BADLOGIN:
+		break;
+	default:
+		if (lower.find("maintenance") != std::string::npos || lower.find("ferm") != std::string::npos)
+			return _("SCREENSCRAPER IS DOWN FOR MAINTENANCE. TRY AGAIN LATER.");
+		if (lower.find("identifiant") == std::string::npos && lower.find("login") == std::string::npos)
+			return _("SCREENSCRAPER ANSWERED WITH AN ERROR. TRY AGAIN LATER.");
+		break;
+	}
 
 	// The pair alone. A rejected pair answers 200 with a sentence, not XML.
 	HttpReq probe(config.API_URL_BASE + "/systemesListe.php?" + screenScraperDevLogin()
