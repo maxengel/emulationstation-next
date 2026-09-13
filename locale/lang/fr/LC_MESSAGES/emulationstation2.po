@@ -4158,7 +4158,7 @@ msgid "RESTORE"
 msgstr "RESTAURER"
 
 msgid "CHECKING..."
-msgstr "VÉRIFICATION..."
+msgstr "VÉRIFICATION…"
 
 msgid "BACK UP"
 msgstr "SAUVEGARDER"
