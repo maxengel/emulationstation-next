@@ -4217,8 +4217,8 @@ msgstr "IGNORÉ"
 msgid "OFFLINE RETROACHIEVEMENTS"
 msgstr "RETROACHIEVEMENTS HORS LIGNE"
 
-msgid "BETA. CASUAL ACHIEVEMENTS ONLY, EVEN WITHOUT A CONNECTION."
-msgstr "BÊTA. SUCCÈS EN MODE FACILE SEULEMENT, MÊME SANS CONNEXION."
+msgid "Beta. Casual achievements only, even without a connection."
+msgstr "Bêta. Succès en mode facile seulement, même sans connexion."
 
 msgid ""
 "THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING "

@@ -57,7 +57,10 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	{
 		auto offline = std::make_shared<SwitchComponent>(mWindow);
 		offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
-		addWithDescription(_("OFFLINE RETROACHIEVEMENTS"), _("BETA. CASUAL ACHIEVEMENTS ONLY, EVEN WITHOUT A CONNECTION."), offline);
+		// The line under the label is sentence case like every description on
+		// this page (HARDCORE MODE's "Disable loading states, ..."); the label
+		// stays UPPERCASE like its siblings (#166).
+		addWithDescription(_("OFFLINE RETROACHIEVEMENTS"), _("Beta. Casual achievements only, even without a connection."), offline);
 
 		// Raw pointers on purpose: the callback lives inside the switch it
 		// captures, and the HARDCORE MODE switch is a row of the same page,
