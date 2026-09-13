@@ -152,6 +152,14 @@ void GuiSaveState::loadGrid()
 		else 
 			mGrid->add(_("SLOT") + std::string(" ") + std::to_string(item->slot) + std::string("\r\n") + item->creationDate.toLocalTimeString() + coreinfo, item->getScreenShot(), SaveStateItem(item));
 	}
+
+	// The help bar follows the cursor, and a rebuild moves the cursor
+	// without a cursor event: after the last slot was deleted the bar still
+	// offered DELETE and COPY TO FREE SLOT over START NEW GAME (#93). Read
+	// the prompts of whatever is under the cursor now. A no-op before the
+	// page is on screen (updateHelpPrompts acts only on the top page), so
+	// the constructor's call costs nothing.
+	updateHelpPrompts();
 }
 
 void GuiSaveState::onSizeChanged()
