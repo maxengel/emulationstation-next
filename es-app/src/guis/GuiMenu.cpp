@@ -5044,8 +5044,10 @@ void GuiMenu::openCloud(Window* window)
 	// from startup hid the row until the next restart (guest b, 2026-09-13).
 	if (Utils::FileSystem::exists("/storage/.config/.restore-finish-pending", false))
 	{
+		// One line under the label on both panels (D-UI-023; the budget is
+		// noted at openRestoreRelink's DEVICE PASSWORD row).
 		s->addWithDescription(_("FINISH RESTORE PROCESS"),
-			_("RE-ENTER THE PASSWORDS BACKUPS DO NOT INCLUDE (WI-FI, ACCOUNTS, THIS DEVICE)."), nullptr,
+			_("RE-ENTER THE PASSWORDS BACKUPS LEAVE OUT (WI-FI, ACCOUNTS, DEVICE)."), nullptr,
 			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
 	}
 
@@ -7297,8 +7299,14 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	// One password covers SSH, Samba, the Syncthing GUI and the file
 	// server - they all derive from it via setrootpass.
 	const std::string rootPass = SystemConf::getInstance()->get("root.password");
+	// A description here is one line on both panels (D-UI-023). The 800 px
+	// menu at 1280x800 gives a 20 px description 780 px, the 640 px
+	// full-screen menu at 640x480 gives a 15 px one 620 px; the first is
+	// the tighter, and the budget that clears both is about 66 characters
+	// of the theme's bold font. Measured against the font, not guessed:
+	// the sentence this replaced ran to 876 px and 657 px (#151 PL-05).
 	addCredentialRow(_("DEVICE PASSWORD (SSH, SAMBA, FILE SERVER)"),
-		_("YOUR EXISTING PASSWORD STILL WORKS -- SET ONE HERE ONLY IF YOU WANT TO CHANGE IT."),
+		_("YOUR EXISTING PASSWORD STILL WORKS. SET ONE ONLY TO CHANGE IT."),
 		!rootPass.empty(), [window, s, reopen, rootPass]
 	{
 		auto pw = new GuiSettings(window, _("DEVICE PASSWORD"));
@@ -7358,8 +7366,10 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 
 	// LATER keeps the marker, so this page returns on the next boot -- but
 	// nothing said so, leaving the player unable to tell defer from discard.
+	// One line under the label, as above: the page name is the long part,
+	// so the sentence around it is a fragment.
 	s->addWithDescription(_("LATER KEEPS THIS LIST"),
-		_("IT COMES BACK NEXT TIME YOU START UP, OR FIND IT IN NETWORK SETTINGS > FINISH RESTORE PROCESS."),
+		_("BACK AT STARTUP, OR IN NETWORK SETTINGS > FINISH RESTORE PROCESS."),
 		nullptr, nullptr, "", false, true);
 
 	// FINISH consumes the marker; LATER leaves it so the next boot
