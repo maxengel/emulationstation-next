@@ -1043,7 +1043,7 @@ static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraper
 	if (pair == PairUnknown)
 		return _("COULDN'T REACH SCREENSCRAPER. TRY AGAIN.");
 	if (pair == PairRejected)
-		return _("SCREENSCRAPER REJECTED THE DEVELOPER ID OR PASSWORD.\nCHECK THEM UNDER SCRAPER > OPTIONS.");
+		return _("SCREENSCRAPER REJECTED THE DEVELOPER ID OR PASSWORD.\nCHECK THEM UNDER SCRAPER > ACCOUNTS.");
 
 	// The pair is fine and the API still refused: it needs an account on
 	// this request and on every game request, so with none configured the

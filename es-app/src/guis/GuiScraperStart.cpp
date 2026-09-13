@@ -428,11 +428,14 @@ void GuiScraperStart::pressedStart()
 {
 #if defined(SCREENSCRAPER_RUNTIME_DEV_LOGIN) && !defined(SCREENSCRAPER_DEV_LOGIN)
 	// Without a developer pair the API refuses every request with a French
-	// login error. Say what is missing and where it goes.
+	// login error. Say what is missing and where it goes: the pair's rows
+	// are on the ACCOUNTS tab, under the account they belong to
+	// (loadAccountsPage), which this and the rejected-pair message both
+	// used to place under OPTIONS (#151 PL-15).
 	if (Settings::getInstance()->getString("Scraper") == "ScreenScraper" && screenScraperDevLogin().empty())
 	{
 		mWindow->pushGui(new GuiMsgBox(mWindow,
-			_("SCREENSCRAPER NEEDS A DEVELOPER ID AND PASSWORD.\nENTER YOURS UNDER OPTIONS, NEXT TO YOUR ACCOUNT.")));
+			_("SCREENSCRAPER NEEDS A DEVELOPER ID AND PASSWORD.\nENTER YOURS UNDER SCRAPER > ACCOUNTS.")));
 		return;
 	}
 #endif

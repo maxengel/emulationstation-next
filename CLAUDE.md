@@ -27,9 +27,10 @@ is framed on the GENERIC_X64 VM at **640x480** as well as the pair's 1280x800
 before it is called done (blindspot 41): fonts scale by 1.31 under 720 px and
 full-screen menus are on there.
 
-**Checks that read this tree**, all run from the distribution checkout:
-`python3 tests/cloud-oauth-lifetime.py` (page lifetimes under AddressSanitizer),
-`tools/vocabulary-check` (player words), `ES_SRC=<this checkout>
+**Checks that read this tree.** `python3 tests/cloud-oauth-lifetime.py` (page
+lifetimes under AddressSanitizer) lives in this repo and runs from this
+checkout. The other two run from the distribution checkout:
+`tools/vocabulary-check` (player words) and `ES_SRC=<this checkout>
 tools/register-check` (register citations). Comments before a translatable
 `_("")` string must be ASCII or the image build fails.
 

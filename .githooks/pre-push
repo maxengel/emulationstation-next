@@ -2,7 +2,7 @@
 # pre-push guard for the EmulationStation fork (maxengel/emulationstation-next).
 #
 # Two jobs, the same as the distribution fork's .githooks/pre-push:
-#   1. a pr/* branch must not differ from upstream/next in a personal path --
+#   1. a pr/* branch must not differ from upstream/master in a personal path --
 #      the agent context files that live on test/qa-integration and the
 #      feature branches cut from it;
 #   2. every pushed branch is scanned for credential-shaped lines.
