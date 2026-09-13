@@ -980,6 +980,15 @@ static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraper
 	LOG(LogError) << "ScreenScraper refused the user-info request: HTTP " << status << ": " << body;
 	const std::string lower = Utils::String::toLower(body);
 
+	// No answer at all -- no route, no DNS, a timeout, a cut link: curl got
+	// no HTTP status, and the body is curl's own sentence, which the tests
+	// below would read as the server's ("Couldn't resolve host" used to come
+	// out as SCREENSCRAPER ANSWERED WITH AN ERROR). Say the player is
+	// offline and stop; no credential is named, none was looked at
+	// (#151 PL-07).
+	if (status == HttpReq::REQ_IO_ERROR || status == HttpReq::REQ_IN_PROGRESS)
+		return _("YOU'RE NOT ONLINE. TRY AGAIN WHEN YOU ARE.");
+
 	// The status is the one thing the API says in a form a program can
 	// read; HttpReq names every code it documents. Only 403 covers both
 	// credentials, and on this endpoint its body always says "utilisateurs"
@@ -1021,10 +1030,19 @@ static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraper
 	HttpReq probe(config.API_URL_BASE + "/systemesListe.php?" + screenScraperDevLogin()
 		+ "&softname=" + HttpReq::urlEncode(VERSIONED_SOFT_NAME) + "&output=xml");
 	probe.wait();
-	const std::string probeBody = Utils::String::trim(probe.getContent());
-	const bool pairOk = probe.status() == HttpReq::REQ_SUCCESS && probeBody.find("<?xml") == 0;
-	LOG(LogInfo) << "ScreenScraper developer pair alone: HTTP " << probe.status() << (pairOk ? ", accepted" : ", rejected");
-	if (!pairOk)
+	// Three answers, not two: accepted (200 and XML), rejected (200 and a
+	// sentence), and nothing worth reading (a timeout, a 429, a maintenance
+	// page, a link that dropped between the two requests). Only the second
+	// blames the pair. The third used to, and sent a player whose link had
+	// just gone to check a password that was fine (#151 PL-07).
+	enum { PairAccepted, PairRejected, PairUnknown } pair = PairUnknown;
+	if (probe.status() == HttpReq::REQ_SUCCESS)
+		pair = Utils::String::trim(probe.getContent()).find("<?xml") == 0 ? PairAccepted : PairRejected;
+	LOG(LogInfo) << "ScreenScraper developer pair alone: HTTP " << probe.status()
+		<< (pair == PairAccepted ? ", accepted" : pair == PairRejected ? ", rejected" : ", no usable answer");
+	if (pair == PairUnknown)
+		return _("COULDN'T REACH SCREENSCRAPER. TRY AGAIN.");
+	if (pair == PairRejected)
 		return _("SCREENSCRAPER REJECTED THE DEVELOPER ID OR PASSWORD.\nCHECK THEM UNDER SCRAPER > OPTIONS.");
 
 	// The pair is fine and the API still refused: it needs an account on
