@@ -1,0 +1,60 @@
+#!/bin/bash
+# pre-push guard for the EmulationStation fork (maxengel/emulationstation-next).
+#
+# Two jobs, the same as the distribution fork's .githooks/pre-push:
+#   1. a pr/* branch must not differ from upstream/next in a personal path --
+#      the agent context files that live on test/qa-integration and the
+#      feature branches cut from it;
+#   2. every pushed branch is scanned for credential-shaped lines.
+#
+# Enable once per clone (shared by every worktree):
+#   git config core.hooksPath "$(git rev-parse --show-toplevel)/.githooks"
+# The absolute path matters: a relative core.hooksPath resolves against the
+# worktree being pushed from, and a correctly built pr/* branch has no
+# .githooks/ at all, so the guard would silently not run.
+set -u
+PERSONAL_PATTERNS=(
+  'CLAUDE.md'
+  'AGENTS.md'
+  '.claude/'
+  '.githooks/'
+)
+SECRET_PATTERNS='devpassword=[A-Za-z0-9._%-]{4,}|[?&]y=[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|"(access|refresh)_token" *: *"[A-Za-z0-9._-]{16,}|sk-[A-Za-z0-9_-]{24,}|(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z_]* *[:=] *["'"'"']?[A-Za-z0-9+/=_-]{16,}'
+
+hooks_path="$(git config --get core.hooksPath || true)"
+case "${hooks_path}" in
+  /*) ;;
+  *) echo "pre-push: core.hooksPath is relative ('${hooks_path}'); set it absolute: git config core.hooksPath \"\$(git rev-parse --show-toplevel)/.githooks\"" >&2 ;;
+esac
+
+status=0
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha _remote_ref remote_sha; do
+  [ "${local_sha}" = "${zero}" ] && continue      # a deletion
+  branch="${local_ref#refs/heads/}"
+
+  # 2. credential-shaped lines, every branch: the files this push adds or changes.
+  if [ "${remote_sha}" = "${zero}" ]; then range="${local_sha}"; else range="${remote_sha}..${local_sha}"; fi
+  while IFS= read -r f; do
+    [ -n "${f}" ] || continue
+    hit="$(git show "${local_sha}:${f}" 2>/dev/null | grep -nE "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -3 || true)"
+    if [ -n "${hit}" ]; then
+      echo "pre-push: ${branch}: ${f} carries a credential-shaped line:" >&2
+      echo "${hit}" | sed 's/^/    /' >&2
+      status=1
+    fi
+  done < <(git diff --name-only --diff-filter=AM "${range}" 2>/dev/null || git ls-tree -r --name-only "${local_sha}")
+
+  # 1. personal paths, pr/* only.
+  case "${branch}" in pr/*) ;; *) continue ;; esac
+  git rev-parse -q --verify upstream/next >/dev/null 2>&1 || { echo "pre-push: no upstream/next to compare ${branch} against; git fetch upstream first" >&2; status=1; continue; }
+  while IFS= read -r f; do
+    for pat in "${PERSONAL_PATTERNS[@]}"; do
+      case "${f}" in "${pat}"*|*/"${pat}"*)
+        echo "pre-push: ${branch} differs from upstream/next in a personal path: ${f}" >&2; status=1 ;;
+      esac
+    done
+  done < <(git diff --name-only "upstream/next...${local_sha}" 2>/dev/null)
+done
+[ "${status}" -eq 0 ] || echo "pre-push: refused. Build pr/* by content from test/qa-integration, naming source paths only." >&2
+exit ${status}
