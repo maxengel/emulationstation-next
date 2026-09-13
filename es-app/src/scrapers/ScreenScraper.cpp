@@ -1009,15 +1009,15 @@ static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraper
 		break;
 	}
 
-	// No account configured: the API needs one on this request and on every
-	// game request (tested with the public JELOS pair, 2026-09-13: the pair
-	// alone lists systems and is refused everything else), so the pair may
-	// be fine and the player has simply not added an account yet. Say that,
-	// rather than that a password they never typed was rejected.
-	if (Settings::getInstance()->getString("ScreenScraperUser").empty() || Settings::getInstance()->getString("ScreenScraperPass").empty())
-		return _("SCREENSCRAPER NEEDS YOUR ACCOUNT TO SCRAPE.\nADD IT UNDER SCRAPER > ACCOUNTS.");
-
-	// The pair alone. A rejected pair answers 200 with a sentence, not XML.
+	// The pair alone, first. A rejected pair answers 200 with a sentence,
+	// not XML; an accepted one lists the systems with or without an account
+	// (tested with the public JELOS pair, 2026-09-13: systemesListe.php
+	// answers the pair alone with 200 XML while ssuserInfos.php gives the
+	// same pair 403). So the probe settles the pair before the account is
+	// looked at. It used to run only once an account was set, and a player
+	// with a mistyped pair and no account was told to add an account, added
+	// one, and failed again on the pair -- two failures where one would do
+	// (#151 PL-06).
 	HttpReq probe(config.API_URL_BASE + "/systemesListe.php?" + screenScraperDevLogin()
 		+ "&softname=" + HttpReq::urlEncode(VERSIONED_SOFT_NAME) + "&output=xml");
 	probe.wait();
@@ -1026,6 +1026,13 @@ static std::string screenScraperFailureMessage(HttpReq& req, const ScreenScraper
 	LOG(LogInfo) << "ScreenScraper developer pair alone: HTTP " << probe.status() << (pairOk ? ", accepted" : ", rejected");
 	if (!pairOk)
 		return _("SCREENSCRAPER REJECTED THE DEVELOPER ID OR PASSWORD.\nCHECK THEM UNDER SCRAPER > OPTIONS.");
+
+	// The pair is fine and the API still refused: it needs an account on
+	// this request and on every game request, so with none configured the
+	// account is what is missing. Say that, rather than that a password
+	// they never typed was rejected.
+	if (Settings::getInstance()->getString("ScreenScraperUser").empty() || Settings::getInstance()->getString("ScreenScraperPass").empty())
+		return _("SCREENSCRAPER NEEDS YOUR ACCOUNT TO SCRAPE.\nADD IT UNDER SCRAPER > ACCOUNTS.");
 	return _("SCREENSCRAPER REJECTED YOUR USERNAME OR PASSWORD.\nCHECK THEM UNDER SCRAPER > ACCOUNTS.");
 }
 
