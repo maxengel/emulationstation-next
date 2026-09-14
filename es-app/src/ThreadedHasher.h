@@ -22,6 +22,10 @@ public:
 	static void start(Window* window, HasherType type, bool forceAllGames=false, bool silent=false, std::set<std::string>* systems = nullptr);
 	static void stop();
 	static bool isRunning() { return mInstance != nullptr; }
+	// Whether a run this session got RetroAchievements' hash library. The
+	// network watcher starts the startup index again at link-up until one has
+	// (fork #183); a run without the library indexes nothing.
+	static bool cheevosLibraryCameThisSession() { return sCheevosLibraryCame; }
 	static bool checkCloseIfRunning(Window* window);
 
 	static void pause() { mPaused = true; }
@@ -67,5 +71,6 @@ private:
 
 	static bool mPaused;
 	static ThreadedHasher* mInstance;
+	static bool sCheevosLibraryCame;
 };
 

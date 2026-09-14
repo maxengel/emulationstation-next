@@ -741,6 +741,15 @@ int main(int argc, char* argv[])
 		// we can't handle es_systems.cfg file problems inside ES itself, so display the error message then quit
 		window.pushGui(new GuiMsgBox(&window, errorMsg, _("QUIT"), [] { Utils::Platform::quitES(); }));
 	}
+	else if (!(splashScreen && splashScreenProgress))
+	{
+		// The loader starts the startup indexes -- INDEX NEW GAMES AT STARTUP,
+		// the netplay one -- only when it is handed a window, and it is handed
+		// one only for the splash screen's progress. ROCKNIX starts the
+		// interface with --no-splash, so on its devices the setting never did
+		// anything (fork #183). The window exists either way; start them here.
+		SystemData::startIndexesAtStart(&window);
+	}
 
 	SystemConf* systemConf = SystemConf::getInstance();
 

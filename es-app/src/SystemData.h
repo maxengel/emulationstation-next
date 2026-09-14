@@ -123,6 +123,13 @@ public:
 	static bool hasDirtySystems();
 	static void deleteSystems();
 	static bool loadConfig(Window* window = nullptr); //Load the system config file at getConfigPath(). Returns true if no errors were encountered. An example will be written if the file doesn't exist.	
+	// The indexes INDEX NEW GAMES AT STARTUP and the netplay one ask for, started
+	// once the systems are loaded. loadConfig starts them when it has a window;
+	// main starts them when it gave loadConfig none (--no-splash, how ROCKNIX
+	// starts the interface), and the network watcher starts the achievements
+	// half again when the link comes up before the hash library has come this
+	// session (fork #183). cheevosOnly leaves the netplay index alone.
+	static void startIndexesAtStart(Window* window, bool cheevosOnly = false);
 	static std::string getConfigPath();
 	
 	bool loadFeatures();
