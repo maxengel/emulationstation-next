@@ -3,6 +3,8 @@
 #include <thread>
 #include <queue>
 #include <set>
+#include <unordered_set>
+#include <vector>
 #include "components/AsyncNotificationComponent.h"
 
 class FileData;
@@ -26,13 +28,19 @@ public:
 	static void resume() { mPaused = false; }
 
 private:
-	ThreadedHasher(Window* window, HasherType type, std::queue<FileData*> searchQueue, bool forceAllGames = false);
+	// lookupOnly: the games with a cheevosHash and no cheevosId (CheevosIndex::Take::Lookup).
+	// Those whose hash the library knows join the queue once it has come; none is read.
+	ThreadedHasher(Window* window, HasherType type, std::queue<FileData*> searchQueue, const std::vector<FileData*>& lookupOnly, bool forceAllGames = false);
 	~ThreadedHasher();
 
 	void updateUI(const std::string label);
 	static std::string formatGameName(FileData* game);
 
 	std::queue<FileData*> mSearchQueue;
+	// The queued games that are here for a lookup alone: no hash, no CRC is
+	// read for them. Filled in the constructor, read by the threads, never
+	// written again, so it needs no lock.
+	std::unordered_set<FileData*> mLookupOnly;
 
 	Window* mWindow;
 	AsyncNotificationComponent* mWndNotification;
