@@ -190,9 +190,17 @@ static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> 
 
 static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Window* window)
 {
-	auto entry = std::make_shared<DimmableMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"), "", false);
+	// The line goes in at construction: ComponentList sizes the row from the
+	// entry as it is added, and an entry made with no substring is one line
+	// tall for good -- a description set afterwards hangs below the row's
+	// slot, under the selector bar (frame 02 of the first 640x480 run).
+	// Later refreshes only change the words, so the height holds.
+	const bool on = offlineScanOn();
+	const bool online = offlineScanOnline();
+	auto entry = std::make_shared<DimmableMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"),
+		offlineScanDetail(on, online), false);
+	entry->setDimmed(!on || !online);
 	std::weak_ptr<DimmableMenuEntry> weak = entry;
-	offlineScanRefresh(weak);
 
 	ComponentListRow row;
 	row.addElement(entry, true);
