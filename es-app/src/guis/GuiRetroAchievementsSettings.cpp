@@ -173,6 +173,14 @@ static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
 // (D-UI-023: what the scan does and costs is read at the moment of
 // deciding, with why the last one could not finish as its second paragraph,
 // D-UI-029), then the page. YES first, NO last so B answers NO.
+// The scan page itself, from the row's confirmation and from the prompt
+// that follows turning the switch on (D-RA-012).
+static void offlineScanStart(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
+{
+	window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
+		[weak] { offlineScanRefresh(weak); }));
+}
+
 static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
 {
 	if (!offlineScanOn())
@@ -187,17 +195,13 @@ static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> 
 	}
 
 	std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS?") + std::string("\n\n")
-		+ _("LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO IT EARNS WHILE OFFLINE. TAKES A WHILE FOR A LARGE LIBRARY AND ASKS RETROACHIEVEMENTS ONCE PER GAME.");
+		+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
 	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
 	if (last.ran && last.code != 0 && !last.why.empty())
 		text += "\n\n" + _("LAST TIME IT COULDN'T FINISH:") + " " + OfflineAchievements::scanWhy(last.why) + ".";
 
 	window->pushGui(new GuiMsgBox(window, text,
-		_("YES"), [window, weak]
-		{
-			window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
-				[weak] { offlineScanRefresh(weak); }));
-		},
+		_("YES"), [window, weak] { offlineScanStart(window, weak); },
 		_("NO"), nullptr));
 }
 
@@ -294,6 +298,27 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 		// The scan row reads the switch: on, it offers the scan; off, it
 		// says to turn the switch on first.
 		offlineScanRefresh(scanRow);
+
+		// Turning it on offers the scan at once (D-RA-012): without it a
+		// player who skips the row plays offline with nothing cached.
+		// Offline, one line says when to come back to it.
+		if (on)
+		{
+			if (offlineScanOnline())
+			{
+				std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS NOW?") + std::string("\n\n")
+					+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
+				window->pushGui(new GuiMsgBox(window, text,
+					_("SCAN NOW"), [window, scanRow] { offlineScanStart(window, scanRow); },
+					_("LATER"), nullptr));
+			}
+			else
+			{
+				window->pushGui(new GuiMsgBox(window,
+					_("YOU'RE NOT ONLINE. SCAN GAMES FOR OFFLINE ACHIEVEMENTS WHEN YOU'RE CONNECTED, SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE."),
+					_("OK")));
+			}
+		}
 	};
 
 	offline->setOnChangedCallback([window, offlineRow, quiet, setQuietly, apply]
