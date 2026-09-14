@@ -9,6 +9,13 @@
 #include "utils/StringUtil.h"
 
 #include "guis/GuiMsgBox.h"
+#include "guis/GuiOfflineScan.h"
+#include "CloudText.h"
+#include "OfflineAchievements.h"
+#include "Settings.h"
+#include "components/ComponentList.h"
+#include "components/MultiLineMenuEntry.h"
+#include "utils/TimeUtil.h"
 #include "components/SwitchComponent.h"
 #include "components/OptionListComponent.h"
 #include "components/TextComponent.h"
@@ -55,6 +62,146 @@ static void addInfoRow(GuiSettings* s, Window* window, const std::string& text)
 	s->addRow(row);
 }
 
+// SCAN GAMES FOR OFFLINE ACHIEVEMENTS (fork #179, D-RA-010): the proxy
+// serves a game offline only from what it cached while online, so a game
+// never started with a connection earned nothing offline. The row runs
+// raofflineproxy-ctl scan on a page of its own (GuiOfflineScan, the fourth
+// surface tier) and carries one line underneath (D-UI-023): why it cannot
+// run now, else how the last scan went and how many games are ready.
+//
+// A row that cannot run yet is dimmed, not hidden (es-ui-style-guide.md),
+// and the dim has to be applied by the entry itself: ComponentList::render
+// sets every element's colour every frame from the theme, so a colour set
+// once at construction is gone by the first frame (the same reason a QR
+// code in a row needs UntintedImageComponent, es-native-ui.md).
+class DimmableMenuEntry : public MultiLineMenuEntry
+{
+public:
+	using MultiLineMenuEntry::MultiLineMenuEntry;
+	void setDimmed(bool dimmed) { mDimmed = dimmed; }
+	void setColor(unsigned int color) override
+	{
+		MultiLineMenuEntry::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
+	}
+private:
+	bool mDimmed = false;
+};
+
+static bool offlineScanOn()
+{
+	return SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy");
+}
+
+// The cheap question, for a row built at page open: an address on any
+// interface. Whether RetroAchievements itself answers is the ctl's to ask
+// when the row is pressed -- a network round trip never runs at page build
+// (es-ui-style-guide.md, Gating).
+static bool offlineScanOnline()
+{
+	return !Utils::Platform::queryIPAddress().empty();
+}
+
+// The line under the row. Why it cannot run now, else how the last run went
+// and the count that is the point of the row -- longest form first, and the
+// row's own small font decides which fits (D-UI-035). An automatic top-up
+// says so in place of the date (D-UI-032).
+static std::string offlineScanDetail(bool on, bool online)
+{
+	if (!on)
+		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
+	if (!online)
+		return _("YOU'RE NOT ONLINE.");
+
+	const std::string ready = GuiOfflineScan::readyPhrase(OfflineAchievements::readyCount());
+	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
+	std::vector<std::string> candidates;
+	if (!last.ran)
+		candidates = { _("NOT SCANNED YET") + std::string("  ·  ") + ready, ready };
+	else
+	{
+		const std::string outcome = last.code == 0 ? _("COMPLETED") : _("COULDN'T FINISH");
+		std::string head;
+		if (last.topup)
+			head = _("WHEN YOU CAME ONLINE");
+		else
+		{
+			// The player's own date format and clock, as the cloud rows.
+			const std::string fmt = Utils::Time::getSystemDateFormat()
+				+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
+			head = _("LAST") + std::string(" ") + Utils::Time::timeToString(last.when, fmt);
+		}
+		candidates = { head + "  -  " + outcome + "  ·  " + ready, outcome + "  ·  " + ready, ready };
+	}
+
+	// The description is drawn in the menu's small font, in a row that
+	// spans the menu less its insets and the arrow; 0.86 of the menu width
+	// is what a 640x480 frame showed the line to have.
+	auto theme = ThemeData::getMenuTheme();
+	const float menuWidth = Renderer::ScreenSettings::fullScreenMenus()
+		? (float) Renderer::getScreenWidth()
+		: (float) Math::min((int) Renderer::getScreenHeight(), (int) (Renderer::getScreenWidth() * 0.90f));
+	std::shared_ptr<Font> font = theme->TextSmall.font;
+	return CloudText::chooseThatFits(candidates, menuWidth * 0.86f,
+		[font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; });
+}
+
+static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
+{
+	auto entry = weak.lock();
+	if (!entry)
+		return;
+	const bool on = offlineScanOn();
+	const bool online = offlineScanOnline();
+	entry->setDimmed(!on || !online);
+	entry->setDescription(offlineScanDetail(on, online));
+}
+
+// A press on the row: the reason when it cannot run, else the confirmation
+// (D-UI-023: what the scan does and costs is read at the moment of
+// deciding, with why the last one could not finish as its second paragraph,
+// D-UI-029), then the page. YES first, NO last so B answers NO.
+static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
+{
+	if (!offlineScanOn())
+	{
+		window->pushGui(new GuiMsgBox(window, _("TURN ON OFFLINE ACHIEVEMENTS FIRST."), _("OK")));
+		return;
+	}
+	if (!offlineScanOnline())
+	{
+		window->pushGui(new GuiMsgBox(window, _("YOU'RE NOT ONLINE. TRY AGAIN WHEN YOU'RE ONLINE."), _("OK")));
+		return;
+	}
+
+	std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS?") + std::string("\n\n")
+		+ _("LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO IT EARNS WHILE OFFLINE. TAKES A WHILE FOR A LARGE LIBRARY AND ASKS RETROACHIEVEMENTS ONCE PER GAME.");
+	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
+	if (last.ran && last.code != 0 && !last.why.empty())
+		text += "\n\n" + _("LAST TIME IT COULDN'T FINISH:") + " " + OfflineAchievements::scanWhy(last.why) + ".";
+
+	window->pushGui(new GuiMsgBox(window, text,
+		_("YES"), [window, weak]
+		{
+			window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
+				[weak] { offlineScanRefresh(weak); }));
+		},
+		_("NO"), nullptr));
+}
+
+static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Window* window)
+{
+	auto entry = std::make_shared<DimmableMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"), "", false);
+	std::weak_ptr<DimmableMenuEntry> weak = entry;
+	offlineScanRefresh(weak);
+
+	ComponentListRow row;
+	row.addElement(entry, true);
+	row.addElement(makeArrow(window), false);
+	row.makeAcceptInputHandler([window, weak] { offlineScanPressed(window, weak); });
+	s->addRow(row);
+	return entry;
+}
+
 // The OFFLINE ACHIEVEMENTS page (fork #165, #173; D-RA-001..003): the
 // switch, with what it does, that it is beta and casual-only and what that
 // does to hardcore, and what the badge means, each with room. One
@@ -90,6 +237,11 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// 640x480 (#166); here it has a row of its own (D-RA-003).
 	addInfoRow(s, window, _("!RA! IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
 
+	// The scan, under the explanation of what the switch does: a row and
+	// one line, dimmed with its reason until the switch is on and the
+	// device has an address (fork #179, D-RA-010).
+	std::weak_ptr<DimmableMenuEntry> scanRow = addOfflineScanRow(s, window);
+
 	// A raw pointer on purpose: the callback lives inside the switch it
 	// captures, so a shared_ptr here would be a cycle that keeps the page
 	// alive forever. setState fires the change callback too, so a revert
@@ -99,7 +251,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	auto quiet = std::make_shared<bool>(false);
 	auto setQuietly = [offlineRow, quiet](bool state) { *quiet = true; offlineRow->setState(state); *quiet = false; };
 
-	auto apply = [window, offlineRow, hardcoreRow, setQuietly](bool on)
+	auto apply = [window, offlineRow, hardcoreRow, setQuietly, scanRow](bool on)
 	{
 		std::string last;
 		// executeScriptLegacy: the public route that hands back the real
@@ -119,6 +271,9 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 			row->setState(hardcoreNow);
 		SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
 		SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
+		// The scan row reads the switch: on, it offers the scan; off, it
+		// says to turn the switch on first.
+		offlineScanRefresh(scanRow);
 	};
 
 	offline->setOnChangedCallback([window, offlineRow, quiet, setQuietly, apply]

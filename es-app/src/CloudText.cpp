@@ -652,6 +652,76 @@ CloudText::FlushStamp CloudText::parseFlushStamp(const std::string& text)
 	return stamp;
 }
 
+CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
+{
+	ScanStamp stamp;
+
+	// One line: the time, the exit code and the route, then key=value
+	// fields in any order. A whole number is at most twelve digits, as the
+	// flush stamp's are.
+	std::string line = text;
+	const size_t newline = line.find('\n');
+	if (newline != std::string::npos)
+		line = line.substr(0, newline);
+	const std::vector<std::string> fields = Utils::String::split(Utils::String::trim(line), ' ', true);
+	if (fields.size() < 3)
+		return stamp;
+
+	auto number = [](const std::string& f, long long& out) -> bool
+	{
+		if (f.empty() || f.size() > 12)
+			return false;
+		for (char c : f)
+			if (c < '0' || c > '9')
+				return false;
+		out = std::stoll(f);
+		return true;
+	};
+
+	long long when = 0, code = 0;
+	if (!number(fields[0], when) || when <= 0 || !number(fields[1], code))
+		return stamp;
+	if (fields[2] == "scan")
+		stamp.topup = false;
+	else if (fields[2] == "topup")
+		stamp.topup = true;
+	else
+		return stamp;
+
+	for (size_t i = 3; i < fields.size(); i++)
+	{
+		const size_t eq = fields[i].find('=');
+		if (eq == std::string::npos)
+			continue;
+		const std::string key = fields[i].substr(0, eq);
+		const std::string value = fields[i].substr(eq + 1);
+		if (key == "why")
+		{
+			// A token and nothing else: the caller maps it to a sentence,
+			// and anything it does not know reads as SOMETHING WENT WRONG.
+			bool token = !value.empty();
+			for (char c : value)
+				if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'))
+					token = false;
+			if (token)
+				stamp.why = value;
+			continue;
+		}
+		long long n = 0;
+		if (!number(value, n) || n > 1000000)
+			continue;
+		if (key == "cached")       stamp.cached = (int) n;
+		else if (key == "skipped") stamp.skipped = (int) n;
+		else if (key == "ready")   stamp.ready = (int) n;
+		else if (key == "limit")   stamp.limit = n != 0;
+	}
+
+	stamp.ran = true;
+	stamp.when = (time_t) when;
+	stamp.code = (int) code;
+	return stamp;
+}
+
 CloudText::NextTime CloudText::nextTime(bool awardsPending, bool savesPending)
 {
 	if (awardsPending && savesPending)
