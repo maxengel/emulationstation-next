@@ -32,6 +32,16 @@ namespace CheevosIndex
 	bool hasId(const std::string& cheevosId);
 
 	Take take(bool forceAllGames, const std::string& cheevosHash, const std::string& cheevosId);
+
+	// A lookup pass with nothing to hash beside it costs the hash library
+	// (two requests, several megabytes, on the interface thread at startup),
+	// and most libraries hold a game RetroAchievements does not know -- a
+	// hack, a bad dump -- whose hash would otherwise ask for it at every
+	// boot. So the silent startup run makes that pass at most once a day:
+	// due when none has run, when a day has passed, or when the clock has
+	// gone back. lastEpoch 0 is "never".
+	const long long LookupIntervalSeconds = 24 * 60 * 60;
+	bool lookupDue(long long lastEpoch, long long nowEpoch);
 }
 
 #endif // ES_APP_CHEEVOS_INDEX_H

@@ -13,6 +13,8 @@
 #include "CheevosIndex.h"
 #include "utils/StringUtil.h"
 #include "Log.h"
+#include "Settings.h"
+#include <ctime>
 #include <unordered_set>
 #include <queue>
 
@@ -298,9 +300,33 @@ void ThreadedHasher::start(Window* window, HasherType type, bool forceAllGames, 
 		return;
 	}
 
+	// Lookups alone, from the silent startup run: once a day at most
+	// (CheevosIndex::lookupDue) -- the pass costs the hash library, and
+	// nearly every library has a game RetroAchievements does not know whose
+	// hash would ask for it at every boot. A run the player asked for, or
+	// one with games to hash (the library comes anyway), is not held back.
+	// The stamp is written once the library has come, so an offline boot
+	// does not spend the day's pass on a fetch that failed.
+	const bool lookupsAlone = searchQueue.empty() && silent && ((type & HASH_CHEEVOS_MD5) == HASH_CHEEVOS_MD5);
+	const long long now = (long long) time(nullptr);
+	if (lookupsAlone)
+	{
+		const long long last = strtoll(Settings::getInstance()->getString("CheevosLookupOnlyLast").c_str(), nullptr, 10);
+		if (!CheevosIndex::lookupDue(last, now))
+		{
+			LOG(LogInfo) << "ThreadedHasher: " << lookupOnly.size() << " game(s) with a hash and no id; the lookup pass ran within the day, next one later";
+			return;
+		}
+	}
+
 	try
 	{
 		ThreadedHasher* hasher = new ThreadedHasher(window, type, searchQueue, lookupOnly, forceAllGames);
+		if (lookupsAlone)
+		{
+			Settings::getInstance()->setString("CheevosLookupOnlyLast", std::to_string(now));
+			Settings::getInstance()->saveFile();
+		}
 		if (hasher->mTotal == 0)
 		{
 			// Lookups alone and the library knew none of them: nothing was

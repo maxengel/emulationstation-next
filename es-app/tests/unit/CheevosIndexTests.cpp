@@ -42,6 +42,18 @@ TEST_CASE("take: a hash and no id is a lookup, never a read -- RC-5's recovery f
 	CHECK(take(false, "8C5F3A9E1B2D4C6E7F8A9B0C1D2E3F40", "0") == Take::Lookup);
 }
 
+TEST_CASE("lookupDue: a lookup pass on its own runs once a day, at the first boot, and after a clock that went back")
+{
+	const long long day = LookupIntervalSeconds;
+	CHECK(day == 86400);
+	CHECK(lookupDue(0, 1789400000));                    // never ran
+	CHECK(lookupDue(-5, 1789400000));                   // an unreadable stamp reads as never
+	CHECK_FALSE(lookupDue(1789400000, 1789400000));     // just ran
+	CHECK_FALSE(lookupDue(1789400000, 1789400000 + day - 1));
+	CHECK(lookupDue(1789400000, 1789400000 + day));
+	CHECK(lookupDue(1789400000, 1789400000 - 60));      // the clock went back: run rather than wait a day that may never come
+}
+
 TEST_CASE("take: a forced run hashes everything, id or not")
 {
 	CHECK(take(true, "8C5F3A9E1B2D4C6E7F8A9B0C1D2E3F40", "15738") == Take::Hash);

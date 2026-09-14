@@ -21,3 +21,10 @@ CheevosIndex::Take CheevosIndex::take(bool forceAllGames, const std::string& che
 		return Take::None;
 	return Take::Lookup;
 }
+
+bool CheevosIndex::lookupDue(long long lastEpoch, long long nowEpoch)
+{
+	if (lastEpoch <= 0 || nowEpoch < lastEpoch)
+		return true;
+	return nowEpoch - lastEpoch >= LookupIntervalSeconds;
+}
