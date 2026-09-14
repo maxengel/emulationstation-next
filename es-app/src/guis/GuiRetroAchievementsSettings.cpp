@@ -10,6 +10,7 @@
 
 #include "guis/GuiMsgBox.h"
 #include "guis/GuiOfflineScan.h"
+#include "OfflineScanJob.h"
 #include "CloudText.h"
 #include "OfflineAchievements.h"
 #include "Settings.h"
@@ -156,21 +157,27 @@ static bool offlineScanOnline()
 	return !Utils::Platform::queryIPAddress().empty();
 }
 
-// The line under the row. Why it cannot run now, else how the last run went
-// and the count that is the point of the row -- longest form first, and the
-// row's own small font decides which fits (D-UI-035). An automatic top-up
-// says so in place of the date (D-UI-032).
+// The line under the row. A scan left running in the background first
+// (audit #186 PL-07: SCANNING... - GAME i OF n, refreshed as the run
+// reports, and the ready count the client's export already carries); else
+// why it cannot run now, else how the last run went and the count that is
+// the point of the row -- longest form first, and the row's own small font
+// decides which fits (D-UI-035). An automatic top-up says so in place of
+// the date (D-UI-032).
 static std::string offlineScanDetail(bool on, bool online)
 {
-	if (!on)
-		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
-	if (!online)
-		return _("YOU'RE NOT ONLINE.");
-
 	const std::string ready = GuiOfflineScan::readyPhrase(OfflineAchievements::readyCount());
-	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
 	std::vector<std::string> candidates;
-	if (!last.ran)
+	if (OfflineScanJob::running())
+	{
+		const std::string head = GuiOfflineScan::runningPhrase(OfflineScanJob::current()->state());
+		candidates = { head + "  ·  " + ready, head, _("SCANNING...") };
+	}
+	else if (!on)
+		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
+	else if (!online)
+		return _("YOU'RE NOT ONLINE.");
+	else if (const CloudText::ScanStamp last = OfflineAchievements::lastScan(); !last.ran)
 		candidates = { _("NOT SCANNED YET") + std::string("  ·  ") + ready, ready };
 	else
 	{
@@ -207,7 +214,8 @@ static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
 		return;
 	const bool on = offlineScanOn();
 	const bool online = offlineScanOnline();
-	entry->setDimmed(!on || !online);
+	// A run in the background can be reopened whatever the gates say now.
+	entry->setDimmed((!on || !online) && !OfflineScanJob::running());
 	entry->setDescription(offlineScanDetail(on, online));
 }
 
@@ -216,7 +224,9 @@ static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
 // deciding, with why the last one could not finish as its second paragraph,
 // D-UI-029), then the page. YES first, NO last so B answers NO.
 // The scan page itself, from the row's confirmation and from the prompt
-// that follows turning the switch on (D-RA-012).
+// that follows turning the switch on (D-RA-012). The refresh it is handed
+// runs as the scan reports, when it ends and when the page closes, so the
+// row's line follows a scan left running in the background (PL-07).
 static void offlineScanStart(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
 {
 	window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
@@ -225,6 +235,14 @@ static void offlineScanStart(Window* window, std::weak_ptr<DimmableMenuEntry> we
 
 static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
 {
+	// A scan left running in the background: the page opens on it again, no
+	// question asked -- there is nothing to decide, and the ctl would refuse
+	// a second run anyway (PL-07).
+	if (OfflineScanJob::running())
+	{
+		offlineScanStart(window, weak);
+		return;
+	}
 	if (!offlineScanOn())
 	{
 		window->pushGui(new GuiMsgBox(window, _("TURN ON OFFLINE ACHIEVEMENTS FIRST."), _("OK")));
@@ -258,7 +276,7 @@ static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Wind
 	const bool online = offlineScanOnline();
 	auto entry = std::make_shared<DimmableMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"),
 		offlineScanDetail(on, online), false);
-	entry->setDimmed(!on || !online);
+	entry->setDimmed((!on || !online) && !OfflineScanJob::running());
 	std::weak_ptr<DimmableMenuEntry> weak = entry;
 
 	ComponentListRow row;
