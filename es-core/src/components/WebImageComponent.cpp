@@ -188,6 +188,17 @@ void WebImageComponent::update(int deltaTime)
 
 	if (status == HttpReq::REQ_SUCCESS && Utils::FileSystem::exists(mLocalFile))
 	{
+		// A 204, or a 200 with nothing in it, is a download that succeeded
+		// with no image: the offline RetroAchievements proxy answers so for
+		// a badge it has not cached yet (#180). Kept, an empty file would be
+		// this component's copy for as long as the cache lasts -- forever by
+		// default -- and the badge would stay blank after the proxy had it.
+		if (Utils::FileSystem::getFileSize(mLocalFile) == 0)
+		{
+			Utils::FileSystem::removeFile(mLocalFile);
+			return;
+		}
+
 		ImageComponent::setImage(mLocalFile, false, mMaxSize, false);
 		resize();
 	}

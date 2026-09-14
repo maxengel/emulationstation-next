@@ -50,6 +50,7 @@ public:
 		userAgent = HTTP_REQ_USERAGENT;
 		useCookieManager = true;
 		connectTimeout = 10000L;
+		timeout = 0L;
 	}
 
 	HttpReqOptions(const std::string& filename)
@@ -58,6 +59,7 @@ public:
 		userAgent = HTTP_REQ_USERAGENT;
 		useCookieManager = true;
 		connectTimeout = 10000L;
+		timeout = 0L;
 	}
 
 	std::string outputFilename;
@@ -68,6 +70,10 @@ public:
 	std::string clientCert, clientKey;
 
 	long connectTimeout;
+	// The whole request, connect included, in milliseconds; 0 (the default)
+	// leaves it unbounded, as every request was before. A caller asking a
+	// local service sets it, so a service that hangs cannot hold a page.
+	long timeout;
 	bool useCookieManager;
 };
 

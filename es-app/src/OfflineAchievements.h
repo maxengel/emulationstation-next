@@ -13,7 +13,9 @@
 // parseScanStamp), so it has a test.
 
 #include "CloudText.h"
+#include "OfflineAchievementsText.h"
 #include <string>
+#include <vector>
 
 class Window;
 
@@ -62,6 +64,51 @@ namespace OfflineAchievements
 	// account is signed in or RetroAchievements does not answer, and
 	// bounds how often it runs, so this is safe to call on every link.
 	void topUpWhenOnline();
+
+	// The achievements pages read the proxy's cache when the device is
+	// offline (fork #180, D-RA-009). The questions below are theirs.
+
+	// Whether the toggle is on: the one setting both the pages and the ctl
+	// read, so the interface never starts a process for a feature that is
+	// off.
+	bool toggleOn();
+
+	// Whether the pages should read from the device: the toggle on, the
+	// backend present, and the proxy's own online_state.json -- its
+	// reachability probe of RetroAchievements, refreshed every fifteen
+	// seconds while the service runs -- saying it is not reachable. A file
+	// that is missing or unreadable is unknown, and unknown is never read
+	// as offline: the web is asked then, as it always was. A file read, no
+	// process.
+	bool proxyOffline();
+
+	// The RetroAchievements account the proxy cached under: the username
+	// EmulationStation signed in with. The proxy keys its cache by it and
+	// answers nothing for another.
+	std::string username();
+
+	// One dorequest.php question to the proxy (a GET, the query as RetroArch
+	// would send it). True with the body on a 200; false with what HttpReq
+	// said in error -- the proxy's own body for a miss
+	// ({"Success":false,"Error":"no cached response"}), curl's words when
+	// nothing listens. Bounded: a proxy that hangs is given seconds, not a
+	// spinner that never ends. Blocks; call it off the interface thread.
+	bool askProxy(const std::string& query, std::string& body, std::string& error);
+
+	// The casual awards still waiting for a connection, by achievement id,
+	// with when each was earned: raofflineproxy-ctl pending-ids. Empty when
+	// there are none, or it could not be told. Runs a process; call it off
+	// the interface thread.
+	std::vector<OfflineAchievementsText::PendingAward> pendingAwardIds();
+
+	// The game ids the proxy holds achievement data for, from the client's
+	// export (the same file readyCount counts). A file read, no process.
+	std::vector<int> readyIds();
+
+	// The account's points as RetroAchievements last told the proxy:
+	// raofflineproxy-ctl account. ok is false when the proxy has no cached
+	// sign-in to read them from. Runs a process; off the interface thread.
+	OfflineAchievementsText::AccountTotals accountTotals();
 }
 
 #endif // ES_APP_OFFLINE_ACHIEVEMENTS_H

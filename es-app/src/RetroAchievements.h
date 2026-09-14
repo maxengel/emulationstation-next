@@ -7,6 +7,7 @@
 #include <map>
 
 #include "ApiSystem.h"
+#include "OfflineAchievementsText.h"
 
 class SystemData;
 
@@ -25,11 +26,22 @@ struct Achievement
 	std::string DateModified;
 	std::string DateCreated;
 	std::string BadgeName;
-	int DisplayOrder;
+	int DisplayOrder = 0;
 	std::string MemAddr;
 	std::string DateEarned;
 	std::string DateEarnedHardcore;
 
+	// From the device (fork #180): the offline proxy's cache says which
+	// achievements are unlocked but not when, so an unlock read from it has
+	// no date; and one still queued for RetroAchievements is Pending as well.
+	bool UnlockedOnDevice = false;
+	bool Pending = false;
+	// The badge as the proxy rewrote it (http://127.0.0.1:8080/Badge/...);
+	// empty for the web API, whose badges are built from BadgeName.
+	std::string BadgeUrl;
+	std::string BadgeLockedUrl;
+
+	bool isUnlocked() const;
 	std::string getBadgeUrl();
 };
 
@@ -59,6 +71,13 @@ struct GameInfoAndUserProgress
 	int NumAwardedToUserHardcore;
 	std::string UserCompletion;
 	std::string UserCompletionHardcore;
+
+	// Read from the offline proxy's cache on this device rather than from
+	// RetroAchievements (fork #180, D-RA-009); the page says so.
+	bool FromDevice = false;
+	// The device is offline and the proxy has never cached this game: the
+	// page shows the one line that says what to do, not an empty list.
+	bool NotOnDevice = false;
 
 	std::string getImageUrl(const std::string& image = "");
 };
@@ -166,6 +185,10 @@ struct UserSummary
 	std::string Points;
 	std::string UserPic;
 	std::string Status;
+
+	// The cached games and the account's points as the offline proxy holds
+	// them, read on this device while offline (fork #180).
+	bool FromDevice = false;
 };
 
 struct UserRankAndScore
@@ -206,6 +229,7 @@ struct RetroAchievementInfo
 	std::string registered;
 	std::string error;
 	std::vector<RetroAchievementGame> games;
+	bool fromDevice = false;
 };
 
 class RetroAchievements
@@ -216,7 +240,19 @@ public:
 	static std::string				getMissingLoginMessage();
 	static std::string				getLoginErrorMessage(HttpReq& req);
 	static UserSummary				getUserSummary(const std::string& userName = "", int gameCount = 100);
-	static GameInfoAndUserProgress	getGameInfoAndUserProgress(int gameId, const std::string& userName = "");
+	// cheevosHash is the ROM's hash from the gamelist: the offline proxy
+	// keys a game started once through RetroArch by it, and a game the
+	// scan cached by its id, so both are asked (fork #180).
+	static GameInfoAndUserProgress	getGameInfoAndUserProgress(int gameId, const std::string& userName = "", const std::string& cheevosHash = "");
+
+	// The same two, answered from the offline proxy's cache on this device
+	// (fork #180, D-RA-009). A game the proxy holds comes back with FromDevice
+	// set; one it has never cached with NotOnDevice set; a proxy that does
+	// not answer leaves ID at 0 and neither set, and the caller asks the web.
+	// pending, when given, is the queued awards already read, so a summary
+	// over many games runs the ctl once.
+	static GameInfoAndUserProgress	getGameInfoFromDevice(int gameId, const std::string& cheevosHash, const std::vector<OfflineAchievementsText::PendingAward>* pending = nullptr);
+	static UserSummary				getUserSummaryFromDevice();
 	static UserRankAndScore         getUserRankAndScore(const std::string& userName);
 
 	static RetroAchievementInfo		toRetroAchivementInfo(UserSummary& ret);

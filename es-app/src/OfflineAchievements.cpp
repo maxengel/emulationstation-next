@@ -1,6 +1,7 @@
 #include "OfflineAchievements.h"
 #include "ApiSystem.h"
 #include "CloudText.h"
+#include "HttpReq.h"
 #include "LocaleES.h"
 #include "Log.h"
 #include "SystemConf.h"
@@ -17,6 +18,15 @@ namespace
 	// RAOFFLINEPROXY_CONFIG_DIR), and the two files the scan reads back.
 	const char* SCAN_STAMP = "/storage/.config/raofflineproxy/last-scan";
 	const char* READY_FILE = "/storage/.config/raofflineproxy/cached_game_ids.txt";
+	// The proxy's own answer to "can RetroAchievements be reached", written
+	// by its connectivity monitor (state.py save_online_state).
+	const char* ONLINE_STATE = "/storage/.config/raofflineproxy/online_state.json";
+
+	// How long one question to the proxy may take, in all. It answers from
+	// its store on the same device in milliseconds; anything longer is a
+	// proxy that is not answering, and the page must not wait on it.
+	const long PROXY_CONNECT_MS = 2000L;
+	const long PROXY_TOTAL_MS = 15000L;
 
 	// The ctl's last stdout line and its exit status. executeScriptLegacy is
 	// the public route that hands back both, as the toggle's page uses it.
@@ -96,26 +106,94 @@ CloudText::ScanStamp OfflineAchievements::lastScan()
 	return CloudText::parseScanStamp(Utils::FileSystem::readAllText(SCAN_STAMP));
 }
 
-int OfflineAchievements::readyCount()
+std::vector<int> OfflineAchievements::readyIds()
 {
+	// Uncached, like the scan stamp: the client rewrites this file while
+	// EmulationStation runs.
 	if (!Utils::FileSystem::exists(READY_FILE, false))
-		return 0;
+		return std::vector<int>();
 	// One game id per line (es_export.py). Lines that are not a number are
 	// not games: a count is never made of what was not read as one.
-	int count = 0;
-	for (const std::string& raw : Utils::String::split(Utils::FileSystem::readAllText(READY_FILE), '\n', true))
+	return OfflineAchievementsText::parseReadyIds(Utils::FileSystem::readAllText(READY_FILE));
+}
+
+int OfflineAchievements::readyCount()
+{
+	return (int)readyIds().size();
+}
+
+bool OfflineAchievements::toggleOn()
+{
+	return SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy");
+}
+
+bool OfflineAchievements::proxyOffline()
+{
+	if (!available() || !toggleOn())
+		return false;
+	if (!Utils::FileSystem::exists(ONLINE_STATE, false))
+		return false;
+	bool online = true;
+	if (!OfflineAchievementsText::parseOnlineState(Utils::FileSystem::readAllText(ONLINE_STATE), online))
+		return false;
+	return !online;
+}
+
+std::string OfflineAchievements::username()
+{
+	return SystemConf::getInstance()->get("global.retroachievements.username");
+}
+
+bool OfflineAchievements::askProxy(const std::string& query, std::string& body, std::string& error)
+{
+	body.clear();
+	error.clear();
+
+	HttpReqOptions options;
+	options.connectTimeout = PROXY_CONNECT_MS;
+	options.timeout = PROXY_TOTAL_MS;
+	// No cookie jar for a local process, and the interface's own name: the
+	// proxy remembers the last client's User-Agent but never uses it for
+	// its own requests (utils.py self_user_agent), so this changes nothing
+	// about how it speaks to RetroAchievements.
+	options.useCookieManager = false;
+
+	HttpReq req(OfflineAchievementsText::requestUrl(query), &options);
+	if (req.wait())
 	{
-		const std::string line = Utils::String::trim(raw);
-		if (line.empty())
-			continue;
-		bool digits = true;
-		for (char c : line)
-			if (c < '0' || c > '9')
-				digits = false;
-		if (digits)
-			count++;
+		body = req.getContent();
+		return true;
 	}
-	return count;
+	// For a 4xx or 503 HttpReq keeps the proxy's body as the message, so a
+	// miss reads as the proxy's own words and not as a status code.
+	error = req.getErrorMsg();
+	return false;
+}
+
+std::vector<OfflineAchievementsText::PendingAward> OfflineAchievements::pendingAwardIds()
+{
+	if (!available() || !toggleOn())
+		return std::vector<OfflineAchievementsText::PendingAward>();
+
+	// Every line, not the last: one award per line. Exit 0 with rows, 1 with
+	// none; anything else is the ctl saying it could not tell, and the page
+	// then marks nothing as waiting rather than guessing.
+	std::string all;
+	auto result = ApiSystem::executeScriptLegacy(std::string(CTL) + " pending-ids 2>/dev/null",
+		[&all](const std::string line) { all += line + "\n"; });
+	if (result.second != 0 && result.second != 1)
+		return std::vector<OfflineAchievementsText::PendingAward>();
+	return OfflineAchievementsText::parsePendingIds(all);
+}
+
+OfflineAchievementsText::AccountTotals OfflineAchievements::accountTotals()
+{
+	if (!available() || !toggleOn())
+		return OfflineAchievementsText::AccountTotals();
+	const auto answer = ask("account");
+	if (answer.second != 0)
+		return OfflineAchievementsText::AccountTotals();
+	return OfflineAchievementsText::parseAccountTotals(answer.first);
 }
 
 std::string OfflineAchievements::scanWhy(const std::string& token)

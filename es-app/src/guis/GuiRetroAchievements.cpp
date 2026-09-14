@@ -291,10 +291,27 @@ GuiRetroAchievements::GuiRetroAchievements(Window* window, RetroAchievementInfo 
 		return;
 	}
 
-	auto txt = _("Softcore points") + ":\t" + ra.softpoints; 
-	txt += "\r\n" + _("Points (hardcore)") + ":\t" + ra.points;
-	if (!ra.rank.empty())
-		txt += "\r\n" + _("Rank") + ":\t" + ra.rank;
+	std::string txt;
+	if (ra.fromDevice)
+	{
+		// The proxy's cache: the account's points as its cached sign-in last
+		// said them, when it has one, and no rank (fork #180). The line says
+		// where this came from, so a total that is a little behind is read
+		// as the device's copy and not as the account.
+		if (!ra.points.empty())
+		{
+			txt = _("Softcore points") + ":\t" + ra.softpoints;
+			txt += "\r\n" + _("Points (hardcore)") + ":\t" + ra.points + "\r\n";
+		}
+		txt += _("YOU'RE NOT ONLINE. SHOWING THE GAMES SAVED ON THIS DEVICE.");
+	}
+	else
+	{
+		txt = _("Softcore points") + ":\t" + ra.softpoints; 
+		txt += "\r\n" + _("Points (hardcore)") + ":\t" + ra.points;
+		if (!ra.rank.empty())
+			txt += "\r\n" + _("Rank") + ":\t" + ra.rank;
+	}
 
 	setSubTitle(txt);
 
@@ -313,7 +330,12 @@ GuiRetroAchievements::GuiRetroAchievements(Window* window, RetroAchievementInfo 
 		if (!game.id.empty())
 		{			
 			int gameId = Utils::String::toInteger(game.id);
-			row.makeAcceptInputHandler([this, gameId] { GuiGameAchievements::show(mWindow, gameId); });
+			// The game's hash from the gamelist goes with its id: offline,
+			// the proxy knows a game started once through RetroArch only by
+			// its hash (#180).
+			FileData* file = getFileData(game.id);
+			std::string hash = file != nullptr ? file->getMetadata(MetaDataId::CheevosHash) : "";
+			row.makeAcceptInputHandler([this, gameId, hash] { GuiGameAchievements::show(mWindow, gameId, hash); });
 
 			//std::string longmsg = game.name + "\n" + game.achievements + " achievements\n" + game.points + " points\nLast played : " + game.lastplayed;
 		}

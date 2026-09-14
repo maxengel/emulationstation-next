@@ -14,6 +14,7 @@
 #include "guis/GuiBatoceraStore.h"
 #include "guis/GuiSettings.h"
 #include "guis/GuiRetroAchievements.h"
+#include "OfflineAchievements.h"
 #include "guis/GuiGamelistOptions.h"
 #include "guis/GuiImageViewer.h"
 #include "guis/GuiMoonlight.h"
@@ -172,7 +173,10 @@ GuiMenu::GuiMenu(Window *window, bool animate) : GuiComponent(window), mMenu(win
 		Settings::getInstance()->getBool("RetroachievementsMenuitem") && 
 		SystemConf::getInstance()->get("global.retroachievements.username") != "")
 		addEntry(_("RETROACHIEVEMENTS").c_str(), true, [this] {
-				if (!checkNetwork())
+				// Offline with OFFLINE ACHIEVEMENTS on, the page reads the
+				// proxy's cache on this device (#180), so the network is not
+				// a condition of opening it.
+				if (!OfflineAchievements::proxyOffline() && !checkNetwork())
 					return;
 				GuiRetroAchievements::show(mWindow); }, "iconRetroachievements");
 	
@@ -5071,7 +5075,7 @@ void GuiMenu::openGamesSettings()
 	{
 		s->addEntry(_("RETROACHIEVEMENTS").c_str(), true, [this] 
 		{ 
-			if (!checkNetwork())
+			if (!OfflineAchievements::proxyOffline() && !checkNetwork())
 				return;
 
 			GuiRetroAchievements::show(mWindow); 
