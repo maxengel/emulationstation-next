@@ -233,8 +233,10 @@ std::string GuiOfflineScan::readyPhrase(int ready)
 // no language has to agree a plural with it.
 std::string GuiOfflineScan::countsLine(int cached, int skipped)
 {
-	return std::string(_("GAMES ADDED")) + ": " + std::to_string(cached)
-		+ " · " + std::string(_("WITHOUT ACHIEVEMENTS")) + ": " + std::to_string(skipped);
+	// The colon travels with the words: French puts a space before it
+	// (D-UI-051), so it is the translation's to place.
+	return std::string(_("GAMES ADDED:")) + " " + std::to_string(cached)
+		+ " · " + std::string(_("WITHOUT ACHIEVEMENTS:")) + " " + std::to_string(skipped);
 }
 
 void GuiOfflineScan::update(int deltaTime)
