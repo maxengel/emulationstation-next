@@ -276,9 +276,14 @@ void GuiOfflineScan::update(int deltaTime)
 			detail = _("SOMETHING WENT WRONG");
 		mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
 
+		// The client's cap on cached games is out of reach on ROCKNIX (patch
+		// 004, D-RA-014), but the ctl still forwards the client's word when it
+		// says it, so the branch stays -- with a sentence that names no
+		// number, since the number is not this product's to promise
+		// (audit #186 PL-15).
 		std::string note;
 		if (mLimit)
-			note = _("THE LIMIT OF 100 GAMES WAS REACHED.");
+			note = _("THAT'S AS MANY GAMES AS CAN BE SAVED FOR OFFLINE PLAY.");
 		else if (mNothingNew)
 			note = _("NOTHING NEW - EVERY GAME WAS ALREADY READY.");
 		else if (mExit == CloudExit::NoNetwork)
