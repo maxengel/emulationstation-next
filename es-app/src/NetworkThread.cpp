@@ -1,5 +1,6 @@
 #include "NetworkThread.h"
 #include "ApiSystem.h"
+#include "Settings.h"
 #include "SystemConf.h"
 #include "guis/GuiMsgBox.h"
 #include "LocaleES.h"
@@ -11,6 +12,8 @@
 #include "watchers/NetworkStateWatcher.h"
 #include "RetroAchievements.h"
 #include "OfflineAchievements.h"
+#include "SystemData.h"
+#include "ThreadedHasher.h"
 
 NetworkThread::NetworkThread(Window* window) : mWindow(window)
 {
@@ -214,6 +217,20 @@ void NetworkThread::OnWatcherChanged(IWatcher* component)
 		// RetroAchievements answers, and bounds how often it runs.
 		if (online)
 			OfflineAchievements::topUpWhenOnline();
+
+		// The startup index asks RetroAchievements for its hash library as the
+		// interface starts, and a handheld's Wi-Fi is often still associating
+		// then: the library does not come, and the run ends with nothing
+		// indexed. When the link arrives, run it again; once the library has
+		// come this session there is nothing to repeat (fork #183). D-RA-013's
+		// promise -- a game added later is cached when the device is next
+		// connected -- rests on the index knowing the game. On the interface
+		// thread, as every hasher start is; the netplay index is left alone.
+		if (online && Settings::CheevosCheckIndexesAtStart() && !ThreadedHasher::cheevosLibraryCameThisSession())
+		{
+			Window* window = mWindow;
+			mWindow->postToUiThread([window]() { SystemData::startIndexesAtStart(window, true); });
+		}
 
 		if (online && mCheckCheevosTokenComponent.retryWhenOnline())
 		{

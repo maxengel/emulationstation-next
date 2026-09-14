@@ -921,6 +921,23 @@ void SystemData::loadAdditionnalConfig(pugi::xml_node& srcSystems)
 }
 
 //creates systems from information located in a config file
+void SystemData::startIndexesAtStart(Window* window, bool cheevosOnly)
+{
+	if (window == nullptr || ThreadedHasher::isRunning())
+		return;
+
+	int checkIndex = 0;
+
+	if (Settings::CheevosCheckIndexesAtStart())
+		checkIndex |= (int) ThreadedHasher::HASH_CHEEVOS_MD5;
+
+	if (!cheevosOnly && SystemConf::getInstance()->getBool("global.netplay") && Settings::NetPlayCheckIndexesAtStart())
+		checkIndex |= (int) ThreadedHasher::HASH_NETPLAY_CRC;
+
+	if (checkIndex != 0)
+		ThreadedHasher::start(window, (ThreadedHasher::HasherType)checkIndex, false, true);
+}
+
 bool SystemData::loadConfig(Window* window)
 {
 	deleteSystems();
@@ -1085,19 +1102,10 @@ bool SystemData::loadConfig(Window* window)
 		}
 	}
 
-	if (window != nullptr && !ThreadedHasher::isRunning())
-	{
-		int checkIndex = 0;
-
-		if (Settings::CheevosCheckIndexesAtStart())
-			checkIndex |= (int) ThreadedHasher::HASH_CHEEVOS_MD5;
-
-		if (SystemConf::getInstance()->getBool("global.netplay") && Settings::NetPlayCheckIndexesAtStart())
-			checkIndex |= (int) ThreadedHasher::HASH_NETPLAY_CRC;
-
-		if (checkIndex != 0)
-			ThreadedHasher::start(window, (ThreadedHasher::HasherType)checkIndex, false, true);
-	}
+	// With a window (the splash screen's) the startup indexes start here; main
+	// starts them itself when it passed none (fork #183).
+	if (window != nullptr)
+		startIndexesAtStart(window);
 
 	ThemeFileCache::getInstance().clear();
 

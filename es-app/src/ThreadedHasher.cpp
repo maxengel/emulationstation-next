@@ -24,6 +24,7 @@
 
 ThreadedHasher* ThreadedHasher::mInstance = nullptr;
 bool ThreadedHasher::mPaused = false;
+bool ThreadedHasher::sCheevosLibraryCame = false;
 
 static std::mutex mLoaderLock;
 
@@ -45,8 +46,16 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 		{
 			mCheevosHashes = RetroAchievements::getCheevosHashes();
 			if (mCheevosHashes.size() == 0)
+			{
+				// Offline, or not yet: nothing can be identified without it. Said
+				// once, so a boot that indexed nothing can be told apart from one
+				// that never tried (fork #183); the link-up run tries again.
+				LOG(LogWarning) << "ThreadedHasher: RetroAchievements' hash library did not come; nothing is indexed this run";
 				while (!mSearchQueue.empty())
 					mSearchQueue.pop();
+			}
+			else
+				sCheevosLibraryCame = true;
 
 			// The games with a hash and no id (audit #186 PL-08): the ones
 			// the library knows join the queue for a lookup and a save, and
@@ -322,7 +331,9 @@ void ThreadedHasher::start(Window* window, HasherType type, bool forceAllGames, 
 	try
 	{
 		ThreadedHasher* hasher = new ThreadedHasher(window, type, searchQueue, lookupOnly, forceAllGames);
-		if (lookupsAlone)
+		// Stamped only when the library came: a boot without it has not spent
+		// the day's pass (the comment above promised as much; the code did not).
+		if (lookupsAlone && !hasher->mCheevosHashes.empty())
 		{
 			Settings::getInstance()->setString("CheevosLookupOnlyLast", std::to_string(now));
 			Settings::getInstance()->saveFile();
