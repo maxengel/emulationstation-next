@@ -11,6 +11,139 @@
 #include "guis/GuiMsgBox.h"
 #include "components/SwitchComponent.h"
 #include "components/OptionListComponent.h"
+#include "components/TextComponent.h"
+#include "components/MenuComponent.h"
+#include "renderers/Renderer.h"
+#include "math/Misc.h"
+#include "ThemeData.h"
+#include "Window.h"
+#include "LocaleES.h"
+#include <memory>
+
+#if defined(ROCKNIX)
+// A line of the page's own text, at the standard text size, wrapped to the
+// page's width when it needs a second line: what the OFFLINE ACHIEVEMENTS
+// page is for is room to read (D-RA-003, D-UI-023: two lines, never three).
+// Not selectable, and inset like the selectable rows so it lines up.
+//
+// The width is settled here rather than left to the list, because
+// TextComponent measures its wrap at its full width and draws at its padded
+// one (es-code-traps.md): given the width without the inset, the height it
+// budgets is for the lines it will actually draw, and only then is the inset
+// put back with the height fixed. The width is the menu's own rule
+// (MenuComponent::updateSize): the whole screen on a handheld panel, else
+// the shorter of the screen's height and nine tenths of its width.
+static void addInfoRow(GuiSettings* s, Window* window, const std::string& text)
+{
+	auto theme = ThemeData::getMenuTheme();
+	const float inset = 10.0f;
+	const float width = Renderer::ScreenSettings::fullScreenMenus()
+		? (float) Renderer::getScreenWidth()
+		: (float) Math::min((int) Renderer::getScreenHeight(), (int) (Renderer::getScreenWidth() * 0.90f));
+
+	auto tc = std::make_shared<TextComponent>(window, text, theme->Text.font, theme->Text.color, ALIGN_LEFT,
+		Vector3f::Zero(), Vector2f(width - 2 * inset, 0));
+	const float height = tc->getSize().y();
+	tc->setPadding(Vector4f(inset, 0, inset, 0));
+	tc->setSize(width, height);
+	tc->setVerticalAlignment(ALIGN_TOP);
+
+	ComponentListRow row;
+	row.selectable = false;
+	row.addElement(tc, true);
+	s->addRow(row);
+}
+
+// The OFFLINE ACHIEVEMENTS page (fork #165, #173; D-RA-001..003): the
+// switch, with what it does, that it is beta and casual-only and what that
+// does to hardcore, and what the badge means, each with room. One
+// system-wide switch, off by default, backed by raofflineproxy-ctl: enable
+// starts the RAOfflineProxy service, records hardcore as it was and turns it
+// off -- the proxy is casual-only and refuses hardcore awards -- and sets
+// the toggle the launch scripts read at every game start; disable stops the
+// service and puts hardcore back as recorded. Written by hand rather than
+// through addSwitch: the script is the writer, not this page's save, and
+// turning it on asks first, because it changes the HARDCORE MODE row on the
+// page below (never silently). The script's last stdout line,
+// hardcore=<0|1>, is what that row is set from afterwards, so the row shows
+// what system.cfg holds; the same values are mirrored into SystemConf so the
+// parent page's own save at close writes what the script wrote rather than
+// what it read at open.
+//
+// hardcoreRow is the parent page's HARDCORE MODE switch, weak on purpose:
+// this page's callbacks must never keep a row of the page below alive.
+static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponent> hardcoreRow)
+{
+	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS").c_str());
+
+	auto offline = std::make_shared<SwitchComponent>(window);
+	offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
+	s->addWithLabel(_("OFFLINE ACHIEVEMENTS"), offline);
+
+	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE."));
+	addInfoRow(s, window, _("BETA. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF."));
+	// RetroArch's disconnected badge, explained where the RetroAchievements
+	// choices are made (fork #162): rcheevos shows it while an award or a
+	// score is waiting to reach the server, and says nothing about what it
+	// means. It was the parent page's subtitle, two lines of small text at
+	// 640x480 (#166); here it has a row of its own (D-RA-003).
+	addInfoRow(s, window, _("!RA! IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
+
+	// A raw pointer on purpose: the callback lives inside the switch it
+	// captures, so a shared_ptr here would be a cycle that keeps the page
+	// alive forever. setState fires the change callback too, so a revert
+	// made from inside it would re-enter it: quiet while the code, not the
+	// player, sets the state.
+	SwitchComponent* offlineRow = offline.get();
+	auto quiet = std::make_shared<bool>(false);
+	auto setQuietly = [offlineRow, quiet](bool state) { *quiet = true; offlineRow->setState(state); *quiet = false; };
+
+	auto apply = [window, offlineRow, hardcoreRow, setQuietly](bool on)
+	{
+		std::string last;
+		// executeScriptLegacy: the public route that hands back the real
+		// exit status and every line, as the cloud pages use it.
+		auto result = ApiSystem::executeScriptLegacy(std::string("/usr/bin/raofflineproxy-ctl ") + (on ? "enable" : "disable") + " 2>/dev/null",
+			[&last](const std::string line) { last = line; });
+		if (result.second != 0 || !Utils::String::startsWith(last, "hardcore="))
+		{
+			setQuietly(!on);
+			window->pushGui(new GuiMsgBox(window,
+				on ? _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED ON.") : _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED OFF."),
+				_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
+			return;
+		}
+		bool hardcoreNow = (last == "hardcore=1");
+		if (auto row = hardcoreRow.lock())
+			row->setState(hardcoreNow);
+		SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
+		SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
+	};
+
+	offline->setOnChangedCallback([window, offlineRow, quiet, setQuietly, apply]
+	{
+		if (*quiet)
+			return;
+
+		if (!offlineRow->getState())
+		{
+			apply(false);
+			return;
+		}
+
+		// The consequence, read at the moment of deciding (D-UI-023); the
+		// page above already says what the feature does. NOT NOW is the
+		// last button, so B answers NOT NOW (GuiMsgBox's accelerator) and
+		// the switch goes back to off.
+		window->pushGui(new GuiMsgBox(window,
+			_("THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING IT ON TURNS HARDCORE MODE OFF."),
+			_("TURN ON"), [apply] { apply(true); },
+			_("NOT NOW"), [setQuietly] { setQuietly(false); }));
+	});
+
+	window->pushGui(s);
+}
+#endif
 
 GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : GuiSettings(window, _("RETROACHIEVEMENTS SETTINGS").c_str())
 {
@@ -40,86 +173,19 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	auto hardcore = addSwitch(_("HARDCORE MODE"), _("Disable loading states, rewind and cheats for more points."), "global.retroachievements.hardcore", false, nullptr);
 
 #if defined(ROCKNIX)
-	// OFFLINE RETROACHIEVEMENTS (fork #165; D-RA-001, D-RA-002). One
-	// system-wide switch, off by default, backed by raofflineproxy-ctl:
-	// enable starts the RAOfflineProxy service, records hardcore as it was
-	// and turns it off -- the proxy is casual-only and refuses hardcore
-	// awards -- and sets the toggle the launch scripts read at every game
-	// start; disable stops the service and puts hardcore back as recorded.
-	// Written by hand rather than through addSwitch: the script is the
-	// writer, not this page's save, and turning it on asks first, because it
-	// changes the HARDCORE MODE row above (never silently). The script's
-	// last stdout line, hardcore=<0|1>, is what that row is set from
-	// afterwards, so the row shows what system.cfg holds; the same values
-	// are mirrored into SystemConf so the page's own save at close writes
-	// what the script wrote rather than what it read at open.
+	// OFFLINE ACHIEVEMENTS: a row that opens a page (D-RA-003; es-player-text
+	// "A row that leads somewhere is a label"). The switch and what it means
+	// need more room than one line under a row gives them on a 3.5" panel,
+	// so the row carries the label and one short line -- sentence case like
+	// every description on this page (#166) -- and the page carries the
+	// switch with the explanation beside it. Shown only where the backend
+	// is: an image without the package has no toggle to offer.
 	if (Utils::FileSystem::exists("/usr/bin/raofflineproxy-ctl"))
 	{
-		auto offline = std::make_shared<SwitchComponent>(mWindow);
-		offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
-		// The line under the label is sentence case like every description on
-		// this page (HARDCORE MODE's "Disable loading states, ..."); the label
-		// stays UPPERCASE like its siblings (#166).
-		addWithDescription(_("OFFLINE RETROACHIEVEMENTS"), _("Beta. Casual achievements only, even without a connection."), offline);
-
-		// Raw pointers on purpose: the callback lives inside the switch it
-		// captures, and the HARDCORE MODE switch is a row of the same page,
-		// so a shared_ptr here would be a cycle that keeps the page alive
-		// forever. setState fires the change callback too, so a revert made
-		// from inside it would re-enter it: quiet while the code, not the
-		// player, sets the state.
-		SwitchComponent* offlineRow = offline.get();
-		SwitchComponent* hardcoreRow = hardcore.get();
-		auto quiet = std::make_shared<bool>(false);
-		auto setQuietly = [offlineRow, quiet](bool state) { *quiet = true; offlineRow->setState(state); *quiet = false; };
-
-		auto apply = [window, offlineRow, hardcoreRow, setQuietly](bool on)
-		{
-			std::string last;
-			// executeScriptLegacy: the public route that hands back the real
-			// exit status and every line, as the cloud pages use it.
-			auto result = ApiSystem::executeScriptLegacy(std::string("/usr/bin/raofflineproxy-ctl ") + (on ? "enable" : "disable") + " 2>/dev/null",
-				[&last](const std::string line) { last = line; });
-			if (result.second != 0 || !Utils::String::startsWith(last, "hardcore="))
-			{
-				setQuietly(!on);
-				window->pushGui(new GuiMsgBox(window,
-					on ? _("OFFLINE RETROACHIEVEMENTS COULDN'T BE TURNED ON.") : _("OFFLINE RETROACHIEVEMENTS COULDN'T BE TURNED OFF."),
-					_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
-				return;
-			}
-			bool hardcoreNow = (last == "hardcore=1");
-			hardcoreRow->setState(hardcoreNow);
-			SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
-			SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
-		};
-
-		offline->setOnChangedCallback([window, offlineRow, quiet, setQuietly, apply]
-		{
-			if (*quiet)
-				return;
-
-			if (!offlineRow->getState())
-			{
-				apply(false);
-				return;
-			}
-
-			// NOT NOW is the last button, so B answers NOT NOW (GuiMsgBox's
-			// accelerator) and the switch goes back to off.
-			window->pushGui(new GuiMsgBox(window,
-				_("THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING IT ON TURNS HARDCORE MODE OFF.") + "\n\n" +
-				_("ACHIEVEMENTS YOU EARN OFFLINE ARE SENT TO RETROACHIEVEMENTS WHEN YOU'RE BACK ONLINE."),
-				_("TURN ON"), [apply] { apply(true); },
-				_("NOT NOW"), [setQuietly] { setQuietly(false); }));
-		});
+		std::weak_ptr<SwitchComponent> hardcoreRow = hardcore;
+		addWithDescription(_("OFFLINE ACHIEVEMENTS"), _("Beta. Casual achievements only."), makeArrow(mWindow),
+			[window, hardcoreRow] { openOfflineAchievements(window, hardcoreRow); }, "", false, true);
 	}
-
-	// RetroArch's disconnected badge, explained where the RetroAchievements
-	// choices are made (fork #162): rcheevos shows it while an award or a
-	// score is waiting to reach the server, and says nothing about what it
-	// means.
-	setSubTitle(_("!RA! IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
 #endif
 	addSwitch(_("LEADERBOARDS"), _("Compete in high-score and best time leaderboards (requires hardcore)."), "global.retroachievements.leaderboards", false, nullptr);
 	addSwitch(_("VERBOSE MODE"), _("Show achievement progression on game launch and other notifications."), "global.retroachievements.verbose", false, nullptr);
