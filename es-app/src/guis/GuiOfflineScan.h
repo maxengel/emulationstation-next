@@ -61,7 +61,7 @@ private:
 	};
 	static Outcome outcome(int exit);
 	static std::string fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width);
-	static std::string countsLine(int cached, int skipped);
+	static std::string countsLine(int cached, int skipped, int errors);
 	void close();
 
 	BusyComponent mBusyAnim;

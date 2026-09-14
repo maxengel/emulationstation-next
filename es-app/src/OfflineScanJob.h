@@ -34,7 +34,9 @@ public:
 		int index = 0;            // the i
 		std::string game;         // the name
 		int cached = 0, skipped = 0, ready = -1;
+		int errors = 0;           // ">>> errors n": games a fetch failed for (audit #186 PL-24)
 		bool limit = false, nothingNew = false;
+		bool truncated = false;   // ">>> note TRUNCATED": the walk stopped at the client's cap of files
 		std::string why;          // the ctl's token
 		bool finished = false;
 		int exit = -1;

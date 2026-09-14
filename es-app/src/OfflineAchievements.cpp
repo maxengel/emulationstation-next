@@ -214,6 +214,11 @@ std::string OfflineAchievements::scanWhy(const std::string& token)
 		return _("YOUR GAMES COULDN'T BE READ");
 	if (token == "TOOK_TOO_LONG")
 		return _("IT TOOK TOO LONG");
+	// A fetch failed for some game, even among many that went through
+	// (audit #186 PL-24): the run could not finish, and the next scan tries
+	// those games again, since nothing marks them cached.
+	if (token == "SOME_GAMES_NOT_SAVED")
+		return _("SOME GAMES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
 	return _("SOMETHING WENT WRONG");
 }
 

@@ -920,6 +920,30 @@ TEST_CASE("parseScanStamp reads raofflineproxy-ctl's last-scan line")
 	CHECK(s.cached == 5);
 	CHECK(s.skipped == 2);
 	CHECK(s.ready == 7);
+	// A stamp from before indexed= and errors= reads them as none.
+	CHECK(s.indexed == 0);
+	CHECK(s.errors == 0);
+	CHECK_FALSE(s.truncated);
+
+	// As the ctl writes it since audit #186 PL-24: a fetch that failed for
+	// one game among many that went through is rc 1 with the count and the
+	// token, and indexed= says how many came from the interface's index.
+	s = parseScanStamp("1789400400 1 scan cached=3 skipped=1 ready=12 limit=0 indexed=2 errors=1 why=SOME_GAMES_NOT_SAVED\n");
+	CHECK(s.ran);
+	CHECK(s.code == 1);
+	CHECK(s.cached == 3);
+	CHECK(s.indexed == 2);
+	CHECK(s.errors == 1);
+	CHECK(s.why == "SOME_GAMES_NOT_SAVED");
+	CHECK_FALSE(s.truncated);
+
+	// truncated= is read should the ctl ever write it (today it is in the
+	// scan log only): the walk stopped at the client's cap of files.
+	s = parseScanStamp("1789400500 0 scan cached=40 skipped=0 ready=40 limit=0 indexed=0 errors=0 truncated=1");
+	CHECK(s.ran);
+	CHECK(s.truncated);
+	s = parseScanStamp("1789400500 0 scan cached=40 skipped=0 ready=40 limit=0 truncated=0");
+	CHECK_FALSE(s.truncated);
 }
 
 TEST_CASE("parseScanStamp on the shapes that are not a scan")

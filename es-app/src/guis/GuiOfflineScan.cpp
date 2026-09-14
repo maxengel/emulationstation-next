@@ -239,15 +239,21 @@ std::string GuiOfflineScan::runningPhrase(const OfflineScanJob::State& state)
 	return head;
 }
 
-// "GAMES WITH ACHIEVEMENTS ADDED: 3" -- what this run did. The games without
-// a set are not counted here: the maintainer, on the RG SP with RC-5 (2026-09-14),
-// "I'm not that concerned about the games that don't have achievements [...]
-// I just want to know that it's scanning through the games with achievements."
-// The count still travels in the stamp for the log (skipped), unused here.
-std::string GuiOfflineScan::countsLine(int cached, int skipped)
+// "GAMES WITH ACHIEVEMENTS ADDED: 3" -- what this run did, and "NOT SAVED: 1"
+// beside it when a fetch failed for any game (the ctl's errors count, audit
+// #186 PL-24: such a run is COULDN'T FINISH, and the next scan tries those
+// games again). The games without a set are not counted here: the
+// maintainer, on the RG SP with RC-5 (2026-09-14), "I'm not that concerned
+// about the games that don't have achievements [...] I just want to know
+// that it's scanning through the games with achievements." That count still
+// travels in the stamp for the log (skipped), unused here.
+std::string GuiOfflineScan::countsLine(int cached, int skipped, int errors)
 {
 	(void) skipped;
-	return std::string(_("GAMES WITH ACHIEVEMENTS ADDED:")) + " " + std::to_string(cached);
+	std::string line = std::string(_("GAMES WITH ACHIEVEMENTS ADDED:")) + " " + std::to_string(cached);
+	if (errors > 0)
+		line += "  ·  " + std::string(_("NOT SAVED:")) + " " + std::to_string(errors);
+	return line;
 }
 
 void GuiOfflineScan::update(int deltaTime)
@@ -276,7 +282,7 @@ void GuiOfflineScan::update(int deltaTime)
 		mStatus->setText(fitOneLine(mTextFont, o.word, mLineWidth));
 
 		const bool ran = s.total > 0 || s.cached > 0 || s.skipped > 0 || s.nothingNew;
-		mCounter->setText(ran && !s.nothingNew ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped), mLineWidth) : "");
+		mCounter->setText(ran && !s.nothingNew ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped, s.errors), mLineWidth) : "");
 
 		// The ctl's done line carries the count; a run that ended before it
 		// said one reads the client's export directly.
@@ -298,6 +304,10 @@ void GuiOfflineScan::update(int deltaTime)
 		std::string note;
 		if (s.limit)
 			note = _("THAT'S AS MANY GAMES AS CAN BE SAVED FOR OFFLINE PLAY.");
+		else if (s.truncated)
+			// The walk stopped at the client's cap of files per run (#186
+			// PL-17): the games past it are the next run's.
+			note = _("NOT EVERY FOLDER WAS LOOKED AT. SCAN AGAIN TO CONTINUE.");
 		else if (s.nothingNew)
 			note = _("NOTHING NEW - EVERY GAME WAS ALREADY READY.");
 		else if (s.exit == CloudExit::NoNetwork)
@@ -328,7 +338,7 @@ void GuiOfflineScan::update(int deltaTime)
 		}
 		mCounter ->setText(counter);
 		mActivity->setText(fitOneLine(mTextFont, s.game, mLineWidth));
-		mDetail  ->setText(s.index > 0 ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped), mLineWidth) : "");
+		mDetail  ->setText(s.index > 0 ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped, s.errors), mLineWidth) : "");
 		mNote    ->setText("");
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
 		// 7. That the page can be left: the longest form that fits the line

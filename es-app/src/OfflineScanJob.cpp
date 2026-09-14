@@ -138,10 +138,14 @@ void OfflineScanJob::run(std::shared_ptr<OfflineScanJob> self)
 //   ">>> total <n>"            how many ROMs will be looked at
 //   ">>> game <i>|<n>|<name>"  the one it is on now
 //   ">>> cached <c>|<s>"       added so far, and passed over so far
-//   ">>> note <TOKEN>"         LIMIT_REACHED, NOTHING_NEW
+//   ">>> note <TOKEN>"         LIMIT_REACHED, NOTHING_NEW, TRUNCATED
+//   ">>> errors <n>"           games a fetch failed for (audit #186 PL-24; the
+//                              ctl says it as the run ends, before why)
 //   ">>> why <TOKEN>"          why it stopped, in the ctl's token
 //   ">>> done <c>|<s>|<ready>|<limit>"
-// Everything else on stdout is the client's own and is not shown.
+// Everything else on stdout is the client's own and is not shown. TRUNCATED
+// is read should the ctl ever say it; at ad25fdeb22 it logs the fact and
+// tells the page nothing.
 void OfflineScanJob::handleLine(const std::string& line)
 {
 	if (line.rfind(">>> ", 0) != 0)
@@ -188,7 +192,10 @@ void OfflineScanJob::handleLine(const std::string& line)
 		{
 			if (rest == "LIMIT_REACHED") mState.limit = true;
 			else if (rest == "NOTHING_NEW") mState.nothingNew = true;
+			else if (rest == "TRUNCATED") mState.truncated = true;
 		}
+		else if (word == "errors")
+			mState.errors = num(rest);
 		else if (word == "why")
 			mState.why = rest;
 		else if (word == "done" && fields.size() >= 4)

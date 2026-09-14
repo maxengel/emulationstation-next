@@ -258,7 +258,14 @@ static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> 
 		+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
 	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
 	if (last.ran && last.code != 0 && !last.why.empty())
-		text += "\n\n" + _("LAST TIME IT COULDN'T FINISH:") + " " + OfflineAchievements::scanWhy(last.why) + ".";
+	{
+		// The why as a clause, then a full stop -- unless the why is a
+		// sentence already (SOME GAMES COULDN'T BE SAVED. TRY THE SCAN
+		// AGAIN.), which brings its own.
+		const std::string why = OfflineAchievements::scanWhy(last.why);
+		text += "\n\n" + _("LAST TIME IT COULDN'T FINISH:") + " " + why
+			+ (Utils::String::endsWith(why, ".") ? "" : ".");
+	}
 
 	window->pushGui(new GuiMsgBox(window, text,
 		_("YES"), [window, weak] { offlineScanStart(window, weak); },
