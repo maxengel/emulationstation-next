@@ -78,6 +78,11 @@ struct GameInfoAndUserProgress
 	// The device is offline and the proxy has never cached this game: the
 	// page shows the one line that says what to do, not an empty list.
 	bool NotOnDevice = false;
+	// The proxy did not answer at all -- nothing listening, a timeout, a
+	// body that was not its own -- as against a miss it answered with. A
+	// loop over many games stops at the first of these rather than paying
+	// the timeout once per game (audit #186 PL-09).
+	bool ProxyDidNotAnswer = false;
 
 	std::string getImageUrl(const std::string& image = "");
 };
@@ -248,9 +253,16 @@ public:
 	// The same two, answered from the offline proxy's cache on this device
 	// (fork #180, D-RA-009). A game the proxy holds comes back with FromDevice
 	// set; one it has never cached with NotOnDevice set; a proxy that does
-	// not answer leaves ID at 0 and neither set, and the caller asks the web.
-	// pending, when given, is the queued awards already read, so a summary
-	// over many games runs the ctl once.
+	// not answer leaves ID at 0 with ProxyDidNotAnswer set, and the caller
+	// asks the web. pending, when given, is the queued awards already read,
+	// so a summary over many games runs the ctl once.
+	//
+	// Both block on the proxy -- a process, then a request or three per
+	// game -- so they run from GuiLoading's worker (GuiRetroAchievements::show,
+	// GuiGameAchievements::show) and never on the interface thread. The
+	// summary asks the proxy once per cached game (no bulk answer exists on
+	// the proxy's side) and stops at the first game the proxy does not
+	// answer for: one timeout, not one per game (audit #186 PL-09).
 	static GameInfoAndUserProgress	getGameInfoFromDevice(int gameId, const std::string& cheevosHash, const std::vector<OfflineAchievementsText::PendingAward>* pending = nullptr);
 	static UserSummary				getUserSummaryFromDevice();
 	static UserRankAndScore         getUserRankAndScore(const std::string& userName);

@@ -300,6 +300,7 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoFromDevice(int gameId, con
 		else
 		{
 			LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer patch for game " << gameId << ": " << error;
+			ret.ProxyDidNotAnswer = true;
 			return ret;
 		}
 	}
@@ -313,6 +314,7 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoFromDevice(int gameId, con
 		else
 		{
 			LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer achievementsets: " << error;
+			ret.ProxyDidNotAnswer = true;
 			return ret;
 		}
 	}
@@ -329,6 +331,7 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoFromDevice(int gameId, con
 	if (!OfflineAchievements::askProxy("r=unlocks&g=" + std::to_string(game.id) + "&u=" + HttpReq::urlEncode(user), body, error))
 	{
 		LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer unlocks for game " << game.id << ": " << error;
+		ret.ProxyDidNotAnswer = true;
 		return ret;
 	}
 	std::set<int> unlocked;
@@ -396,6 +399,14 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 	const auto pending = OfflineAchievements::pendingAwardIds();
 	const auto totals = OfflineAchievements::accountTotals();
 
+	// One game at a time, because the proxy answers one game at a time --
+	// it has no bulk read, and the ctl opens no store for the interface --
+	// and the first game it does not answer for ends the walk (audit #186
+	// PL-09): a proxy that has stopped is not asked a thousand times at a
+	// timeout each, and a summary that would list a fraction of the library
+	// as the whole is not shown. The caller reads the empty name as "the
+	// proxy gave no summary" and asks the web, which says in its own words
+	// that there is no connection.
 	std::vector<std::pair<std::string, RecentGame>> games;
 	for (int id : ids)
 	{
@@ -403,6 +414,13 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 		const std::string hash = file != nullptr ? file->getMetadata(MetaDataId::CheevosHash) : "";
 
 		auto game = getGameInfoFromDevice(id, hash, &pending);
+		if (game.ProxyDidNotAnswer)
+		{
+			LOG(LogWarning) << "RetroAchievements: the offline proxy stopped answering after " << games.size() << " of " << ids.size() << " cached games; no summary from the device";
+			// ret as it stands: no name, no games -- the caller's "no
+			// summary" -- with RecentlyPlayedCount already 0.
+			return ret;
+		}
 		if (game.ID == 0)
 			continue;
 
