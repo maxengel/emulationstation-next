@@ -234,10 +234,10 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 
 	auto offline = std::make_shared<SwitchComponent>(window);
 	offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
-	s->addWithLabel(_("OFFLINE ACHIEVEMENTS"), offline);
+	s->addWithLabel(_("OFFLINE ACHIEVEMENTS (BETA)"), offline);
 
 	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE."));
-	addInfoRow(s, window, _("BETA. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF."));
+	addInfoRow(s, window, _("CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF."));
 	// RetroArch's disconnected badge, explained where the RetroAchievements
 	// choices are made (fork #162): rcheevos shows it while an award or a
 	// score is waiting to reach the server, and says nothing about what it
@@ -347,7 +347,7 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	if (Utils::FileSystem::exists("/usr/bin/raofflineproxy-ctl"))
 	{
 		std::weak_ptr<SwitchComponent> hardcoreRow = hardcore;
-		addWithDescription(_("OFFLINE ACHIEVEMENTS"), _("Beta. Casual achievements only."), makeArrow(mWindow),
+		addWithDescription(_("OFFLINE ACHIEVEMENTS (BETA)"), _("Casual achievements only."), makeArrow(mWindow),
 			[window, hardcoreRow] { openOfflineAchievements(window, hardcoreRow); }, "", false, true);
 	}
 #endif
