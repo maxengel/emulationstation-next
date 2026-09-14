@@ -42,7 +42,12 @@
 // put back with the height fixed. The width is the menu's own rule
 // (MenuComponent::updateSize): the whole screen on a handheld panel, else
 // the shorter of the screen's height and nine tenths of its width.
-static void addInfoRow(GuiSettings* s, Window* window, const std::string& text)
+//
+// The row's height is measured on longestText -- the longest words it may
+// ever carry -- because a ComponentList sizes a row as it is added and a
+// text set afterwards that needs one more line hangs below the row's slot.
+// Returned so the words can change later (a sentence that becomes true).
+static std::shared_ptr<TextComponent> addInfoRow(GuiSettings* s, Window* window, const std::string& text, const std::string& longestText)
 {
 	auto theme = ThemeData::getMenuTheme();
 	const float inset = 10.0f;
@@ -50,17 +55,36 @@ static void addInfoRow(GuiSettings* s, Window* window, const std::string& text)
 		? (float) Renderer::getScreenWidth()
 		: (float) Math::min((int) Renderer::getScreenHeight(), (int) (Renderer::getScreenWidth() * 0.90f));
 
-	auto tc = std::make_shared<TextComponent>(window, text, theme->Text.font, theme->Text.color, ALIGN_LEFT,
+	auto tc = std::make_shared<TextComponent>(window, longestText, theme->Text.font, theme->Text.color, ALIGN_LEFT,
 		Vector3f::Zero(), Vector2f(width - 2 * inset, 0));
 	const float height = tc->getSize().y();
 	tc->setPadding(Vector4f(inset, 0, inset, 0));
 	tc->setSize(width, height);
 	tc->setVerticalAlignment(ALIGN_TOP);
+	if (text != longestText)
+		tc->setText(text);
 
 	ComponentListRow row;
 	row.selectable = false;
 	row.addElement(tc, true);
 	s->addRow(row);
+	return tc;
+}
+
+// The page's block of text (D-RA-003), with or without its last sentence.
+// The last sentence is D-RA-013's: the cache follows the interface's own
+// game index, so a game added later is cached by the top-up that runs when
+// the device is next connected (raofflineproxy-ctl topup) -- once the index
+// knows it, which is INDEX NEW GAMES AT STARTUP's job. So the sentence is
+// shown only while that setting is on (audit #186 PL-06, D-UI-055: a
+// sentence must be true of what happens); turning the switch on turns the
+// setting on, below, so on a device set up through this page it is.
+static std::string offlineInfoText(bool indexAtStartup)
+{
+	std::string text = _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET.");
+	if (indexAtStartup)
+		text += " " + _("NEW GAMES ARE ADDED THE NEXT TIME YOU'RE CONNECTED.");
+	return text;
 }
 
 // A little air between the options and the text under them: an empty,
@@ -263,7 +287,12 @@ static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Wind
 //
 // hardcoreRow is the parent page's HARDCORE MODE switch, weak on purpose:
 // this page's callbacks must never keep a row of the page below alive.
-static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponent> hardcoreRow)
+// indexRow is the parent's INDEX NEW GAMES AT STARTUP switch, boxed because
+// that row is built after the row that opens this page: turning the switch
+// on turns that setting on too (below), and the row has to show it, or the
+// parent's save at close would write the row's old state back.
+static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponent> hardcoreRow,
+	std::shared_ptr<std::weak_ptr<SwitchComponent>> indexRow)
 {
 	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS (BETA)").c_str());
 
@@ -282,11 +311,8 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// as a thing on screen and not as a typo (D-RA-003).
 	std::weak_ptr<DimmableMenuEntry> scanRow = addOfflineScanRow(s, window);
 	addSpacerRow(s, window);
-	// The last sentence is D-RA-013's: the cache follows the interface's own
-	// game index, so a game added later is cached by the top-up that runs
-	// when the device is next connected (raofflineproxy-ctl topup) -- once
-	// the index knows it, which is INDEX NEW GAMES AT STARTUP's job.
-	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET. NEW GAMES ARE ADDED THE NEXT TIME YOU'RE CONNECTED."));
+	std::weak_ptr<TextComponent> infoRow = addInfoRow(s, window,
+		offlineInfoText(Settings::CheevosCheckIndexesAtStart()), offlineInfoText(true));
 
 	// Weak on purpose: the callback lives inside the switch it names, so a
 	// shared_ptr here would be a cycle that keeps the page alive forever --
@@ -316,7 +342,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// and each row that is gone is simply not set -- system.cfg already
 	// holds what the ctl wrote, and the page below saves only what changed.
 	auto pending = std::make_shared<bool>(false);
-	auto apply = [window, offlineWeak, hardcoreRow, setQuietly, scanRow, pending](bool on)
+	auto apply = [window, offlineWeak, hardcoreRow, indexRow, infoRow, setQuietly, scanRow, pending](bool on)
 	{
 		if (*pending)
 			return;
@@ -324,7 +350,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 		if (auto sw = offlineWeak.lock())
 			sw->setDimmed(true);
 
-		std::thread([window, on, offlineWeak, hardcoreRow, setQuietly, scanRow, pending]
+		std::thread([window, on, offlineWeak, hardcoreRow, indexRow, infoRow, setQuietly, scanRow, pending]
 		{
 			std::string last;
 			// executeScriptLegacy: the public route that hands back the real
@@ -334,7 +360,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 			const bool ok = result.second == 0 && Utils::String::startsWith(last, "hardcore=");
 			const bool hardcoreNow = (last == "hardcore=1");
 
-			window->postToUiThread([window, on, ok, hardcoreNow, offlineWeak, hardcoreRow, setQuietly, scanRow, pending]
+			window->postToUiThread([window, on, ok, hardcoreNow, offlineWeak, hardcoreRow, indexRow, infoRow, setQuietly, scanRow, pending]
 			{
 				*pending = false;
 				if (auto sw = offlineWeak.lock())
@@ -355,6 +381,25 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 				// The scan row reads the switch: on, it offers the scan; off, it
 				// says to turn the switch on first.
 				offlineScanRefresh(scanRow);
+
+				// The cache follows the index (D-RA-013), and the index is off
+				// by default: turning the switch on turns INDEX NEW GAMES AT
+				// STARTUP on as well, said in the confirmation above (audit
+				// #186 PL-06). Saved here, not left to the page below: its save
+				// writes the row's state, so the row is set too where it is
+				// still there, and a page already closed has already saved.
+				// The block of text gains its last sentence now that it is
+				// true. Turning the switch off leaves the setting as it is --
+				// an index is the player's, and costs nothing offline.
+				if (on && !Settings::CheevosCheckIndexesAtStart())
+				{
+					Settings::getInstance()->setBool("CheevosCheckIndexesAtStart", true);
+					Settings::getInstance()->saveFile();
+					if (auto row = indexRow->lock())
+						row->setState(true);
+					if (auto info = infoRow.lock())
+						info->setText(offlineInfoText(true));
+				}
 
 				// Turning it on offers the scan at once (D-RA-012): without it a
 				// player who skips the row plays offline with nothing cached.
@@ -403,11 +448,14 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 		}
 
 		// The consequence, read at the moment of deciding (D-UI-023); the
-		// page above already says what the feature does. NOT NOW is the
-		// last button, so B answers NOT NOW (GuiMsgBox's accelerator) and
-		// the switch goes back to off.
-		window->pushGui(new GuiMsgBox(window,
-			_("THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING IT ON TURNS HARDCORE MODE OFF."),
+		// page above already says what the feature does. With the startup
+		// index off, one more sentence says it goes on too (PL-06). NOT NOW
+		// is the last button, so B answers NOT NOW (GuiMsgBox's accelerator)
+		// and the switch goes back to off.
+		std::string text = _("THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING IT ON TURNS HARDCORE MODE OFF.");
+		if (!Settings::CheevosCheckIndexesAtStart())
+			text += " " + _("IT ALSO TURNS ON INDEX NEW GAMES AT STARTUP, SO GAMES YOU ADD LATER ARE SAVED FOR OFFLINE PLAY TOO.");
+		window->pushGui(new GuiMsgBox(window, text,
 			_("TURN ON"), [apply] { apply(true); },
 			_("NOT NOW"), [setQuietly] { setQuietly(false); }));
 	});
@@ -451,11 +499,13 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	// every description on this page (#166) -- and the page carries the
 	// switch with the explanation beside it. Shown only where the backend
 	// is: an image without the package has no toggle to offer.
+	// indexRow is filled once the GAME INDEXES rows exist, below.
+	auto indexRow = std::make_shared<std::weak_ptr<SwitchComponent>>();
 	if (Utils::FileSystem::exists("/usr/bin/raofflineproxy-ctl"))
 	{
 		std::weak_ptr<SwitchComponent> hardcoreRow = hardcore;
 		addWithDescription(_("OFFLINE ACHIEVEMENTS (BETA)"), _("Casual achievements only."), makeArrow(mWindow),
-			[window, hardcoreRow] { openOfflineAchievements(window, hardcoreRow); }, "", false, true);
+			[window, hardcoreRow, indexRow] { openOfflineAchievements(window, hardcoreRow, indexRow); }, "", false, true);
 	}
 #endif
 	addSwitch(_("LEADERBOARDS"), _("Compete in high-score and best time leaderboards (requires hardcore)."), "global.retroachievements.leaderboards", false, nullptr);
@@ -530,9 +580,12 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 #if defined(ROCKNIX)
 	indexFeedsOffline = OfflineAchievements::available() && OfflineAchievements::toggleOn();
 #endif
-	addSwitch(_("INDEX NEW GAMES AT STARTUP"),
+	auto indexAtStartup = addSwitch(_("INDEX NEW GAMES AT STARTUP"),
 		indexFeedsOffline ? _("Also saves new games' achievement data for offline play.") : std::string(),
 		"CheevosCheckIndexesAtStart", true, nullptr);
+#if defined(ROCKNIX)
+	*indexRow = indexAtStartup;
+#endif
 	auto indexGames = [this]
 	{
 		if (ThreadedHasher::checkCloseIfRunning(mWindow))
