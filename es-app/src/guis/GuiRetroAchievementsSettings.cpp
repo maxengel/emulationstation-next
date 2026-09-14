@@ -27,6 +27,7 @@
 #include "LocaleES.h"
 #include "Log.h"
 #include <memory>
+#include <thread>
 
 #if defined(ROCKNIX)
 // A line of the page's own text, at the standard text size, wrapped to the
@@ -95,6 +96,23 @@ public:
 	void setColor(unsigned int color) override
 	{
 		MultiLineMenuEntry::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
+	}
+private:
+	bool mDimmed = false;
+};
+
+// The OFFLINE ACHIEVEMENTS switch, dimmed while raofflineproxy-ctl is
+// enabling or disabling on its behalf (audit #186 PL-27): the same
+// per-frame colour rule as the entry above, so the dim is applied by the
+// switch itself.
+class DimmableSwitch : public SwitchComponent
+{
+public:
+	using SwitchComponent::SwitchComponent;
+	void setDimmed(bool dimmed) { mDimmed = dimmed; }
+	void setColor(unsigned int color) override
+	{
+		SwitchComponent::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
 	}
 private:
 	bool mDimmed = false;
@@ -249,7 +267,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 {
 	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS (BETA)").c_str());
 
-	auto offline = std::make_shared<SwitchComponent>(window);
+	auto offline = std::make_shared<DimmableSwitch>(window);
 	offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
 	s->addWithLabel(_("OFFLINE ACHIEVEMENTS (BETA)"), offline);
 
@@ -270,67 +288,115 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// the index knows it, which is INDEX NEW GAMES AT STARTUP's job.
 	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET. NEW GAMES ARE ADDED THE NEXT TIME YOU'RE CONNECTED."));
 
-	// A raw pointer on purpose: the callback lives inside the switch it
-	// captures, so a shared_ptr here would be a cycle that keeps the page
-	// alive forever. setState fires the change callback too, so a revert
-	// made from inside it would re-enter it: quiet while the code, not the
+	// Weak on purpose: the callback lives inside the switch it names, so a
+	// shared_ptr here would be a cycle that keeps the page alive forever --
+	// and the ctl's answer arrives from a thread after the page may have
+	// been closed. setState fires the change callback too, so a revert made
+	// from inside it would re-enter it: quiet while the code, not the
 	// player, sets the state.
-	SwitchComponent* offlineRow = offline.get();
+	std::weak_ptr<DimmableSwitch> offlineWeak = offline;
 	auto quiet = std::make_shared<bool>(false);
-	auto setQuietly = [offlineRow, quiet](bool state) { *quiet = true; offlineRow->setState(state); *quiet = false; };
-
-	auto apply = [window, offlineRow, hardcoreRow, setQuietly, scanRow](bool on)
+	auto setQuietly = [offlineWeak, quiet](bool state)
 	{
-		std::string last;
-		// executeScriptLegacy: the public route that hands back the real
-		// exit status and every line, as the cloud pages use it.
-		auto result = ApiSystem::executeScriptLegacy(std::string("/usr/bin/raofflineproxy-ctl ") + (on ? "enable" : "disable") + " 2>/dev/null",
-			[&last](const std::string line) { last = line; });
-		if (result.second != 0 || !Utils::String::startsWith(last, "hardcore="))
+		if (auto sw = offlineWeak.lock())
 		{
-			setQuietly(!on);
-			window->pushGui(new GuiMsgBox(window,
-				on ? _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED ON.") : _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED OFF."),
-				_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
-			return;
-		}
-		bool hardcoreNow = (last == "hardcore=1");
-		if (auto row = hardcoreRow.lock())
-			row->setState(hardcoreNow);
-		SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
-		SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
-		// The scan row reads the switch: on, it offers the scan; off, it
-		// says to turn the switch on first.
-		offlineScanRefresh(scanRow);
-
-		// Turning it on offers the scan at once (D-RA-012): without it a
-		// player who skips the row plays offline with nothing cached.
-		// Offline, one line says when to come back to it.
-		if (on)
-		{
-			if (offlineScanOnline())
-			{
-				std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS NOW?") + std::string("\n\n")
-					+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
-				window->pushGui(new GuiMsgBox(window, text,
-					_("SCAN NOW"), [window, scanRow] { offlineScanStart(window, scanRow); },
-					_("LATER"), nullptr));
-			}
-			else
-			{
-				window->pushGui(new GuiMsgBox(window,
-					_("YOU'RE NOT ONLINE. SCAN GAMES FOR OFFLINE ACHIEVEMENTS WHEN YOU'RE CONNECTED, SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE."),
-					_("OK")));
-			}
+			*quiet = true;
+			sw->setState(state);
+			*quiet = false;
 		}
 	};
 
-	offline->setOnChangedCallback([window, offlineRow, quiet, setQuietly, apply]
+	// The ctl runs from a thread of its own (audit #186 PL-27): disable
+	// waits on systemctl stop, up to the unit's fifteen seconds, and the
+	// interface thread never blocks on a process (es-native-ui.md). While it
+	// runs the switch is dimmed and refuses a second press; the rows are set
+	// from the ctl's answer on the interface thread (postToUiThread), the
+	// pattern sayAfterGame uses. Every row is held weakly: the player may
+	// have left the page, or the page below it, before the answer comes,
+	// and each row that is gone is simply not set -- system.cfg already
+	// holds what the ctl wrote, and the page below saves only what changed.
+	auto pending = std::make_shared<bool>(false);
+	auto apply = [window, offlineWeak, hardcoreRow, setQuietly, scanRow, pending](bool on)
+	{
+		if (*pending)
+			return;
+		*pending = true;
+		if (auto sw = offlineWeak.lock())
+			sw->setDimmed(true);
+
+		std::thread([window, on, offlineWeak, hardcoreRow, setQuietly, scanRow, pending]
+		{
+			std::string last;
+			// executeScriptLegacy: the public route that hands back the real
+			// exit status and every line, as the cloud pages use it.
+			auto result = ApiSystem::executeScriptLegacy(std::string("/usr/bin/raofflineproxy-ctl ") + (on ? "enable" : "disable") + " 2>/dev/null",
+				[&last](const std::string line) { last = line; });
+			const bool ok = result.second == 0 && Utils::String::startsWith(last, "hardcore=");
+			const bool hardcoreNow = (last == "hardcore=1");
+
+			window->postToUiThread([window, on, ok, hardcoreNow, offlineWeak, hardcoreRow, setQuietly, scanRow, pending]
+			{
+				*pending = false;
+				if (auto sw = offlineWeak.lock())
+					sw->setDimmed(false);
+
+				if (!ok)
+				{
+					setQuietly(!on);
+					window->pushGui(new GuiMsgBox(window,
+						on ? _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED ON.") : _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED OFF."),
+						_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
+					return;
+				}
+				if (auto row = hardcoreRow.lock())
+					row->setState(hardcoreNow);
+				SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
+				SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
+				// The scan row reads the switch: on, it offers the scan; off, it
+				// says to turn the switch on first.
+				offlineScanRefresh(scanRow);
+
+				// Turning it on offers the scan at once (D-RA-012): without it a
+				// player who skips the row plays offline with nothing cached.
+				// Offline, one line says when to come back to it.
+				if (on)
+				{
+					if (offlineScanOnline())
+					{
+						std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS NOW?") + std::string("\n\n")
+							+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
+						window->pushGui(new GuiMsgBox(window, text,
+							_("SCAN NOW"), [window, scanRow] { offlineScanStart(window, scanRow); },
+							_("LATER"), nullptr));
+					}
+					else
+					{
+						window->pushGui(new GuiMsgBox(window,
+							_("YOU'RE NOT ONLINE. SCAN GAMES FOR OFFLINE ACHIEVEMENTS WHEN YOU'RE CONNECTED, SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE."),
+							_("OK")));
+					}
+				}
+			});
+		}).detach();
+	};
+
+	offline->setOnChangedCallback([window, offlineWeak, quiet, setQuietly, apply, pending]
 	{
 		if (*quiet)
 			return;
+		auto sw = offlineWeak.lock();
+		if (!sw)
+			return;
 
-		if (!offlineRow->getState())
+		// A press while the ctl is still at work on the last one: the switch
+		// goes back to the state the ctl is making, and nothing else happens.
+		if (*pending)
+		{
+			setQuietly(!sw->getState());
+			return;
+		}
+
+		if (!sw->getState())
 		{
 			apply(false);
 			return;
