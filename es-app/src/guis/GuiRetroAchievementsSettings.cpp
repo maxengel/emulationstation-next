@@ -62,6 +62,19 @@ static void addInfoRow(GuiSettings* s, Window* window, const std::string& text)
 	s->addRow(row);
 }
 
+// A little air between the options and the text under them: an empty,
+// non-selectable row half a text line tall (RC-5 round, D-UI-054).
+static void addSpacerRow(GuiSettings* s, Window* window)
+{
+	auto theme = ThemeData::getMenuTheme();
+	auto gap = std::make_shared<GuiComponent>(window);
+	gap->setSize(0, theme->Text.font->getHeight() * 0.5f);
+	ComponentListRow row;
+	row.selectable = false;
+	row.addElement(gap, true);
+	s->addRow(row);
+}
+
 // SCAN GAMES FOR OFFLINE ACHIEVEMENTS (fork #179, D-RA-010): the proxy
 // serves a game offline only from what it cached while online, so a game
 // never started with a connection earned nothing offline. The row runs
@@ -230,25 +243,24 @@ static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Wind
 // this page's callbacks must never keep a row of the page below alive.
 static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponent> hardcoreRow)
 {
-	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS").c_str());
+	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS (BETA)").c_str());
 
 	auto offline = std::make_shared<SwitchComponent>(window);
 	offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
 	s->addWithLabel(_("OFFLINE ACHIEVEMENTS (BETA)"), offline);
 
-	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE."));
-	addInfoRow(s, window, _("CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF."));
-	// RetroArch's disconnected badge, explained where the RetroAchievements
-	// choices are made (fork #162): rcheevos shows it while an award or a
-	// score is waiting to reach the server, and says nothing about what it
-	// means. It was the parent page's subtitle, two lines of small text at
-	// 640x480 (#166); here it has a row of its own (D-RA-003).
-	addInfoRow(s, window, _("!RA! IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
-
-	// The scan, under the explanation of what the switch does: a row and
-	// one line, dimmed with its reason until the switch is on and the
-	// device has an address (fork #179, D-RA-010).
+	// The two options first -- the switch above, the scan under it -- then a
+	// little space, then one block of text that explains both (RC-5 round,
+	// D-UI-054: "the two options at the top of the page, a little space, and
+	// then some text explaining it"). The scan row is dimmed with its reason
+	// until the switch is on and the device has an address (fork #179,
+	// D-RA-010). RetroArch's disconnected badge is explained here because
+	// rcheevos shows it while an award is waiting to reach the server and
+	// says nothing about what it means (fork #162); it is quoted so it reads
+	// as a thing on screen and not as a typo (D-RA-003).
 	std::weak_ptr<DimmableMenuEntry> scanRow = addOfflineScanRow(s, window);
+	addSpacerRow(s, window);
+	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
 
 	// A raw pointer on purpose: the callback lives inside the switch it
 	// captures, so a shared_ptr here would be a cycle that keeps the page
