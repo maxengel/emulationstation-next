@@ -693,10 +693,22 @@ std::string RetroAchievements::getCheevosHash( SystemData* system, const std::st
 	return ret;
 }
 
-bool RetroAchievements::testAccount(const std::string& username, const std::string& password, std::string& tokenOrError)
+// refused, when asked for, says whether RetroAchievements itself turned the
+// account down -- it answered, and the answer was no, which is a wrong
+// username or password -- as against a server that could not be reached or
+// answered in a shape this does not read (#175). A caller keeping a switch
+// on the player's word needs the difference: a refusal is the account's to
+// fix, and anything else is tried again when the network is there.
+bool RetroAchievements::testAccount(const std::string& username, const std::string& password, std::string& tokenOrError, bool* refused)
 {
+	if (refused != nullptr)
+		*refused = false;
+
 	if (username.empty() || password.empty())
 	{
+		// Nothing to sign in with: the account is what is missing, not the network.
+		if (refused != nullptr)
+			*refused = true;
 		tokenOrError = _("A valid account is required. Please register an account on https://retroachievements.org");
 		return false;
 	}
@@ -730,6 +742,9 @@ bool RetroAchievements::testAccount(const std::string& username, const std::stri
 			return true;
 		}
 
+		// The server answered, and the answer is no.
+		if (refused != nullptr)
+			*refused = true;
 		if (ogdoc.HasMember("Error"))
 			tokenOrError = ogdoc["Error"].GetString();
 	}

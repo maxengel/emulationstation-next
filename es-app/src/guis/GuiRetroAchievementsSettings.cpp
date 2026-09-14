@@ -18,6 +18,7 @@
 #include "ThemeData.h"
 #include "Window.h"
 #include "LocaleES.h"
+#include "Log.h"
 #include <memory>
 
 #if defined(ROCKNIX)
@@ -252,6 +253,21 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 			mWindow->pushGui(new GuiHashStart(mWindow, ThreadedHasher::HASH_CHEEVOS_MD5));
 	});
 
+	// The switch is the player's choice, and this save writes that choice
+	// and nothing else (#175). The sign-in below decides the token only. It
+	// used to decide the switch as well: a sign-in that failed because the
+	// device was offline -- this page closed on a boot whose first attempt
+	// had run before the network was up, so no token was there to skip it
+	// -- wrote the switch off, and the RETROACHIEVEMENTS entry left the
+	// main menu with nothing on screen to say why.
+	//
+	// What the player is told depends on why it failed and on what they
+	// did. RetroAchievements turned the account down: said every time, the
+	// credentials are wrong and no retry changes that. RetroAchievements
+	// could not be reached after the switch was turned on or the account
+	// changed: said once, with what happens next. Could not be reached and
+	// nothing was changed: nothing to say -- the sign-in that runs when the
+	// network comes up (NetworkThread) finishes this on its own.
 	addSaveFunc([retroachievementsEnabled, retroachievements_enabled, username, password, window]
 	{
 		bool newState = retroachievements_enabled->getState();
@@ -259,20 +275,28 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 		std::string newPassword = SystemConf::getInstance()->get("global.retroachievements.password");
 		std::string token = SystemConf::getInstance()->get("global.retroachievements.token");
 
-		if (newState && (!retroachievementsEnabled || username != newUsername || password != newPassword || token.empty()))
+		bool accountChanged = !retroachievementsEnabled || username != newUsername || password != newPassword;
+		if (newState && (accountChanged || token.empty()))
 		{
 			std::string tokenOrError;
-			if (RetroAchievements::testAccount(newUsername, newPassword, tokenOrError))
-			{
+			bool refused = false;
+			if (RetroAchievements::testAccount(newUsername, newPassword, tokenOrError, &refused))
 				SystemConf::getInstance()->set("global.retroachievements.token", tokenOrError);
-			}
 			else
 			{
 				SystemConf::getInstance()->set("global.retroachievements.token", "");
 
-				window->pushGui(new GuiMsgBox(window, _("UNABLE TO ACTIVATE RETROACHIEVEMENTS:") + "\n" + tokenOrError, _("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
-				retroachievements_enabled->setState(false);
-				newState = false;
+				if (refused)
+					window->pushGui(new GuiMsgBox(window,
+						_("RETROACHIEVEMENTS DIDN'T ACCEPT YOUR SIGN-IN:") + "\n" + tokenOrError + "\n\n"
+						+ _("RETROACHIEVEMENTS STAYS ON. CHECK YOUR USERNAME AND PASSWORD, THEN TRY AGAIN."),
+						_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
+				else if (accountChanged)
+					window->pushGui(new GuiMsgBox(window,
+						_("COULDN'T REACH RETROACHIEVEMENTS TO SIGN YOU IN.\n\nRETROACHIEVEMENTS STAYS ON. IT'LL SIGN IN WHEN YOU'RE ONLINE."),
+						_("OK")));
+				else
+					LOG(LogWarning) << "retroachievements: could not reach RetroAchievements for a token (" << tokenOrError << "); the switch stays as set, and the sign-in runs when the network is up";
 			}
 		}
 		else if (!newState)

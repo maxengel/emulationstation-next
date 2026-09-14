@@ -17,7 +17,8 @@ NetworkThread::NetworkThread(Window* window) : mWindow(window)
 
 	mgr->RegisterComponent(&mCheckCheevosTokenComponent);
 	mgr->RegisterComponent(new BatteryLevelWatcher());
-	mgr->RegisterComponent(new NetworkStateWatcher());
+	mNetworkStateWatcher = new NetworkStateWatcher();
+	mgr->RegisterComponent(mNetworkStateWatcher);
 
 	if (ApiSystem::getInstance()->isScriptingSupported(ApiSystem::UPGRADE))
 		mgr->RegisterComponent(&mCheckUpdatesComponent);
@@ -114,8 +115,10 @@ bool CheckCheevosTokenComponent::check()
 		return false;
 
 	std::string tokenOrError;
-	if (RetroAchievements::testAccount(cheevosUsername, cheevosPassword, tokenOrError))
+	bool refused = false;
+	if (RetroAchievements::testAccount(cheevosUsername, cheevosPassword, tokenOrError, &refused))
 	{
+		mRetryWhenOnline = false;
 		if (tokenOrError == SystemConf::getInstance()->get("global.retroachievements.token"))
 		{
 			LOG(LogInfo) << "[CheckCheevosTokenComponent] Cheevos token is unchanged.";
@@ -129,6 +132,11 @@ bool CheckCheevosTokenComponent::check()
 	}
 	else
 	{
+		// A refusal is the account's to fix and no network changes it; any
+		// other failure is the first check of a boot running before the
+		// link was up (#175), and NetworkThread asks for it again when
+		// the network arrives.
+		mRetryWhenOnline = !refused;
 		LOG(LogError) << "[CheckCheevosTokenComponent] Failed to generate a new cheevos token: " << tokenOrError;		
 	}
 
@@ -154,6 +162,22 @@ void NetworkThread::OnWatcherChanged(IWatcher* component)
 		auto pads = mCheckPadsBatteryLevelComponent.getPadsInfo();
 
 		mWindow->postToUiThread([pads]() { for (auto pad : pads) InputManager::getInstance()->updateBatteryLevel(pad.id, pad.device, pad.path, pad.battery); });
+		return;
+	}
+
+	if (component == mNetworkStateWatcher)
+	{
+		// The first sign-in of a boot can run before the network is up and
+		// fail (#175); the next scheduled one is two hours off, and the
+		// launch scripts read the token it would have written. So when the
+		// network arrives, ask for that check now. Posted to the interface
+		// thread: this runs on the watchers' thread, under the lock that
+		// ResetComponent takes.
+		if (mNetworkStateWatcher->isConnected() && mCheckCheevosTokenComponent.retryWhenOnline())
+		{
+			CheckCheevosTokenComponent* cheevos = &mCheckCheevosTokenComponent;
+			mWindow->postToUiThread([cheevos]() { WatchersManager::getInstance()->ResetComponent(cheevos); });
+		}
 		return;
 	}
 

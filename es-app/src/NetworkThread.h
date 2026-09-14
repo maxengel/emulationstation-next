@@ -50,6 +50,11 @@ class CheckCheevosTokenComponent : public IWatcher
 public:
 	std::string& getLastToken() { return mLastToken; }
 
+	// The last check could not reach RetroAchievements, as against being
+	// turned down by it: worth running again as soon as the network is up
+	// (#175), rather than at the next scheduled check two hours on.
+	bool retryWhenOnline() const { return mRetryWhenOnline; }
+
 protected:
 	bool enabled() override;
 	int  updateTime() override { return 120 * 60 * 1000; } // 120 minutes
@@ -58,7 +63,10 @@ protected:
 
 private:
 	std::string mLastToken;
+	bool mRetryWhenOnline = false;
 };
+
+class NetworkStateWatcher;
 
 class NetworkThread : public IJoystickChangedEvent, public IWatcherNotify
 {
@@ -74,6 +82,7 @@ private:
 	CheckPadsBatteryLevelComponent					mCheckPadsBatteryLevelComponent;
 	CheckUpdatesComponent							mCheckUpdatesComponent;
 	CheckCheevosTokenComponent						mCheckCheevosTokenComponent;
+	NetworkStateWatcher*							mNetworkStateWatcher;
 	Window* mWindow;
 };
 
