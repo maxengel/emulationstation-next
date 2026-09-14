@@ -228,15 +228,15 @@ std::string GuiOfflineScan::readyPhrase(int ready)
 	return std::to_string(ready) + " " + std::string(_("GAMES READY FOR OFFLINE PLAY"));
 }
 
-// "GAMES ADDED: 3 . WITHOUT ACHIEVEMENTS: 12" -- what this run did, as it
-// goes and once done. The colon form keeps the count out of the noun, so
-// no language has to agree a plural with it.
+// "GAMES WITH ACHIEVEMENTS ADDED: 3" -- what this run did. The games without
+// a set are not counted here: the maintainer, on the RG SP with RC-5 (2026-09-14),
+// "I'm not that concerned about the games that don't have achievements [...]
+// I just want to know that it's scanning through the games with achievements."
+// The count still travels in the stamp for the log (skipped), unused here.
 std::string GuiOfflineScan::countsLine(int cached, int skipped)
 {
-	// The colon travels with the words: French puts a space before it
-	// (D-UI-051), so it is the translation's to place.
-	return std::string(_("GAMES ADDED:")) + " " + std::to_string(cached)
-		+ " · " + std::string(_("WITHOUT ACHIEVEMENTS:")) + " " + std::to_string(skipped);
+	(void) skipped;
+	return std::string(_("GAMES WITH ACHIEVEMENTS ADDED:")) + " " + std::to_string(cached);
 }
 
 void GuiOfflineScan::update(int deltaTime)
