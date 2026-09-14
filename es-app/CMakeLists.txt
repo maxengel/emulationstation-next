@@ -51,6 +51,7 @@ set(ES_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudExit.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudOffer.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudText.h
+	${CMAKE_CURRENT_SOURCE_DIR}/src/CheevosRetry.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievements.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/SystemRandomPlaylist.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/LangParser.h
@@ -168,6 +169,7 @@ set(ES_SOURCES
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedCloudSync.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudOffer.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudText.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/src/CheevosRetry.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievements.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/SystemRandomPlaylist.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/LangParser.cpp

@@ -10,8 +10,9 @@ The top level carries them too, under `-DES_BUILD_TESTS=ON` (default OFF, so an
 image build never sees them).
 
 **Belongs here:** functions that read nothing, ask nothing and draw nothing -- a
-parser, a label, a rule about a string. Today `es-app/src/CloudText.cpp`, tested
-with doctest (`external/doctest/doctest.h`); the binary compiles that file,
+parser, a label, a rule about a string, a schedule. Today `es-app/src/CloudText.cpp`
+and `es-app/src/CheevosRetry.cpp` (#175), tested with doctest
+(`external/doctest/doctest.h`); the binary compiles those two files,
 `es-core/src/utils/StringUtil.cpp`, and the tests, and no more.
 
 **Does not:** anything touching `Window`, `Settings`, `SystemConf`, a font, a

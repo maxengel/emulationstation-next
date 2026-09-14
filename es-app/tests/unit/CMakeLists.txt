@@ -18,12 +18,15 @@ endif()
 
 get_filename_component(ES_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUTE)
 
-# Two files of EmulationStation and no more: the pure text, and the string
-# helpers it calls. Anything that needs a window, a font or a file does not
-# belong in this binary -- see README.md.
+# Three files of EmulationStation and no more: the pure text, the string
+# helpers it calls, and the token check's retry schedule. Anything that
+# needs a window, a font or a file does not belong in this binary -- see
+# README.md.
 add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/CloudTextTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/CheevosRetryTests.cpp
 	${ES_ROOT}/es-app/src/CloudText.cpp
+	${ES_ROOT}/es-app/src/CheevosRetry.cpp
 	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
 )
 

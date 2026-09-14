@@ -105,6 +105,11 @@ bool CheckCheevosTokenComponent::enabled()
 
 bool CheckCheevosTokenComponent::check()
 {
+	// The regular schedule unless this check decides otherwise below, so a
+	// check that returns early -- the switch off, no account -- never
+	// inherits a short retry from the one before it.
+	mNextDelayMs = CheevosRetry::ScheduledMs;
+
 	if (!enabled())
 		return false;
 
@@ -119,6 +124,7 @@ bool CheckCheevosTokenComponent::check()
 	if (RetroAchievements::testAccount(cheevosUsername, cheevosPassword, tokenOrError, &refused))
 	{
 		mRetryWhenOnline = false;
+		mUnreachableInARow = 0;
 		if (tokenOrError == SystemConf::getInstance()->get("global.retroachievements.token"))
 		{
 			LOG(LogInfo) << "[CheckCheevosTokenComponent] Cheevos token is unchanged.";
@@ -137,10 +143,32 @@ bool CheckCheevosTokenComponent::check()
 		// link was up (#175), and NetworkThread asks for it again when
 		// the network arrives.
 		mRetryWhenOnline = !refused;
-		LOG(LogError) << "[CheckCheevosTokenComponent] Failed to generate a new cheevos token: " << tokenOrError;		
+		mUnreachableInARow = refused ? 0 : mUnreachableInARow + 1;
+		LOG(LogError) << "[CheckCheevosTokenComponent] Failed to generate a new cheevos token: " << tokenOrError;
+
+		// That network-up check can itself run before the resolver answers
+		// (RC-3 on #175: "Could not resolve hostname" five seconds after
+		// the address), and the watcher only speaks when the link changes.
+		// So while the link is up, try again shortly, a bounded number of
+		// times; WatchersManager reads updateTime() right after this.
+		mNextDelayMs = CheevosRetry::nextDelayMs(mRetryWhenOnline, mOnline, mUnreachableInARow);
+		if (mNextDelayMs != CheevosRetry::ScheduledMs)
+		{
+			LOG(LogWarning) << "[CheckCheevosTokenComponent] The network is up, so trying again in " << (mNextDelayMs / 1000) << " s (" << mUnreachableInARow << " of " << CheevosRetry::Attempts << ")";
+		}
 	}
 
 	return false;
+}
+
+void CheckCheevosTokenComponent::setOnline(bool online)
+{
+	// A link that has just come up opens a new window: the failures before
+	// it were the old link's, or no link's at all.
+	if (online && !mOnline)
+		mUnreachableInARow = 0;
+
+	mOnline = online;
 }
 
 
@@ -172,8 +200,13 @@ void NetworkThread::OnWatcherChanged(IWatcher* component)
 		// launch scripts read the token it would have written. So when the
 		// network arrives, ask for that check now. Posted to the interface
 		// thread: this runs on the watchers' thread, under the lock that
-		// ResetComponent takes.
-		if (mNetworkStateWatcher->isConnected() && mCheckCheevosTokenComponent.retryWhenOnline())
+		// ResetComponent takes. The component hears about the link first,
+		// on this same thread, so the check that follows knows it is worth
+		// a short retry if the resolver is not answering yet.
+		bool online = mNetworkStateWatcher->isConnected();
+		mCheckCheevosTokenComponent.setOnline(online);
+
+		if (online && mCheckCheevosTokenComponent.retryWhenOnline())
 		{
 			CheckCheevosTokenComponent* cheevos = &mCheckCheevosTokenComponent;
 			mWindow->postToUiThread([cheevos]() { WatchersManager::getInstance()->ResetComponent(cheevos); });
