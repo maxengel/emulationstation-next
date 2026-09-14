@@ -9099,15 +9099,23 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	s->addWithLabel(_("TAILSCALE VPN"), tailscale);
 	tailscale->setOnChangedCallback([this, tailscale] {
 		bool tsEnabled = tailscale->getState();
+		// The setting records what the player chose, not what a seven-second
+		// probe saw. It is what 004-tailscaled reads at boot to start the
+		// daemon, so writing the probe's result there meant that a switch
+		// turned on while the node still needed to sign in (tailscale status
+		// says "Logged out.") persisted "0": the daemon kept running and the
+		// player signed in through the URL, but the next restart read "0"
+		// and stopped it (fork #174). The sign-in popup stays informational.
+		SystemConf::getInstance()->set("tailscale.up", tsEnabled ? "1" : "0");
+		SystemConf::getInstance()->saveSystemConf();
 		if (tsEnabled) {
 			Utils::Platform::runSystemCommand("systemctl start tailscaled", "", nullptr);
 			Utils::Platform::runSystemCommand("tailscale up --timeout=7s", "", nullptr);
-			tsEnabled = IsTailscaleUp(mWindow);
+			IsTailscaleUp(mWindow);
 		} else {
 			Utils::Platform::runSystemCommand("tailscale down", "", nullptr);
 			Utils::Platform::runSystemCommand("systemctl stop tailscaled", "", nullptr);
 		}
-		SystemConf::getInstance()->set("tailscale.up", tsEnabled ? "1" : "0");
 	});
 
 
