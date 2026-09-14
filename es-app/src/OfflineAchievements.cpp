@@ -78,6 +78,7 @@ void OfflineAchievements::sayAfterGame(Window* window)
 	// just exited on a handheld. The stamp is consumed first so a flush that
 	// already happened is not told after the awards that followed it; the
 	// waiting awards are the newer fact, so they win when both are true.
+	// The two sentences are the sync card's, verbatim (D-RA-017).
 	std::thread([window]
 	{
 		const bool sent = takeFlushed();

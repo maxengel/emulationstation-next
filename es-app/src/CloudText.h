@@ -317,7 +317,8 @@ namespace CloudText
 	FlushStamp parseFlushStamp(const std::string& text);
 
 	// Which of the sentences the exit card ends on, from what is waiting
-	// (D-RA-004): awards, awards and saves, saves, or nothing to say. The
+	// (D-RA-004; the sentences themselves are D-RA-017's): awards, awards
+	// and saves, saves, or nothing to say. The
 	// saves are "pending" when the exit sync could not run for want of a
 	// connection; awards when the ctl counted any. Translation stays with
 	// the caller.
