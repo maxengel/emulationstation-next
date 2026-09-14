@@ -104,8 +104,10 @@ OfflineAchievementsText::Game OfflineAchievementsText::parsePatch(const std::str
 		return game;
 	game.title = jsonString(patch, "Title");
 	game.imageUrl = jsonString(patch, "ImageIcon");
-	if (patch.HasMember("Achievements"))
-		readAchievements(patch["Achievements"], game.achievements);
+	// A set with nothing in it is not a cached game (PL-26).
+	if (!patch.HasMember("Achievements") || !patch["Achievements"].IsArray() || patch["Achievements"].Empty())
+		return game;
+	readAchievements(patch["Achievements"], game.achievements);
 	game.ok = true;
 	return game;
 }
@@ -123,34 +125,39 @@ OfflineAchievementsText::Game OfflineAchievementsText::parseAchievementSets(cons
 	game.title = jsonString(doc, "Title");
 	game.imageUrl = jsonString(doc, "ImageIconUrl");
 
-	if (doc.HasMember("Sets") && doc["Sets"].IsArray())
+	if (!doc.HasMember("Sets") || !doc["Sets"].IsArray())
+		return game;
+	const rapidjson::Value* chosen = nullptr;
+	for (const auto& set : doc["Sets"].GetArray())
 	{
-		const rapidjson::Value* chosen = nullptr;
-		for (const auto& set : doc["Sets"].GetArray())
+		if (!set.IsObject())
+			continue;
+		if (chosen == nullptr)
+			chosen = &set;
+		if (jsonString(set, "Type") == "core")
 		{
-			if (!set.IsObject())
-				continue;
-			if (chosen == nullptr)
-				chosen = &set;
-			if (jsonString(set, "Type") == "core")
-			{
-				chosen = &set;
-				break;
-			}
+			chosen = &set;
+			break;
 		}
-		if (chosen != nullptr && chosen->HasMember("Achievements"))
-			readAchievements((*chosen)["Achievements"], game.achievements);
 	}
+	// No set, or a set with nothing in it, is not a cached game (PL-26).
+	if (chosen == nullptr || !chosen->HasMember("Achievements") || !(*chosen)["Achievements"].IsArray() || (*chosen)["Achievements"].Empty())
+		return game;
+	readAchievements((*chosen)["Achievements"], game.achievements);
 	game.ok = true;
 	return game;
 }
 
-std::vector<int> OfflineAchievementsText::parseUnlocks(const std::string& body)
+OfflineAchievementsText::Unlocks OfflineAchievementsText::parseUnlocks(const std::string& body)
 {
-	std::vector<int> ids;
+	Unlocks unlocks;
 	rapidjson::Document doc;
 	if (!parseDocument(body, doc) || !doc.HasMember("UserUnlocks") || !doc["UserUnlocks"].IsArray())
-		return ids;
+		return unlocks;
+	// Success false with a list would be the proxy contradicting itself;
+	// not the shape either.
+	if (doc.HasMember("Success") && doc["Success"].IsBool() && !doc["Success"].GetBool())
+		return unlocks;
 	for (const auto& v : doc["UserUnlocks"].GetArray())
 	{
 		int id = 0;
@@ -159,9 +166,10 @@ std::vector<int> OfflineAchievementsText::parseUnlocks(const std::string& body)
 		else if (v.IsString())
 			id = Utils::String::toInteger(v.GetString());
 		if (id > 0)
-			ids.push_back(id);
+			unlocks.ids.push_back(id);
 	}
-	return ids;
+	unlocks.ok = true;
+	return unlocks;
 }
 
 std::string OfflineAchievementsText::parseError(const std::string& body)

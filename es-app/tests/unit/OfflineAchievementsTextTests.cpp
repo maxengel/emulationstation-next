@@ -84,10 +84,17 @@ TEST_CASE("parsePatch on what is not a cached game")
 	CHECK_FALSE(parsePatch(R"({"Success":true,"PatchData":{"ID":0,"Title":"x"}})").ok);
 	CHECK_FALSE(parsePatch(R"({"Success":true,"PatchData":"x"})").ok);
 
-	// A game with no achievements yet is still a game: the page says so.
-	const Game none = parsePatch(R"({"Success":true,"PatchData":{"ID":42,"Title":"Empty","Achievements":[]}})");
-	CHECK(none.ok);
-	CHECK(none.achievements.empty());
+	// A 200 with no achievements is not a cached game (audit #186 PL-26):
+	// the proxy caches a game for its set, and an empty or missing list
+	// must not become a page of "0 of 0". A set the filter empties -- all
+	// unofficial -- is still the shape, with nothing to show.
+	CHECK_FALSE(parsePatch(R"({"Success":true,"PatchData":{"ID":42,"Title":"Empty","Achievements":[]}})").ok);
+	CHECK_FALSE(parsePatch(R"({"Success":true,"PatchData":{"ID":42,"Title":"None"}})").ok);
+	CHECK_FALSE(parsePatch(R"({"Success":true,"PatchData":{"ID":42,"Title":"Odd","Achievements":"x"}})").ok);
+	CHECK_FALSE(parsePatch(R"({"Success":true,"PatchData":{"ID":42,"Title":"Odd","Achievements":{"ID":1}}})").ok);
+	const Game unofficial = parsePatch(R"({"Success":true,"PatchData":{"ID":42,"Title":"WIP","Achievements":[{"ID":7,"Title":"x","Points":1,"Flags":5}]}})");
+	CHECK(unofficial.ok);
+	CHECK(unofficial.achievements.empty());
 }
 
 // ---------------------------------------------------------- achievementsets
@@ -115,6 +122,13 @@ TEST_CASE("parseAchievementSets falls back to the first set, and refuses the res
 	CHECK_FALSE(parseAchievementSets("").ok);
 	CHECK_FALSE(parseAchievementSets(R"({"Success":true,"GameId":0})").ok);
 
+	// No sets, or a core set with nothing in it: not a cached game (PL-26).
+	CHECK_FALSE(parseAchievementSets(R"({"Success":true,"GameId":7,"Title":"T"})").ok);
+	CHECK_FALSE(parseAchievementSets(R"({"Success":true,"GameId":7,"Title":"T","Sets":[]})").ok);
+	CHECK_FALSE(parseAchievementSets(R"({"Success":true,"GameId":7,"Title":"T","Sets":[{"Type":"core","Achievements":[]}]})").ok);
+	CHECK_FALSE(parseAchievementSets(R"({"Success":true,"GameId":7,"Title":"T","Sets":[{"Type":"core"}]})").ok);
+	CHECK_FALSE(parseAchievementSets(R"({"Success":true,"GameId":7,"Title":"T","Sets":"core"})").ok);
+
 	// The patch shape is not this shape.
 	CHECK_FALSE(parseAchievementSets(PATCH).ok);
 	CHECK_FALSE(parsePatch(SETS).ok);
@@ -125,25 +139,50 @@ TEST_CASE("parseAchievementSets falls back to the first set, and refuses the res
 TEST_CASE("parseUnlocks reads the merged ids and nothing else")
 {
 	// As captured: one unlock on the QA account.
-	const auto one = parseUnlocks(R"({"Success":true,"GameID":15738,"HardcoreMode":false,"UserUnlocks":[100359]})");
-	REQUIRE(one.size() == 1);
-	CHECK(one[0] == 100359);
+	const Unlocks one = parseUnlocks(R"({"Success":true,"GameID":15738,"HardcoreMode":false,"UserUnlocks":[100359]})");
+	REQUIRE(one.ok);
+	REQUIRE(one.ids.size() == 1);
+	CHECK(one.ids[0] == 100359);
 
 	// An unknown game answers 200 with an empty list -- the same as a
-	// cached game nobody has unlocked anything in. This says nothing about
-	// whether the game is cached, and the caller must not read it so.
-	CHECK(parseUnlocks(R"({"Success":true,"UserUnlocks":[]})").empty());
+	// cached game nobody has unlocked anything in. The shape is right and
+	// the list is empty; this says nothing about whether the game is
+	// cached, and the caller must not read it so.
+	const Unlocks none = parseUnlocks(R"({"Success":true,"UserUnlocks":[]})");
+	CHECK(none.ok);
+	CHECK(none.ids.empty());
 
-	const auto many = parseUnlocks(R"({"Success":true,"UserUnlocks":[3,"4",0,-1,"x",5]})");
-	REQUIRE(many.size() == 3);
-	CHECK(many[0] == 3);
-	CHECK(many[1] == 4);
-	CHECK(many[2] == 5);
+	const Unlocks many = parseUnlocks(R"({"Success":true,"UserUnlocks":[3,"4",0,-1,"x",5]})");
+	REQUIRE(many.ok);
+	REQUIRE(many.ids.size() == 3);
+	CHECK(many.ids[0] == 3);
+	CHECK(many.ids[1] == 4);
+	CHECK(many.ids[2] == 5);
+}
 
-	CHECK(parseUnlocks("").empty());
-	CHECK(parseUnlocks("junk").empty());
-	CHECK(parseUnlocks(R"({"Success":true,"UserUnlocks":"3"})").empty());
-	CHECK(parseUnlocks(R"({"Success":false,"Error":"offline"})").empty());
+TEST_CASE("parseUnlocks on what is not the unlocks shape: not ok, never an empty list (audit #186 PL-26)")
+{
+	// Each of these used to read as "nothing unlocked" and lock every badge.
+	for (const char* body : {
+		"",
+		"junk",
+		"[]",
+		"[100359]",
+		R"({"Success":true})",
+		R"({"Success":true,"UserUnlocks":"3"})",
+		R"({"Success":true,"UserUnlocks":100359})",
+		R"({"Success":true,"UserUnlocks":{"a":1}})",
+		R"({"Success":true,"UserUnlocks":null})",
+		R"({"Success":false,"Error":"offline"})",
+		R"({"Success":false,"UserUnlocks":[100359]})",
+		R"({"Success":false,"Error":"no cached response"})",
+		"Couldn't connect to server" })
+	{
+		INFO(body);
+		const Unlocks u = parseUnlocks(body);
+		CHECK_FALSE(u.ok);
+		CHECK(u.ids.empty());
+	}
 }
 
 // ------------------------------------------------------------------- error
