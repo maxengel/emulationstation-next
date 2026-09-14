@@ -607,3 +607,58 @@ int forwardOnly(int shown, int proposed)
 }
 
 } // namespace CloudText
+
+// ---------------------------------------------------------------- offline achievements
+
+int CloudText::parsePendingCount(const std::string& text)
+{
+	const std::string t = Utils::String::trim(text);
+	if (t.empty() || t.size() > 9)
+		return -1;
+	for (char c : t)
+		if (c < '0' || c > '9')
+			return -1;
+	return std::stoi(t);
+}
+
+CloudText::FlushStamp CloudText::parseFlushStamp(const std::string& text)
+{
+	FlushStamp stamp;
+
+	// One line, two fields, both whole numbers, the count above zero.
+	std::string line = text;
+	const size_t newline = line.find('\n');
+	if (newline != std::string::npos)
+		line = line.substr(0, newline);
+	const std::vector<std::string> fields = Utils::String::split(Utils::String::trim(line), ' ', true);
+	if (fields.size() != 2)
+		return stamp;
+	for (const std::string& f : fields)
+	{
+		if (f.empty() || f.size() > 12)
+			return stamp;
+		for (char c : f)
+			if (c < '0' || c > '9')
+				return stamp;
+	}
+	const long long when = std::stoll(fields[0]);
+	const int flushed = fields[1].size() > 9 ? 0 : std::stoi(fields[1]);
+	if (when <= 0 || flushed <= 0)
+		return stamp;
+
+	stamp.ok = true;
+	stamp.when = (time_t) when;
+	stamp.flushed = flushed;
+	return stamp;
+}
+
+CloudText::NextTime CloudText::nextTime(bool awardsPending, bool savesPending)
+{
+	if (awardsPending && savesPending)
+		return NextTime::AwardsAndSaves;
+	if (awardsPending)
+		return NextTime::Awards;
+	if (savesPending)
+		return NextTime::Saves;
+	return NextTime::None;
+}

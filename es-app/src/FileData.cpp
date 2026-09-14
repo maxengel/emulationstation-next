@@ -32,6 +32,7 @@
 #include "LocaleES.h"
 #include "guis/GuiMsgBox.h"
 #include "ThreadedCloudSync.h"
+#include "OfflineAchievements.h"
 #include "Paths.h"
 #include "resources/TextureData.h"
 #include "views/gamelist/GameNameFormatter.h"
@@ -907,6 +908,13 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	{
 		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent --automatic",
 			_("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
+	}
+	else
+	{
+		// No sync card to ride (fork #173, D-RA-004): the offline
+		// achievements still get their sentence, as a toast, when the proxy
+		// is holding awards for the next connection or has just sent some.
+		OfflineAchievements::sayAfterGame(window);
 	}
 
 	if (system != nullptr && system->getTheme() != nullptr)

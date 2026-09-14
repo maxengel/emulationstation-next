@@ -293,6 +293,36 @@ namespace CloudText
 	// The bar never moves back once a phase is known: the larger of what is
 	// drawn and what is proposed, with -1 on either side meaning nothing.
 	int forwardOnly(int shown, int proposed);
+
+	// The offline RetroAchievements proxy's answers, read as text (fork
+	// #173, D-RA-004). raofflineproxy-ctl prints them; OfflineAchievements
+	// runs it; what the lines mean is settled here, where it has a test.
+
+	// "N" from raofflineproxy-ctl pending: the count of casual awards
+	// waiting for a connection. -1 for anything that is not one whole
+	// number on its own -- a missing answer must never read as a count, or
+	// the card promises a send on the strength of nothing.
+	int parsePendingCount(const std::string& text);
+
+	// "<epoch> <flushed>" from raofflineproxy-ctl flushed: the stamp the
+	// proxy leaves after a flush that sent awards. ok is false for a line of
+	// any other shape and for a count of zero -- a stamp that says nothing
+	// went is not a stamp.
+	struct FlushStamp
+	{
+		bool ok = false;
+		time_t when = 0;
+		int flushed = 0;
+	};
+	FlushStamp parseFlushStamp(const std::string& text);
+
+	// Which of the sentences the exit card ends on, from what is waiting
+	// (D-RA-004): awards, awards and saves, saves, or nothing to say. The
+	// saves are "pending" when the exit sync could not run for want of a
+	// connection; awards when the ctl counted any. Translation stays with
+	// the caller.
+	enum class NextTime { None, Awards, AwardsAndSaves, Saves };
+	NextTime nextTime(bool awardsPending, bool savesPending);
 }
 
 #endif // ES_APP_CLOUD_TEXT_H

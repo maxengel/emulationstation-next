@@ -826,3 +826,62 @@ TEST_CASE("forwardOnly never moves the bar back")
 	bar = forwardOnly(bar, phaseBar(Phase::Sending, 30));    CHECK(bar == 65);
 	bar = forwardOnly(bar, phaseBar(Phase::Sending, 100));   CHECK(bar == 100);
 }
+
+// ---------------------------------------------------------------- offline achievements (#173)
+
+TEST_CASE("parsePendingCount reads one whole number and nothing else")
+{
+	// What raofflineproxy-ctl pending prints: the count on one line.
+	CHECK(parsePendingCount("0") == 0);
+	CHECK(parsePendingCount("1") == 1);
+	CHECK(parsePendingCount("12\n") == 12);
+	CHECK(parsePendingCount("  3  ") == 3);
+
+	// Anything else is not a count. -1 is the caller's "say nothing": an
+	// answer that is missing must never read as awards waiting.
+	CHECK(parsePendingCount("") == -1);
+	CHECK(parsePendingCount("\n") == -1);
+	CHECK(parsePendingCount("-1") == -1);
+	CHECK(parsePendingCount("1 2") == -1);
+	CHECK(parsePendingCount("hardcore=0") == -1);
+	CHECK(parsePendingCount("Usage: raofflineproxy-ctl {enable|disable}") == -1);
+	CHECK(parsePendingCount("1.5") == -1);
+	CHECK(parsePendingCount("99999999999999") == -1);
+}
+
+TEST_CASE("parseFlushStamp reads the proxy's last-flush line")
+{
+	// "<epoch> <flushed>", as flusher.py writes it and the ctl prints it.
+	FlushStamp s = parseFlushStamp("1789337156 2\n");
+	CHECK(s.ok);
+	CHECK(s.when == 1789337156);
+	CHECK(s.flushed == 2);
+
+	s = parseFlushStamp("  1789337156 1  ");
+	CHECK(s.ok);
+	CHECK(s.flushed == 1);
+
+	// A stamp that says nothing went is not a stamp; neither is any other
+	// shape. The ctl already refuses these, and so does the reader, so a
+	// stamp reaching the card by another route is judged the same way.
+	CHECK_FALSE(parseFlushStamp("1789337156 0").ok);
+	CHECK_FALSE(parseFlushStamp("1789337156").ok);
+	CHECK_FALSE(parseFlushStamp("1789337156 2 3").ok);
+	CHECK_FALSE(parseFlushStamp("0 2").ok);
+	CHECK_FALSE(parseFlushStamp("garbage").ok);
+	CHECK_FALSE(parseFlushStamp("1789337156 two").ok);
+	CHECK_FALSE(parseFlushStamp("-1 2").ok);
+	CHECK_FALSE(parseFlushStamp("").ok);
+	CHECK_FALSE(parseFlushStamp("\n1789337156 2").ok);
+	CHECK_FALSE(parseFlushStamp("1789337156 99999999999").ok);
+}
+
+TEST_CASE("nextTime names the sentence the exit card ends on")
+{
+	// D-RA-004: awards waiting, saves waiting (the exit sync could not run
+	// for want of a connection), both, or nothing to say.
+	CHECK(nextTime(true, true) == NextTime::AwardsAndSaves);
+	CHECK(nextTime(true, false) == NextTime::Awards);
+	CHECK(nextTime(false, true) == NextTime::Saves);
+	CHECK(nextTime(false, false) == NextTime::None);
+}

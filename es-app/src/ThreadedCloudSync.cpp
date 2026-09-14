@@ -2,6 +2,7 @@
 #include "CloudExit.h"
 #include "CloudOffer.h"
 #include "CloudText.h"
+#include "OfflineAchievements.h"
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
 #include "guis/GuiMsgBox.h"
@@ -457,6 +458,27 @@ void ThreadedCloudSync::run()
 	if (mOrigin != Origin::Manual || CloudText::verbOf(mCommand) == CloudText::Verb::Sync)
 		recordOutcome(mOrigin, ret, token, mWhy);
 
+	// Offline achievements ride this card (fork #173, D-RA-004): no monitor
+	// of their own, no mention of the link, only what happens next. As the
+	// exit card ends, the proxy is asked how many casual awards it is still
+	// holding; as any automatic card that reached the network ends, whether
+	// a batch of them has just gone (the proxy's flush stamp, read once and
+	// cleared). Each is a process, so both are asked here on the worker,
+	// after the stamp and before the card speaks. Not after a launch cancel:
+	// the player is on their way into a game.
+	int pendingAwards = -1;
+	bool awardsSent = false;
+	if (!cancelled && (mOrigin == Origin::Exit || mOrigin == Origin::Startup) && OfflineAchievements::available())
+	{
+		if (ret != CloudExit::NoNetwork)
+			awardsSent = OfflineAchievements::takeFlushed();
+		if (mOrigin == Origin::Exit)
+			pendingAwards = OfflineAchievements::pendingAwards();
+	}
+	// Said as a toast after the card when the card's action line is taken
+	// by a failure's own in-place and recovery clauses.
+	std::string sayAfter;
+
 	// One surface for the whole event.
 	//
 	// The card used to vanish the instant the work ended, and the outcome
@@ -475,10 +497,58 @@ void ThreadedCloudSync::run()
 		// clause names the surface that runs it again: for an automatic
 		// sync, when that is; for one the player pressed, the row.
 		std::vector<std::string> action;
-		if (!completed)
+		// The wording is the maintainer's, provisional, one string each so it
+		// can change (D-RA-004): "sync" stays the saves' word and awards are
+		// "sent" (D-UI-022).
+		const std::string awardsWaiting = _("OFFLINE ACHIEVEMENTS WILL BE SENT NEXT TIME YOU'RE CONNECTED.");
+		const std::string awardsWent = _("OFFLINE ACHIEVEMENTS HAVE BEEN SENT TO RETROACHIEVEMENTS.");
+		if (completed)
+		{
+			// A completed sync has a blank action line; the achievements
+			// take it. The waiting awards are the newer fact when both are
+			// true.
+			if (pendingAwards > 0)
+				action.push_back(awardsWaiting);
+			else if (awardsSent)
+				action.push_back(awardsWent);
+		}
+		else if (mOrigin == Origin::Exit && ret == CloudExit::NoNetwork)
+		{
+			// The exit sync could not run for want of a connection: the
+			// action line says what happens next to the saves, and to the
+			// awards when any are waiting (CloudText::nextTime). Candidates
+			// longest first, as everywhere on this card: the in-place clause
+			// goes first when the line is short of room, and where the
+			// two-part sentence itself does not fit -- it does not, at
+			// 640x480 -- the awards sentence stands alone, because the
+			// outcome line above it has already said the saves did not go.
+			const std::string inPlace = inPlaceClause(CloudText::verbOf(mCommand), mMoved);
+			const std::string savesWaiting = _("SAVES WILL BE SYNCED NEXT TIME YOU'RE CONNECTED.");
+			const std::string bothWaiting = _("OFFLINE ACHIEVEMENTS WILL BE SENT AND SAVES SYNCED NEXT TIME YOU'RE CONNECTED.");
+			switch (CloudText::nextTime(pendingAwards > 0, true))
+			{
+			case CloudText::NextTime::AwardsAndSaves:
+				action.push_back(inPlace + " " + bothWaiting);
+				action.push_back(bothWaiting);
+				action.push_back(awardsWaiting);
+				break;
+			default:
+				action.push_back(inPlace + " " + savesWaiting);
+				action.push_back(savesWaiting);
+				break;
+			}
+		}
+		else
 		{
 			const CloudText::Verb verb = CloudText::verbOf(mCommand);
 			const std::string inPlace = inPlaceClause(verb, mMoved);
+
+			// A failure's own two clauses hold the line; the achievements
+			// follow as a toast once the card has had its say.
+			if (pendingAwards > 0)
+				sayAfter = awardsWaiting;
+			else if (awardsSent)
+				sayAfter = awardsWent;
 
 			std::string recover;
 			if (cancelled && mGameExitSync)
@@ -546,8 +616,17 @@ void ThreadedCloudSync::run()
 		// lingered -- maintainer, 2026-09-07); anything else is two lines to
 		// act on, so five. Five for everything dated from when a sync took
 		// 18 seconds -- once the exit sync came down to about five, the card
-		// spent as long saying it was done as it had spent working.
-		std::this_thread::sleep_for(std::chrono::milliseconds(completed ? 1500 : 5000));
+		// spent as long saying it was done as it had spent working. A
+		// completed sync whose action line carries the achievements is two
+		// lines to read too.
+		std::this_thread::sleep_for(std::chrono::milliseconds(completed && action.empty() ? 1500 : 5000));
+
+		if (!sayAfter.empty())
+		{
+			Window* window = mWindow;
+			const std::string text = sayAfter;
+			window->postToUiThread([window, text] { window->displayNotificationMessage(text); });
+		}
 	}
 
 	// A question the run asked us to put to the player, once its card has
