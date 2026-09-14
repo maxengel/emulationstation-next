@@ -323,6 +323,28 @@ namespace CloudText
 	// the caller.
 	enum class NextTime { None, Awards, AwardsAndSaves, Saves };
 	NextTime nextTime(bool awardsPending, bool savesPending);
+
+	// "<epoch> <rc> <scan|topup> cached=<n> skipped=<m> ready=<total>
+	// limit=<0|1>[ why=<TOKEN>]" from raofflineproxy-ctl's last-scan: how
+	// the last scan of the console's games for offline achievements went,
+	// or the last automatic top-up when the device came online (fork #179,
+	// D-RA-010). ran is false for a line of any other shape, and the row
+	// then reads NOT SCANNED YET rather than inventing a date. The why is
+	// the ctl's token -- upper case, underscores, nothing else -- and the
+	// caller says it in words; a field that is not a count reads as zero.
+	struct ScanStamp
+	{
+		bool ran = false;
+		time_t when = 0;
+		int code = 0;
+		bool topup = false;   // the automatic run, not one the player pressed
+		int cached = 0;       // games this run added
+		int skipped = 0;      // ROMs RetroAchievements does not know
+		int ready = 0;        // games cached in all, after the run
+		bool limit = false;   // the proxy's cap was reached
+		std::string why;
+	};
+	ScanStamp parseScanStamp(const std::string& text);
 }
 
 #endif // ES_APP_CLOUD_TEXT_H

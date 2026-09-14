@@ -885,3 +885,64 @@ TEST_CASE("nextTime names the sentence the exit card ends on")
 	CHECK(nextTime(false, true) == NextTime::Saves);
 	CHECK(nextTime(false, false) == NextTime::None);
 }
+
+TEST_CASE("parseScanStamp reads raofflineproxy-ctl's last-scan line")
+{
+	// As the ctl writes it after a scan the player pressed (fork #179).
+	ScanStamp s = parseScanStamp("1789400000 0 scan cached=3 skipped=1 ready=3 limit=0\n");
+	CHECK(s.ran);
+	CHECK(s.when == 1789400000);
+	CHECK(s.code == 0);
+	CHECK_FALSE(s.topup);
+	CHECK(s.cached == 3);
+	CHECK(s.skipped == 1);
+	CHECK(s.ready == 3);
+	CHECK_FALSE(s.limit);
+	CHECK(s.why.empty());
+
+	// An automatic top-up that could not finish, with the ctl's token.
+	s = parseScanStamp("1789400100 1 topup cached=0 skipped=0 ready=3 limit=0 why=RETROACHIEVEMENTS_STOPPED_ANSWERING");
+	CHECK(s.ran);
+	CHECK(s.topup);
+	CHECK(s.code == 1);
+	CHECK(s.ready == 3);
+	CHECK(s.why == "RETROACHIEVEMENTS_STOPPED_ANSWERING");
+
+	// The cap.
+	s = parseScanStamp("  1789400200 0 scan cached=100 skipped=40 ready=100 limit=1  ");
+	CHECK(s.ran);
+	CHECK(s.limit);
+	CHECK(s.ready == 100);
+
+	// Fields in another order, and a field a newer ctl might add.
+	s = parseScanStamp("1789400300 0 scan ready=7 limit=0 skipped=2 cached=5 took=90");
+	CHECK(s.ran);
+	CHECK(s.cached == 5);
+	CHECK(s.skipped == 2);
+	CHECK(s.ready == 7);
+}
+
+TEST_CASE("parseScanStamp on the shapes that are not a scan")
+{
+	CHECK_FALSE(parseScanStamp("").ran);
+	CHECK_FALSE(parseScanStamp("\n").ran);
+	CHECK_FALSE(parseScanStamp("1789400000 0").ran);
+	CHECK_FALSE(parseScanStamp("1789400000 0 sync cached=1").ran);
+	CHECK_FALSE(parseScanStamp("0 0 scan cached=1").ran);
+	CHECK_FALSE(parseScanStamp("garbage 0 scan").ran);
+	CHECK_FALSE(parseScanStamp("1789400000 x scan").ran);
+	CHECK_FALSE(parseScanStamp("1789337156 2").ran);   // a flush stamp
+	CHECK_FALSE(parseScanStamp("\n1789400000 0 scan").ran);
+
+	// A count that is not one reads as zero, and a why that is not a token
+	// reads as none: neither stops the line from being a run.
+	ScanStamp s = parseScanStamp("1789400000 0 scan cached=abc skipped=-1 ready=99999999999 why=not a token");
+	CHECK(s.ran);
+	CHECK(s.cached == 0);
+	CHECK(s.skipped == 0);
+	CHECK(s.ready == 0);
+	CHECK(s.why.empty());
+	s = parseScanStamp("1789400000 1 scan why=bad-token!");
+	CHECK(s.ran);
+	CHECK(s.why.empty());
+}

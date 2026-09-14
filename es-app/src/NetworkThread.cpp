@@ -10,6 +10,7 @@
 #include "watchers/BatteryLevelWatcher.h"
 #include "watchers/NetworkStateWatcher.h"
 #include "RetroAchievements.h"
+#include "OfflineAchievements.h"
 
 NetworkThread::NetworkThread(Window* window) : mWindow(window)
 {
@@ -205,6 +206,14 @@ void NetworkThread::OnWatcherChanged(IWatcher* component)
 		// a short retry if the resolver is not answering yet.
 		bool online = mNetworkStateWatcher->isConnected();
 		mCheckCheevosTokenComponent.setOnline(online);
+
+		// The device has come online: cache the recently played games'
+		// achievement data so they earn offline too, from a thread of its
+		// own and with nothing on screen (fork #179, D-RA-010). The ctl
+		// decides whether the toggle is on, an account is signed in and
+		// RetroAchievements answers, and bounds how often it runs.
+		if (online)
+			OfflineAchievements::topUpWhenOnline();
 
 		if (online && mCheckCheevosTokenComponent.retryWhenOnline())
 		{
