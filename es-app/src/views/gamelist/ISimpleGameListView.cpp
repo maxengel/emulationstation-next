@@ -843,7 +843,7 @@ bool ISimpleGameListView::onAction(const std::string& action)
 		{
 			auto path = Utils::String::toInteger(game->getMetadata(MetaDataId::CheevosId));
 			if (path != 0)
-				GuiGameAchievements::show(mWindow, path);
+				GuiGameAchievements::show(mWindow, path, game->getMetadata(MetaDataId::CheevosHash));
 		}
 
 		return true;

@@ -23,16 +23,22 @@
 #define PROGRESS_LEFT  0.55f
 #define PROGRESS_WIDTH 0.36f
 
-void GuiGameAchievements::show(Window* window, int gameId)
+void GuiGameAchievements::show(Window* window, int gameId, const std::string& cheevosHash)
 {
 	window->pushGui(new GuiLoading<GameInfoAndUserProgress>(window, _("PLEASE WAIT"),
-		[window, gameId](auto gui)
+		[window, gameId, cheevosHash](auto gui)
 	{
-		return RetroAchievements::getGameInfoAndUserProgress(gameId);
+		return RetroAchievements::getGameInfoAndUserProgress(gameId, "", cheevosHash);
 	},
 		[window](GameInfoAndUserProgress ra)
 	{
-		if (ra.ID == 0 && !ra.Title.empty())
+		// Offline, and the proxy has never cached this game: not an error,
+		// and not an empty page -- the one line that says what makes it
+		// viewable (#180). The row that does it is named as the cards name
+		// theirs (es-player-text.md, Recover).
+		if (ra.NotOnDevice)
+			window->pushGui(new GuiMsgBox(window, _("YOU'RE NOT ONLINE, AND THIS GAME'S ACHIEVEMENTS AREN'T SAVED ON THIS DEVICE YET. SCAN GAMES FOR OFFLINE ACHIEVEMENTS, OR START THE GAME ONCE WHILE YOU'RE CONNECTED."), _("OK")));
+		else if (ra.ID == 0 && !ra.Title.empty())
 			window->pushGui(new GuiMsgBox(window, _("AN ERROR OCCURRED") + "\r\n" + ra.Title, _("OK")));
 		else if (ra.ID == 0)
 			window->pushGui(new GuiMsgBox(window, _("AN ERROR OCCURRED"), _("OK")));
@@ -63,6 +69,14 @@ public:
 			desc += _U("  \uf091  ") + _("Unlocked on") + ": " + mGameInfo.DateEarnedHardcore + _U(" - ") + _("HARDCORE MODE");
 		else if (!mGameInfo.DateEarned.empty())
 			desc += _U("  \uf091  ") + _("Unlocked on") + ": " + mGameInfo.DateEarned;			
+		// From the device the cache knows the unlock and not its date, and
+		// an award still queued is said so in the words the sync cards use
+		// (D-RA-004: achievements are sent). Appended to the same line, so
+		// the row stays two lines (D-UI-023).
+		else if (mGameInfo.UnlockedOnDevice && mGameInfo.Pending)
+			desc += _U("  \uf091  ") + _("Unlocked - will be sent when you're connected");
+		else if (mGameInfo.UnlockedOnDevice)
+			desc += _U("  \uf091  ") + _("Unlocked");
 
 		mText = std::make_shared<TextComponent>(mWindow, mGameInfo.Title, theme->Text.font, theme->Text.color);
 		mText->setVerticalAlignment(ALIGN_TOP);
@@ -90,7 +104,7 @@ public:
 		mImage->setMaxSize(height - IMAGESPACER, height - IMAGESPACER);
 		mImage->setImage(mGameInfo.getBadgeUrl());
 
-		if (mGameInfo.DateEarnedHardcore.empty() && mGameInfo.DateEarned.empty())
+		if (!mGameInfo.isUnlocked())
 			mImage->setOpacity(120);
 
 		setSize(0, height);
@@ -143,7 +157,7 @@ GuiGameAchievements::GuiGameAchievements(Window* window, GameInfoAndUserProgress
 
 	for (auto game : ra.Achievements)
 	{
-		if (!game.DateEarned.empty() || !game.DateEarnedHardcore.empty())
+		if (game.isUnlocked())
 			userPoints += Utils::String::toInteger(game.Points);
 
 		totalPoints += Utils::String::toInteger(game.Points);
@@ -153,6 +167,16 @@ GuiGameAchievements::GuiGameAchievements(Window* window, GameInfoAndUserProgress
 
 	if (ra.Achievements.size() == 0)
 		setSubTitle(_("THIS GAME HAS NO ACHIEVEMENTS YET"));
+	else if (ra.FromDevice)
+	{
+		// The proxy is casual-only and its cache holds no hardcore count, so
+		// that line is not made up; its place says where this came from.
+		header = _("Achievements (softcore)") + ": \t" + std::to_string(ra.NumAwardedToUser) + "/" + std::to_string(ra.NumAchievements);
+		header += "\r\n" + _("Points") + ": \t" + std::to_string(userPoints) + "/" + std::to_string(totalPoints);
+		header += "\r\n" + _("YOU'RE NOT ONLINE. SHOWING WHAT'S SAVED ON THIS DEVICE.");
+
+		setSubTitle(header);
+	}
 	else
 	{
 		header = _("Achievements (softcore)") + ": \t" + std::to_string(ra.NumAwardedToUser) + "/" + std::to_string(ra.NumAchievements);

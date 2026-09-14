@@ -15,6 +15,12 @@
 
 #include "LocaleES.h"
 #include "EmulationStation.h"
+#include "OfflineAchievements.h"
+#include "OfflineAchievementsText.h"
+#include "FileData.h"
+#include "MetaData.h"
+#include "guis/GuiRetroAchievements.h"
+#include <set>
 
 using namespace PlatformIds;
 
@@ -186,18 +192,26 @@ std::string RetroAchievements::getApiUrl(const std::string& method, const std::s
 
 std::string GameInfoAndUserProgress::getImageUrl(const std::string& image)
 {
-	if (image.empty())
-		return "http://i.retroachievements.org" + ImageIcon;
-	
-	return "http://i.retroachievements.org" + image;
+	const std::string& icon = image.empty() ? ImageIcon : image;
+	// The proxy hands the icon back as a whole address on itself; the web
+	// API hands back a path on the media host.
+	if (Utils::String::startsWith(icon, "http://") || Utils::String::startsWith(icon, "https://"))
+		return icon;
+
+	return "http://i.retroachievements.org" + icon;
+}
+
+bool Achievement::isUnlocked() const
+{
+	return !DateEarned.empty() || !DateEarnedHardcore.empty() || UnlockedOnDevice;
 }
 
 std::string Achievement::getBadgeUrl()
 {
-	if (!DateEarned.empty() || !DateEarnedHardcore.empty())
-		return "http://i.retroachievements.org/Badge/" + BadgeName + ".png";
+	if (isUnlocked())
+		return BadgeUrl.empty() ? "http://i.retroachievements.org/Badge/" + BadgeName + ".png" : BadgeUrl;
 
-	return "http://i.retroachievements.org/Badge/" + BadgeName + "_lock.png";
+	return BadgeLockedUrl.empty() ? "http://i.retroachievements.org/Badge/" + BadgeName + "_lock.png" : BadgeLockedUrl;
 }
 
 
@@ -235,6 +249,9 @@ std::string jsonString(const rapidjson::Value& val, const std::string& name)
 
 static bool sortAchievements(const Achievement& sys1, const Achievement& sys2)
 {
+	if (sys1.isUnlocked() != sys2.isUnlocked())
+		return sys1.isUnlocked();
+
 	if (sys1.DateEarned.empty() != sys2.DateEarned.empty())
 		return !sys1.DateEarned.empty() && sys2.DateEarned.empty();
 
@@ -244,7 +261,199 @@ static bool sortAchievements(const Achievement& sys1, const Achievement& sys2)
 	return sys1.DisplayOrder < sys2.DisplayOrder;
 }
 
-GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId, const std::string& userName)
+// The offline proxy's cache, as the page's model (fork #180, D-RA-009). Two
+// shapes, because the proxy holds two: patch, keyed by game id, for a game
+// the scan cached; achievementsets, keyed by the ROM's hash, for a game
+// started once through RetroArch (a launch alone leaves no patch row --
+// seen on a guest's store, 2026-09-14). The unlocks come merged with the
+// awards still queued, and the queued ones are marked from the ctl's list.
+// What the cache cannot say is left unsaid: no unlock dates (the proxy's
+// session answer stamps every unlock with now), no hardcore counts (the
+// proxy is casual-only), so the page reads those as unknown, not as zero
+// dates.
+GameInfoAndUserProgress RetroAchievements::getGameInfoFromDevice(int gameId, const std::string& cheevosHash, const std::vector<OfflineAchievementsText::PendingAward>* pending)
+{
+	GameInfoAndUserProgress ret;
+	ret.ID = 0;
+	ret.ConsoleID = 0;
+	ret.ForumTopicID = 0;
+	ret.Flags = 0;
+	ret.IsFinal = false;
+	ret.NumAchievements = 0;
+	ret.NumAwardedToUser = 0;
+	ret.NumAwardedToUserHardcore = 0;
+
+	const std::string user = OfflineAchievements::username();
+	if (user.empty())
+		return ret;
+
+	std::string body, error;
+	OfflineAchievementsText::Game game;
+	bool notCached = false;
+
+	if (gameId > 0)
+	{
+		if (OfflineAchievements::askProxy("r=patch&g=" + std::to_string(gameId) + "&u=" + HttpReq::urlEncode(user), body, error))
+			game = OfflineAchievementsText::parsePatch(body);
+		else if (OfflineAchievementsText::isNotCached(error))
+			notCached = true;
+		else
+		{
+			LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer patch for game " << gameId << ": " << error;
+			return ret;
+		}
+	}
+
+	if (!game.ok && !cheevosHash.empty())
+	{
+		if (OfflineAchievements::askProxy("r=achievementsets&m=" + HttpReq::urlEncode(Utils::String::toLower(cheevosHash)) + "&u=" + HttpReq::urlEncode(user), body, error))
+			game = OfflineAchievementsText::parseAchievementSets(body);
+		else if (OfflineAchievementsText::isNotCached(error))
+			notCached = true;
+		else
+		{
+			LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer achievementsets: " << error;
+			return ret;
+		}
+	}
+
+	if (!game.ok)
+	{
+		ret.NotOnDevice = notCached;
+		return ret;
+	}
+
+	// The unlocks are half the page; without them every badge would read
+	// locked, which is a page that lies. No answer, no page: the caller
+	// asks the web and says what it says.
+	if (!OfflineAchievements::askProxy("r=unlocks&g=" + std::to_string(game.id) + "&u=" + HttpReq::urlEncode(user), body, error))
+	{
+		LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer unlocks for game " << game.id << ": " << error;
+		return ret;
+	}
+	std::set<int> unlocked;
+	for (int id : OfflineAchievementsText::parseUnlocks(body))
+		unlocked.insert(id);
+
+	std::set<int> queued;
+	if (pending != nullptr)
+	{
+		for (const auto& award : *pending)
+			queued.insert(award.id);
+	}
+	else
+	{
+		for (const auto& award : OfflineAchievements::pendingAwardIds())
+			queued.insert(award.id);
+	}
+
+	ret.ID = game.id;
+	ret.Title = game.title;
+	ret.ImageIcon = game.imageUrl;
+	ret.FromDevice = true;
+	ret.NumAchievements = (int)game.achievements.size();
+
+	int order = 0;
+	for (const auto& a : game.achievements)
+	{
+		Achievement item;
+		item.ID = std::to_string(a.id);
+		item.Title = a.title;
+		item.Description = a.description;
+		item.Points = std::to_string(a.points);
+		item.BadgeName = a.badgeName;
+		item.BadgeUrl = a.badgeUrl.empty() ? OfflineAchievementsText::badgeUrl(a.badgeName, true) : a.badgeUrl;
+		item.BadgeLockedUrl = a.badgeLockedUrl.empty() ? OfflineAchievementsText::badgeUrl(a.badgeName, false) : a.badgeLockedUrl;
+		item.DisplayOrder = order++;
+		item.UnlockedOnDevice = unlocked.count(a.id) > 0;
+		item.Pending = item.UnlockedOnDevice && queued.count(a.id) > 0;
+		if (item.UnlockedOnDevice)
+			ret.NumAwardedToUser++;
+		ret.Achievements.push_back(item);
+	}
+
+	std::sort(ret.Achievements.begin(), ret.Achievements.end(), sortAchievements);
+	return ret;
+}
+
+// The RETROACHIEVEMENTS page from the device: the games the proxy holds
+// (the client's export of cached ids, each looked up as the game page is),
+// and the account's points as its cached sign-in last said them. No rank
+// and no recently-played order -- the proxy has neither -- so the games
+// come sorted by name, and a game the proxy holds but this device's game
+// list does not know is still listed, as the web page lists games not on
+// the device.
+UserSummary RetroAchievements::getUserSummaryFromDevice()
+{
+	UserSummary ret;
+	ret.RecentlyPlayedCount = 0;
+
+	const std::string user = OfflineAchievements::username();
+	if (user.empty())
+		return ret;
+
+	const auto ids = OfflineAchievements::readyIds();
+	const auto pending = OfflineAchievements::pendingAwardIds();
+	const auto totals = OfflineAchievements::accountTotals();
+
+	std::vector<std::pair<std::string, RecentGame>> games;
+	for (int id : ids)
+	{
+		FileData* file = GuiRetroAchievements::getFileData(std::to_string(id));
+		const std::string hash = file != nullptr ? file->getMetadata(MetaDataId::CheevosHash) : "";
+
+		auto game = getGameInfoFromDevice(id, hash, &pending);
+		if (game.ID == 0)
+			continue;
+
+		RecentGame recent;
+		recent.GameID = std::to_string(game.ID);
+		recent.Title = game.Title;
+		recent.ImageIcon = game.ImageIcon;
+		if (file != nullptr && file->getSourceFileData() != nullptr && file->getSourceFileData()->getSystem() != nullptr)
+			recent.ConsoleName = file->getSourceFileData()->getSystem()->getFullName();
+
+		Award award;
+		award.NumPossibleAchievements = game.NumAchievements;
+		award.PossibleScore = 0;
+		award.NumAchieved = game.NumAwardedToUser;
+		award.NumAchievedHardcore = 0;
+		award.ScoreAchieved = 0;
+		award.ScoreAchievedHardcore = 0;
+		for (const auto& a : game.Achievements)
+		{
+			const int points = Utils::String::toInteger(a.Points);
+			award.PossibleScore += points;
+			if (a.isUnlocked())
+				award.ScoreAchieved += points;
+		}
+		ret.Awarded[recent.GameID] = award;
+		games.push_back(std::make_pair(Utils::String::toUpper(game.Title), recent));
+	}
+
+	std::sort(games.begin(), games.end(), [](const std::pair<std::string, RecentGame>& a, const std::pair<std::string, RecentGame>& b) { return a.first < b.first; });
+	for (const auto& game : games)
+		ret.RecentlyPlayed.push_back(game.second);
+
+	ret.Username = user;
+	ret.FromDevice = true;
+	ret.RecentlyPlayedCount = (int)ret.RecentlyPlayed.size();
+	if (totals.ok)
+	{
+		ret.TotalPoints = std::to_string(totals.score);
+		ret.TotalSoftcorePoints = std::to_string(totals.softcore);
+	}
+	return ret;
+}
+
+// A web answer that is the network's fault rather than the account's: the
+// cases where the device's copy is worth asking for instead (fork #180).
+static bool networkFailure(HttpReq& req)
+{
+	return req.status() != HttpReq::REQ_401_FORBIDDEN && req.status() != HttpReq::REQ_403_BADLOGIN;
+}
+
+GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId, const std::string& userName, const std::string& cheevosHash)
 {
 	auto usrName = userName;
 	if (usrName.empty())
@@ -252,6 +461,22 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId
 
 	GameInfoAndUserProgress ret;
 	ret.ID = 0;
+
+	// Offline with OFFLINE ACHIEVEMENTS on, the proxy's cache is the source
+	// (D-RA-009): what it holds is shown, what it never cached is said, and
+	// only a proxy that does not answer sends this on to the web, which
+	// will say in its own words that there is no connection. Online, the
+	// web stays the source -- it has the unlock dates, the hardcore counts
+	// and the rank the cache does not -- with the device's copy as the
+	// fallback when the web could not be reached.
+	const bool offline = OfflineAchievements::proxyOffline();
+	if (offline)
+	{
+		auto device = getGameInfoFromDevice(gameId, cheevosHash);
+		if (device.ID != 0 || device.NotOnDevice)
+			return device;
+		LOG(LogWarning) << "RetroAchievements: offline, but the proxy did not answer for game " << gameId << "; asking the web";
+	}
 
 	if (getApiLogin().empty())
 	{
@@ -320,7 +545,15 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId
 		std::sort(ret.Achievements.begin(), ret.Achievements.end(), sortAchievements);
 	}
 	else
+	{
+		if (!offline && OfflineAchievements::toggleOn() && networkFailure(httpreq))
+		{
+			auto device = getGameInfoFromDevice(gameId, cheevosHash);
+			if (device.ID != 0 || device.NotOnDevice)
+				return device;
+		}
 		ret.Title = getLoginErrorMessage(httpreq);
+	}
 
 	return ret;
 }
@@ -332,6 +565,18 @@ UserSummary RetroAchievements::getUserSummary(const std::string& userName, int g
 		usrName = SystemConf::getInstance()->get("global.retroachievements.username");
 
 	UserSummary ret;
+
+	// The same switch as the game page (fork #180): offline, the device's
+	// copy; online, the web, with the device's copy when it cannot be
+	// reached.
+	const bool offline = OfflineAchievements::proxyOffline();
+	if (offline)
+	{
+		auto device = getUserSummaryFromDevice();
+		if (!device.Username.empty())
+			return device;
+		LOG(LogWarning) << "RetroAchievements: offline, but the proxy gave no summary; asking the web";
+	}
 
 	if (getApiLogin().empty())
 	{
@@ -438,7 +683,15 @@ UserSummary RetroAchievements::getUserSummary(const std::string& userName, int g
 		}
 	}
 	else
+	{
+		if (!offline && OfflineAchievements::toggleOn() && networkFailure(httpreq))
+		{
+			auto device = getUserSummaryFromDevice();
+			if (!device.Username.empty())
+				return device;
+		}
 		ret.Status = getLoginErrorMessage(httpreq);
+	}
 
 	return ret;
 }
@@ -485,7 +738,10 @@ RetroAchievementInfo RetroAchievements::toRetroAchivementInfo(UserSummary& ret)
 		return info;
 	}
 
-	info.userpic = "https://retroachievements.org" + ret.UserPic;
+	info.fromDevice = ret.FromDevice;
+	// The proxy caches no picture of the player; a request for one would
+	// only fail offline.
+	info.userpic = ret.FromDevice ? "" : "https://retroachievements.org" + ret.UserPic;
 	info.rank = ret.Rank;
 
 	if (!ret.TotalRanked.empty() && !ret.Rank.empty())
@@ -507,7 +763,9 @@ RetroAchievementInfo RetroAchievements::toRetroAchivementInfo(UserSummary& ret)
 		RetroAchievementGame rg;
 		rg.id = played.GameID;		
 
-		if (!played.ImageIcon.empty())
+		if (Utils::String::startsWith(played.ImageIcon, "http://") || Utils::String::startsWith(played.ImageIcon, "https://"))
+			rg.badge = played.ImageIcon;
+		else if (!played.ImageIcon.empty())
 			rg.badge = "http://i.retroachievements.org" + played.ImageIcon;
 
 		rg.name = played.Title; // +" [" + played.ConsoleName + "]";
@@ -517,7 +775,10 @@ RetroAchievementInfo RetroAchievements::toRetroAchivementInfo(UserSummary& ret)
 		auto aw = ret.Awarded.find(played.GameID);
 		if (aw != ret.Awarded.cend())
 		{
-			if (aw->second.NumAchieved == 0 && aw->second.ScoreAchieved == 0)
+			// The web page lists what was played and hides what earned
+			// nothing; the device page lists what earns offline, and a game
+			// with nothing unlocked yet is exactly that.
+			if (aw->second.NumAchieved == 0 && aw->second.ScoreAchieved == 0 && !ret.FromDevice)
 				continue;
 
 			rg.wonAchievementsSoftcore = aw->second.NumAchieved;
