@@ -157,13 +157,22 @@ static bool offlineScanOnline()
 	return !Utils::Platform::queryIPAddress().empty();
 }
 
+// Whether the row is showing a run in flight -- a scan from this page left
+// in the background (PL-07), or one the ctl runs on its own (fork #189) --
+// which keeps the row undimmed whatever the gates say now.
+static bool offlineScanShowsRun()
+{
+	return OfflineScanJob::running() || OfflineAchievements::runningProgress().running;
+}
+
 // The line under the row. A scan left running in the background first
 // (audit #186 PL-07: SCANNING... - GAME i OF n, refreshed as the run
-// reports, and the ready count the client's export already carries); else
-// why it cannot run now, else how the last run went and the count that is
-// the point of the row -- longest form first, and the row's own small font
-// decides which fits (D-UI-035). An automatic top-up says so in place of
-// the date (D-UI-032).
+// reports, and the ready count the client's export already carries); then
+// a run the ctl started on its own (fork #189, below); else why it cannot
+// run now, else how the last run went and the count that is the point of
+// the row -- longest form first, and the row's own small font decides
+// which fits (D-UI-035). An automatic top-up says so in place of the date
+// (D-UI-032).
 static std::string offlineScanDetail(bool on, bool online)
 {
 	const std::string ready = GuiOfflineScan::readyPhrase(OfflineAchievements::readyCount());
@@ -172,6 +181,31 @@ static std::string offlineScanDetail(bool on, bool online)
 	{
 		const std::string head = GuiOfflineScan::runningPhrase(OfflineScanJob::current()->state());
 		candidates = { head + "  ·  " + ready, head, _("SCANNING...") };
+	}
+	else if (const CloudText::RunningProgress run = OfflineAchievements::runningProgress(); run.running)
+	{
+		// The top-up the ctl runs on its own -- at link-up (D-RA-010) or
+		// after the startup index (D-RA-013) -- reports to no job of this
+		// process, and the row went on showing the last finished run while
+		// 147 games were being cached (fork #189). The ctl's own progress
+		// file says how far it has got, and the row says it in the scan's
+		// words: the head alone while the ctl is still listing, GAME i OF n
+		// once a game is known, the ready count where it fits, and the head
+		// as the form that fits any panel (D-UI-035). Ahead of the gates
+		// below, as a scan in the background is: the run is in flight
+		// whatever the switch or the link says now.
+		const std::string head = _("SAVING GAMES FOR OFFLINE PLAY...");
+		std::string counted = head;
+		if (run.index > 0)
+		{
+			counted += " - " + std::string(_("GAME")) + " " + std::to_string(run.index);
+			if (run.total > 0)
+				counted += " " + std::string(_("OF")) + " " + std::to_string(run.total);
+		}
+		candidates.push_back(counted + "  ·  " + ready);
+		if (counted != head)
+			candidates.push_back(counted);
+		candidates.push_back(head);
 	}
 	else if (!on)
 		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
@@ -214,10 +248,56 @@ static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
 		return;
 	const bool on = offlineScanOn();
 	const bool online = offlineScanOnline();
-	// A run in the background can be reopened whatever the gates say now.
-	entry->setDimmed((!on || !online) && !OfflineScanJob::running());
-	entry->setDescription(offlineScanDetail(on, online));
+	// A run in flight keeps the row lit whatever the gates say now.
+	entry->setDimmed((!on || !online) && !offlineScanShowsRun());
+	// Only when the words change: the refresher below asks once a second,
+	// and a line set to itself would still lay the row out again.
+	const std::string text = offlineScanDetail(on, online);
+	if (text != entry->getDescription())
+		entry->setDescription(text);
 }
+
+// The row's line follows a run the ctl started on its own -- the top-up at
+// link-up (D-RA-010) or after the startup index (D-RA-013) -- through the
+// progress file the ctl keeps while it runs (fork #189), and nothing in
+// this process says when that file changes: a scan from the page reports
+// through its job (PL-07), a top-up through nothing. So the page carries
+// one component that is never drawn and never focused, asks once a second
+// while the page is open, and refreshes the row -- which changes its words
+// only when they differ, and keeps its height, since only the words change
+// (addOfflineScanRow). Owned by the page (EXTRACHILDREN: GuiComponent's
+// destructor deletes it), so it dies with the page; ticked by the page's
+// update, which Window gives to the top page alone, so a dialog over the
+// page pauses it and the row catches up the second the dialog closes. The
+// row is held weakly, as every row on this page is.
+class OfflineRowRefresher : public GuiComponent
+{
+public:
+	OfflineRowRefresher(Window* window, const std::weak_ptr<DimmableMenuEntry>& row)
+		: GuiComponent(window), mRow(row), mElapsedMs(0)
+	{
+		setVisible(false);
+		setExtraType(ExtraType::EXTRACHILDREN);
+	}
+
+	void update(int deltaTime) override
+	{
+		GuiComponent::update(deltaTime);
+		mElapsedMs += deltaTime;
+		if (mElapsedMs < 1000)
+			return;
+		mElapsedMs = 0;
+		// A scan from this page reports through its job, which refreshes
+		// the row as it reports; asking again would only repeat it.
+		if (OfflineScanJob::running())
+			return;
+		offlineScanRefresh(mRow);
+	}
+
+private:
+	std::weak_ptr<DimmableMenuEntry> mRow;
+	int mElapsedMs;
+};
 
 // A press on the row: the reason when it cannot run, else the confirmation
 // (D-UI-023: what the scan does and costs is read at the moment of
@@ -283,7 +363,7 @@ static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Wind
 	const bool online = offlineScanOnline();
 	auto entry = std::make_shared<DimmableMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"),
 		offlineScanDetail(on, online), false);
-	entry->setDimmed((!on || !online) && !OfflineScanJob::running());
+	entry->setDimmed((!on || !online) && !offlineScanShowsRun());
 	std::weak_ptr<DimmableMenuEntry> weak = entry;
 
 	ComponentListRow row;
@@ -335,6 +415,9 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// says nothing about what it means (fork #162); it is quoted so it reads
 	// as a thing on screen and not as a typo (D-RA-003).
 	std::weak_ptr<DimmableMenuEntry> scanRow = addOfflineScanRow(s, window);
+	// The row follows a top-up the ctl runs while the page is open (fork
+	// #189); the page owns the component and deletes it with itself.
+	s->addChild(new OfflineRowRefresher(window, scanRow));
 	addSpacerRow(s, window);
 	std::weak_ptr<TextComponent> infoRow = addInfoRow(s, window,
 		offlineInfoText(Settings::CheevosCheckIndexesAtStart()), offlineInfoText(true));
