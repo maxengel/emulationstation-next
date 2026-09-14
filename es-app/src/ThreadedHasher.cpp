@@ -9,6 +9,7 @@
 #include "SystemData.h"
 #include "FileData.h"
 #include "ApiSystem.h"
+#include "OfflineAchievements.h"
 #include "utils/StringUtil.h"
 #include "Log.h"
 #include <unordered_set>
@@ -29,6 +30,7 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 	mForce = forceAllGames;
 	mExit = false;
 	mType = type;
+	mCheevosIndexed = false;
 
 	mSearchQueue = searchQueue;
 	mTotal = mSearchQueue.size();
@@ -41,6 +43,7 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 			if (mCheevosHashes.size() == 0)
 				while (!mSearchQueue.empty())
 					mSearchQueue.pop();
+			mCheevosIndexed = !mCheevosHashes.empty() && !mSearchQueue.empty();
 		}
 		catch (const std::exception& e)
 		{
@@ -68,7 +71,19 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 ThreadedHasher::~ThreadedHasher()
 {
 	if ((mType & HASH_CHEEVOS_MD5) == HASH_CHEEVOS_MD5)
+	{
 		mWindow->displayNotificationMessage(ICONINDEX + _("INDEXING COMPLETED") + std::string(". ") + _("UPDATE GAMELISTS TO APPLY CHANGES."));
+
+		// The offline cache follows this index (fork #184, D-RA-013): once
+		// the games are identified, and while the device is still connected
+		// (the hash library just came from RetroAchievements), the games not
+		// yet cached for offline play are cached from the ids and hashes
+		// written above -- raofflineproxy-ctl topup --after-index, from a
+		// thread of its own, nothing on screen. Not after a run the player
+		// stopped, and not after one that identified nothing.
+		if (!mExit && mCheevosIndexed)
+			OfflineAchievements::topUpAfterIndex();
+	}
 
 	mWndNotification->close();
 	mWndNotification = nullptr;
@@ -133,11 +148,19 @@ void ThreadedHasher::run()
 			auto hash = Utils::String::toUpper(game->getMetadata(MetaDataId::CheevosHash));
 			if (!hash.empty())
 			{
+				// The id reaches the disk with the hash. checkCheevosHash
+				// saved the game to the recovery folder with the hash and no
+				// id, because the id is decided here, afterwards, and until
+				// now it lived in memory until the gamelist was written at
+				// exit. The offline cache's scan reads that folder for the
+				// index (fork #184, D-RA-013), so a changed id is saved the
+				// same way.
+				const std::string before = game->getMetadata(MetaDataId::CheevosId);
 				auto cheevos = mCheevosHashes.find(hash);
-				if (cheevos != mCheevosHashes.cend())
-					game->setMetadata(MetaDataId::CheevosId, cheevos->second);
-				else
-					game->setMetadata(MetaDataId::CheevosId, "");
+				const std::string id = cheevos != mCheevosHashes.cend() ? cheevos->second : std::string();
+				game->setMetadata(MetaDataId::CheevosId, id);
+				if (id != before)
+					saveToGamelistRecovery(game);
 			}
 
 			LOG(LogDebug) << "CheckCheevosHash OK : " << label;;

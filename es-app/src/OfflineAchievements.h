@@ -65,6 +65,13 @@ namespace OfflineAchievements
 	// bounds how often it runs, so this is safe to call on every link.
 	void topUpWhenOnline();
 
+	// The hasher has just identified games (INDEX NEW GAMES AT STARTUP,
+	// INDEX GAMES): raofflineproxy-ctl topup --after-index, the same run
+	// without the half-hour guard, from a thread of its own, nothing on
+	// screen (fork #184, D-RA-013). The ctl refuses as above; the toggle is
+	// read here too so a device with the feature off starts no process.
+	void topUpAfterIndex();
+
 	// The achievements pages read the proxy's cache when the device is
 	// offline (fork #180, D-RA-009). The questions below are theirs.
 

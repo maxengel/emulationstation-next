@@ -264,7 +264,11 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// as a thing on screen and not as a typo (D-RA-003).
 	std::weak_ptr<DimmableMenuEntry> scanRow = addOfflineScanRow(s, window);
 	addSpacerRow(s, window);
-	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
+	// The last sentence is D-RA-013's: the cache follows the interface's own
+	// game index, so a game added later is cached by the top-up that runs
+	// when the device is next connected (raofflineproxy-ctl topup) -- once
+	// the index knows it, which is INDEX NEW GAMES AT STARTUP's job.
+	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET. NEW GAMES ARE ADDED THE NEXT TIME YOU'RE CONNECTED."));
 
 	// A raw pointer on purpose: the callback lives inside the switch it
 	// captures, so a shared_ptr here would be a cycle that keeps the page
@@ -446,12 +450,32 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	addSwitch(_("SHOW RETROACHIEVEMENTS ENTRY IN MAIN MENU"), _("View your RetroAchievements stats right from the main menu!"), "RetroachievementsMenuitem", true, nullptr);
 
 	addGroup(_("GAME INDEXES"));
-	addSwitch(_("INDEX NEW GAMES AT STARTUP"), "CheevosCheckIndexesAtStart", true);
-	addEntry(_("INDEX GAMES"), true, [this]
+	// With OFFLINE ACHIEVEMENTS on, the index feeds the offline cache (fork
+	// #184, D-RA-013): as the hasher finishes, the games it identified are
+	// cached for offline play from their id and hash, and a game the index
+	// does not know is not cached at all. Maintainer: "we need to be clear
+	// that scanning for retro achievements [...] will cache new games
+	// discovered as well [...] perhaps even changing the text of that option
+	// when offline achievements are enabled." So each row says so in one
+	// line while the switch is on (D-UI-023), and reads as upstream's when
+	// it is off. Read at page build: the switch lives on the page below,
+	// and this page is built again on the way back to it.
+	bool indexFeedsOffline = false;
+#if defined(ROCKNIX)
+	indexFeedsOffline = OfflineAchievements::available() && OfflineAchievements::toggleOn();
+#endif
+	addSwitch(_("INDEX NEW GAMES AT STARTUP"),
+		indexFeedsOffline ? _("Also saves new games' achievement data for offline play.") : std::string(),
+		"CheevosCheckIndexesAtStart", true, nullptr);
+	auto indexGames = [this]
 	{
 		if (ThreadedHasher::checkCloseIfRunning(mWindow))
 			mWindow->pushGui(new GuiHashStart(mWindow, ThreadedHasher::HASH_CHEEVOS_MD5));
-	});
+	};
+	if (indexFeedsOffline)
+		addWithDescription(_("INDEX GAMES"), _("Also saves their achievement data for offline play."), makeArrow(mWindow), indexGames, "", false, true);
+	else
+		addEntry(_("INDEX GAMES"), true, indexGames);
 
 	// The switch is the player's choice, and this save writes that choice
 	// and nothing else (#175). The sign-in below decides the token only. It

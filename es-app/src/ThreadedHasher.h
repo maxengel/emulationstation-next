@@ -52,6 +52,10 @@ private:
 	int mTotal;
 	bool mExit;
 	bool mForce;
+	// Whether this run identified games at all: RetroAchievements' hash
+	// library came and there was something to hash. Only then does the
+	// offline cache have a reason to follow it (fork #184, D-RA-013).
+	bool mCheevosIndexed;
 
 	static bool mPaused;
 	static ThreadedHasher* mInstance;

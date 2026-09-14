@@ -1143,7 +1143,16 @@ void GuiMenu::openDeveloperSettings()
 		}));
 	});
 
-	s->addEntry(_("FIND ALL GAMES WITH NETPLAY/ACHIEVEMENTS"), false, [this] { ThreadedHasher::start(mWindow, ThreadedHasher::HASH_ALL, true); });
+	// The same hasher as INDEX GAMES, so with OFFLINE ACHIEVEMENTS on it feeds
+	// the offline cache too and says so in one line (fork #184, D-RA-013;
+	// the rows under GAME INDEXES on RETROACHIEVEMENTS SETTINGS do the same).
+	auto findAllGames = [this] { ThreadedHasher::start(mWindow, ThreadedHasher::HASH_ALL, true); };
+#if defined(ROCKNIX)
+	if (OfflineAchievements::available() && OfflineAchievements::toggleOn())
+		s->addWithDescription(_("FIND ALL GAMES WITH NETPLAY/ACHIEVEMENTS"), _("Also saves their achievement data for offline play."), nullptr, findAllGames);
+	else
+#endif
+	s->addEntry(_("FIND ALL GAMES WITH NETPLAY/ACHIEVEMENTS"), false, findAllGames);
 
 	s->addEntry(_("CLEAR CACHES"), true, [this, s]
 		{

@@ -236,3 +236,18 @@ void OfflineAchievements::topUpWhenOnline()
 		LOG(LogInfo) << "OfflineAchievements: topup exited " << answer.second;
 	}).detach();
 }
+
+void OfflineAchievements::topUpAfterIndex()
+{
+	if (!available() || !toggleOn())
+		return;
+
+	// The index has just grown, so this run is not held to the half hour
+	// since the last attempt; the ctl still bounds it (its lock, its
+	// timeout) and stamps its outcome for the OFFLINE ACHIEVEMENTS page.
+	std::thread([]
+	{
+		const auto answer = ask("topup --after-index");
+		LOG(LogInfo) << "OfflineAchievements: topup --after-index exited " << answer.second;
+	}).detach();
+}
