@@ -316,9 +316,7 @@ msgid "HARDCORE MODE"
 msgstr "MODE DIFFICILE"
 
 msgid "Disable loading states, rewind and cheats for more points."
-msgstr ""
-"Désactive les chargements d’état, le rembobinage et les codes pour plus de "
-"points."
+msgstr "Sans chargement d’état, rembobinage ni codes : plus de points."
 
 msgid "LEADERBOARDS"
 msgstr "CLASSEMENTS"
