@@ -725,6 +725,74 @@ CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 	return stamp;
 }
 
+CloudText::RunningProgress CloudText::parseRunningProgress(const std::string& text, long long nowEpoch)
+{
+	RunningProgress run;
+
+	// One line of key=value fields, in any order. A whole number is at most
+	// twelve digits, as the stamps' are; a count is capped as the scan
+	// stamp's are.
+	std::string line = text;
+	const size_t newline = line.find('\n');
+	if (newline != std::string::npos)
+		line = line.substr(0, newline);
+	const std::vector<std::string> fields = Utils::String::split(Utils::String::trim(line), ' ', true);
+
+	auto number = [](const std::string& f, long long& out) -> bool
+	{
+		if (f.empty() || f.size() > 12)
+			return false;
+		for (char c : f)
+			if (c < '0' || c > '9')
+				return false;
+		out = std::stoll(f);
+		return true;
+	};
+
+	bool hasAt = false;
+	for (const std::string& field : fields)
+	{
+		// The name may carry '=' of its own: the first one splits.
+		const size_t eq = field.find('=');
+		if (eq == std::string::npos)
+			continue;
+		const std::string key = field.substr(0, eq);
+		const std::string value = field.substr(eq + 1);
+		if (key == "route")
+			run.route = value;
+		else if (key == "at")
+		{
+			long long at = 0;
+			if (number(value, at) && at > 0)
+			{
+				run.at = at;
+				hasAt = true;
+			}
+		}
+		else if (key == "index" || key == "total")
+		{
+			long long n = 0;
+			if (!number(value, n) || n > 1000000)
+				continue;
+			if (key == "index")
+				run.index = (int) n;
+			else
+				run.total = (int) n;
+		}
+	}
+
+	// A file is never a run on its own: it says when the ctl last wrote it,
+	// and the ctl bounds its runs, so a line older than that bound was left
+	// by a run that died. A line from the future by more than a day is a
+	// clock that jumped, not a run.
+	if (!hasAt)
+		return run;
+	if (nowEpoch - run.at > RUNNING_STALE_AFTER_S || run.at - nowEpoch > RUNNING_AHEAD_LIMIT_S)
+		return run;
+	run.running = true;
+	return run;
+}
+
 CloudText::NextTime CloudText::nextTime(bool awardsPending, bool savesPending)
 {
 	if (awardsPending && savesPending)

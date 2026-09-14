@@ -351,6 +351,35 @@ namespace CloudText
 		std::string why;
 	};
 	ScanStamp parseScanStamp(const std::string& text);
+
+	// "route=<scan|topup> at=<epoch> index=<i> total=<n> name=<game>" from
+	// raofflineproxy-ctl's running file (fork #189): the one line the ctl
+	// keeps beside its stamp while a scan or top-up runs its jobs, rewritten
+	// as each game finishes and removed when the run ends. It is how the row
+	// under SCAN GAMES follows a run nobody pressed -- the top-up at link-up
+	// (D-RA-010) or after the startup index (D-RA-013) -- which no job of
+	// this process reports. Fields in any order, unknown ones passed over;
+	// index, total and name are absent before the first game is known (the
+	// ctl is still listing), and name is not kept: the row has no room for
+	// it. running is false for an empty line, a missing at, an at the ctl's
+	// own bound has passed -- a run that died leaves its file behind, and a
+	// file is never a run on its own -- and an at more than a day ahead of
+	// now, which is a clock that jumped. The other fields are read whether
+	// or not it runs; a count that is not one reads as zero.
+	struct RunningProgress
+	{
+		bool running = false;
+		std::string route;    // "scan" or "topup", as the ctl wrote it
+		long long at = 0;     // when the ctl last wrote the line, epoch seconds
+		int index = 0;        // the ctl's count of games so far; 0 before the first
+		int total = 0;        // of how many; 0 until the ctl has counted
+	};
+	// The ctl's bound on a run (raofflineproxy-ctl), past which its file is
+	// a run that died; and how far ahead of now an at may be before it is
+	// a clock that jumped rather than one that drifted.
+	constexpr long long RUNNING_STALE_AFTER_S = 900;
+	constexpr long long RUNNING_AHEAD_LIMIT_S = 86400;
+	RunningProgress parseRunningProgress(const std::string& text, long long nowEpoch);
 }
 
 #endif // ES_APP_CLOUD_TEXT_H

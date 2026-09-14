@@ -8,6 +8,7 @@
 #include "Window.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
+#include <ctime>
 #include <string>
 #include <thread>
 
@@ -17,6 +18,10 @@ namespace
 	// Where the proxy keeps everything it writes (the unit's
 	// RAOFFLINEPROXY_CONFIG_DIR), and the two files the scan reads back.
 	const char* SCAN_STAMP = "/storage/.config/raofflineproxy/last-scan";
+	// The one line the ctl keeps while a scan or top-up runs its jobs,
+	// rewritten as each game finishes and removed when the run ends (fork
+	// #189); CloudText::parseRunningProgress reads it.
+	const char* RUNNING_FILE = "/storage/.config/raofflineproxy/running";
 	const char* READY_FILE = "/storage/.config/raofflineproxy/cached_game_ids.txt";
 	// The proxy's own answer to "can RetroAchievements be reached", written
 	// by its connectivity monitor (state.py save_online_state).
@@ -105,6 +110,17 @@ CloudText::ScanStamp OfflineAchievements::lastScan()
 	if (!Utils::FileSystem::exists(SCAN_STAMP, false))
 		return CloudText::ScanStamp();
 	return CloudText::parseScanStamp(Utils::FileSystem::readAllText(SCAN_STAMP));
+}
+
+CloudText::RunningProgress OfflineAchievements::runningProgress()
+{
+	// Uncached, as the stamp is. The ctl writes the file whole (a temporary
+	// name, then a rename) and removes it as the run ends, so a read finds
+	// either a whole line or nothing -- and nothing, should the file go
+	// between the two calls here, parses as no run.
+	if (!Utils::FileSystem::exists(RUNNING_FILE, false))
+		return CloudText::RunningProgress();
+	return CloudText::parseRunningProgress(Utils::FileSystem::readAllText(RUNNING_FILE), (long long) time(nullptr));
 }
 
 std::vector<int> OfflineAchievements::readyIds()

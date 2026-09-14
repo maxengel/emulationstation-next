@@ -48,6 +48,13 @@ namespace OfflineAchievements
 	// is false when there has been none.
 	CloudText::ScanStamp lastScan();
 
+	// How far a scan or top-up the ctl is running has got, from the progress
+	// file it keeps beside the stamp while its jobs run and removes when the
+	// run ends (fork #189): read uncached, judged against this clock, so a
+	// file a dead run left behind reads as no run once the ctl's bound has
+	// passed. running is false when there is none. A file read, no process.
+	CloudText::RunningProgress runningProgress();
+
 	// How many games the proxy holds achievement data for -- the ones that
 	// earn offline -- from the client's own export of cached game ids, one
 	// per line, rewritten on every change to the cache by the service and

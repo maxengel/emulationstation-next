@@ -970,3 +970,85 @@ TEST_CASE("parseScanStamp on the shapes that are not a scan")
 	CHECK(s.ran);
 	CHECK(s.why.empty());
 }
+
+TEST_CASE("parseRunningProgress reads raofflineproxy-ctl's running line")
+{
+	const long long now = 1789500000;
+
+	// As the ctl writes it as each game finishes (fork #189).
+	RunningProgress r = parseRunningProgress("route=topup at=1789499990 index=50 total=147 name=Tobu_Tobu_Girl_Deluxe\n", now);
+	CHECK(r.running);
+	CHECK(r.route == "topup");
+	CHECK(r.at == 1789499990);
+	CHECK(r.index == 50);
+	CHECK(r.total == 147);
+
+	// Before the first game is known: started, listing.
+	r = parseRunningProgress("route=topup at=1789500000", now);
+	CHECK(r.running);
+	CHECK(r.route == "topup");
+	CHECK(r.index == 0);
+	CHECK(r.total == 0);
+
+	// A scan; fields in another order, spaces around, a field a newer ctl
+	// might add, and a name with '=' of its own.
+	r = parseRunningProgress("  total=3 name=A=B index=1 route=scan at=1789499999 pid=123  ", now);
+	CHECK(r.running);
+	CHECK(r.route == "scan");
+	CHECK(r.index == 1);
+	CHECK(r.total == 3);
+
+	// The first line only.
+	r = parseRunningProgress("route=scan at=1789500000 index=2 total=9\nroute=topup at=1 index=7 total=7\n", now);
+	CHECK(r.running);
+	CHECK(r.index == 2);
+	CHECK(r.total == 9);
+
+	// A count that is not one reads as zero and stops nothing.
+	r = parseRunningProgress("route=topup at=1789500000 index=abc total=99999999999", now);
+	CHECK(r.running);
+	CHECK(r.index == 0);
+	CHECK(r.total == 0);
+	r = parseRunningProgress("route=topup at=1789500000 index=-1 total=", now);
+	CHECK(r.running);
+	CHECK(r.index == 0);
+	CHECK(r.total == 0);
+}
+
+TEST_CASE("parseRunningProgress on the shapes that are not a run")
+{
+	const long long now = 1789500000;
+
+	// Empty, and no at: a file is never a run on its own.
+	CHECK_FALSE(parseRunningProgress("", now).running);
+	CHECK_FALSE(parseRunningProgress("\n", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup index=3 total=9", now).running);
+
+	// Malformed.
+	CHECK_FALSE(parseRunningProgress("garbage", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup at=abc", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup at=", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup at=0", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup at=-5", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup at=1789500000000000", now).running);
+	CHECK_FALSE(parseRunningProgress("at", now).running);
+	CHECK_FALSE(parseRunningProgress("=1789500000", now).running);
+	CHECK_FALSE(parseRunningProgress("1789500000 0 topup cached=1", now).running);   // a scan stamp
+
+	// Stale: the ctl's bound is 900 s. At the bound it still runs; past it
+	// the run died and left its file.
+	CHECK(parseRunningProgress("route=topup at=1789499100 index=3 total=9", now).running);
+	RunningProgress r = parseRunningProgress("route=topup at=1789499099 index=3 total=9", now);
+	CHECK_FALSE(r.running);
+	// What the line said is still read, so a log can tell a dead run from none.
+	CHECK(r.route == "topup");
+	CHECK(r.at == 1789499099);
+	CHECK(r.index == 3);
+	CHECK(r.total == 9);
+
+	// An at ahead of now: a day of skew is still a run; more is a clock
+	// that jumped.
+	CHECK(parseRunningProgress("route=topup at=1789586400", now).running);
+	CHECK_FALSE(parseRunningProgress("route=topup at=1789586401", now).running);
+}
