@@ -317,7 +317,8 @@ namespace CloudText
 	FlushStamp parseFlushStamp(const std::string& text);
 
 	// Which of the sentences the exit card ends on, from what is waiting
-	// (D-RA-004): awards, awards and saves, saves, or nothing to say. The
+	// (D-RA-004; the sentences themselves are D-RA-017's): awards, awards
+	// and saves, saves, or nothing to say. The
 	// saves are "pending" when the exit sync could not run for want of a
 	// connection; awards when the ctl counted any. Translation stays with
 	// the caller.
@@ -325,7 +326,9 @@ namespace CloudText
 	NextTime nextTime(bool awardsPending, bool savesPending);
 
 	// "<epoch> <rc> <scan|topup> cached=<n> skipped=<m> ready=<total>
-	// limit=<0|1>[ why=<TOKEN>]" from raofflineproxy-ctl's last-scan: how
+	// limit=<0|1> indexed=<i> errors=<e>[ why=<TOKEN>]" from
+	// raofflineproxy-ctl's last-scan (indexed= and errors= since audit #186
+	// PL-24; a ctl before them writes neither, and both read 0): how
 	// the last scan of the console's games for offline achievements went,
 	// or the last automatic top-up when the device came online (fork #179,
 	// D-RA-010). ran is false for a line of any other shape, and the row
@@ -342,6 +345,9 @@ namespace CloudText
 		int skipped = 0;      // ROMs RetroAchievements does not know
 		int ready = 0;        // games cached in all, after the run
 		bool limit = false;   // the proxy's cap was reached
+		int indexed = 0;      // of cached, how many came from the interface's index (no hash)
+		int errors = 0;       // games a fetch failed for: what makes rc 1 with why=SOME_GAMES_NOT_SAVED
+		bool truncated = false; // the walk stopped at the client's cap of files; a second run reaches the rest
 		std::string why;
 	};
 	ScanStamp parseScanStamp(const std::string& text);

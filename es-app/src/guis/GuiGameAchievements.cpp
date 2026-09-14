@@ -71,7 +71,7 @@ public:
 			desc += _U("  \uf091  ") + _("Unlocked on") + ": " + mGameInfo.DateEarned;			
 		// From the device the cache knows the unlock and not its date, and
 		// an award still queued is said so in the words the sync cards use
-		// (D-RA-004: achievements are sent). Appended to the same line, so
+		// (D-RA-017: achievements are sent). Appended to the same line, so
 		// the row stays two lines (D-UI-023).
 		else if (mGameInfo.UnlockedOnDevice && mGameInfo.Pending)
 			desc += _U("  \uf091  ") + _("Unlocked - will be sent when you're connected");

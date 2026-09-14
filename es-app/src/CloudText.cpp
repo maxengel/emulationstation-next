@@ -714,6 +714,9 @@ CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 		else if (key == "skipped") stamp.skipped = (int) n;
 		else if (key == "ready")   stamp.ready = (int) n;
 		else if (key == "limit")   stamp.limit = n != 0;
+		else if (key == "indexed") stamp.indexed = (int) n;
+		else if (key == "errors")  stamp.errors = (int) n;
+		else if (key == "truncated") stamp.truncated = n != 0;
 	}
 
 	stamp.ran = true;

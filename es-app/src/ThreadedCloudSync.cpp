@@ -497,9 +497,9 @@ void ThreadedCloudSync::run()
 		// clause names the surface that runs it again: for an automatic
 		// sync, when that is; for one the player pressed, the row.
 		std::vector<std::string> action;
-		// The wording is the maintainer's, provisional, one string each so it
-		// can change (D-RA-004): "sync" stays the saves' word and awards are
-		// "sent" (D-UI-022).
+		// The wording is D-RA-017's -- D-RA-004's, settled as shipped: "sync"
+		// stays the saves' word and awards are "sent" (D-UI-022) -- one string
+		// each, verbatim as the register quotes them.
 		const std::string awardsWaiting = _("OFFLINE ACHIEVEMENTS WILL BE SENT NEXT TIME YOU'RE CONNECTED.");
 		const std::string awardsWent = _("OFFLINE ACHIEVEMENTS HAVE BEEN SENT TO RETROACHIEVEMENTS.");
 		if (completed)

@@ -10,6 +10,7 @@
 
 #include "guis/GuiMsgBox.h"
 #include "guis/GuiOfflineScan.h"
+#include "OfflineScanJob.h"
 #include "CloudText.h"
 #include "OfflineAchievements.h"
 #include "Settings.h"
@@ -27,6 +28,7 @@
 #include "LocaleES.h"
 #include "Log.h"
 #include <memory>
+#include <thread>
 
 #if defined(ROCKNIX)
 // A line of the page's own text, at the standard text size, wrapped to the
@@ -41,7 +43,12 @@
 // put back with the height fixed. The width is the menu's own rule
 // (MenuComponent::updateSize): the whole screen on a handheld panel, else
 // the shorter of the screen's height and nine tenths of its width.
-static void addInfoRow(GuiSettings* s, Window* window, const std::string& text)
+//
+// The row's height is measured on longestText -- the longest words it may
+// ever carry -- because a ComponentList sizes a row as it is added and a
+// text set afterwards that needs one more line hangs below the row's slot.
+// Returned so the words can change later (a sentence that becomes true).
+static std::shared_ptr<TextComponent> addInfoRow(GuiSettings* s, Window* window, const std::string& text, const std::string& longestText)
 {
 	auto theme = ThemeData::getMenuTheme();
 	const float inset = 10.0f;
@@ -49,16 +56,48 @@ static void addInfoRow(GuiSettings* s, Window* window, const std::string& text)
 		? (float) Renderer::getScreenWidth()
 		: (float) Math::min((int) Renderer::getScreenHeight(), (int) (Renderer::getScreenWidth() * 0.90f));
 
-	auto tc = std::make_shared<TextComponent>(window, text, theme->Text.font, theme->Text.color, ALIGN_LEFT,
+	auto tc = std::make_shared<TextComponent>(window, longestText, theme->Text.font, theme->Text.color, ALIGN_LEFT,
 		Vector3f::Zero(), Vector2f(width - 2 * inset, 0));
 	const float height = tc->getSize().y();
 	tc->setPadding(Vector4f(inset, 0, inset, 0));
 	tc->setSize(width, height);
 	tc->setVerticalAlignment(ALIGN_TOP);
+	if (text != longestText)
+		tc->setText(text);
 
 	ComponentListRow row;
 	row.selectable = false;
 	row.addElement(tc, true);
+	s->addRow(row);
+	return tc;
+}
+
+// The page's block of text (D-RA-003), with or without its last sentence.
+// The last sentence is D-RA-013's: the cache follows the interface's own
+// game index, so a game added later is cached by the top-up that runs when
+// the device is next connected (raofflineproxy-ctl topup) -- once the index
+// knows it, which is INDEX NEW GAMES AT STARTUP's job. So the sentence is
+// shown only while that setting is on (audit #186 PL-06, D-UI-055: a
+// sentence must be true of what happens); turning the switch on turns the
+// setting on, below, so on a device set up through this page it is.
+static std::string offlineInfoText(bool indexAtStartup)
+{
+	std::string text = _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET.");
+	if (indexAtStartup)
+		text += " " + _("NEW GAMES ARE ADDED THE NEXT TIME YOU'RE CONNECTED.");
+	return text;
+}
+
+// A little air between the options and the text under them: an empty,
+// non-selectable row half a text line tall (RC-5 round, D-UI-054).
+static void addSpacerRow(GuiSettings* s, Window* window)
+{
+	auto theme = ThemeData::getMenuTheme();
+	auto gap = std::make_shared<GuiComponent>(window);
+	gap->setSize(0, theme->Text.font->getHeight() * 0.5f);
+	ComponentListRow row;
+	row.selectable = false;
+	row.addElement(gap, true);
 	s->addRow(row);
 }
 
@@ -87,6 +126,23 @@ private:
 	bool mDimmed = false;
 };
 
+// The OFFLINE ACHIEVEMENTS switch, dimmed while raofflineproxy-ctl is
+// enabling or disabling on its behalf (audit #186 PL-27): the same
+// per-frame colour rule as the entry above, so the dim is applied by the
+// switch itself.
+class DimmableSwitch : public SwitchComponent
+{
+public:
+	using SwitchComponent::SwitchComponent;
+	void setDimmed(bool dimmed) { mDimmed = dimmed; }
+	void setColor(unsigned int color) override
+	{
+		SwitchComponent::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
+	}
+private:
+	bool mDimmed = false;
+};
+
 static bool offlineScanOn()
 {
 	return SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy");
@@ -101,21 +157,27 @@ static bool offlineScanOnline()
 	return !Utils::Platform::queryIPAddress().empty();
 }
 
-// The line under the row. Why it cannot run now, else how the last run went
-// and the count that is the point of the row -- longest form first, and the
-// row's own small font decides which fits (D-UI-035). An automatic top-up
-// says so in place of the date (D-UI-032).
+// The line under the row. A scan left running in the background first
+// (audit #186 PL-07: SCANNING... - GAME i OF n, refreshed as the run
+// reports, and the ready count the client's export already carries); else
+// why it cannot run now, else how the last run went and the count that is
+// the point of the row -- longest form first, and the row's own small font
+// decides which fits (D-UI-035). An automatic top-up says so in place of
+// the date (D-UI-032).
 static std::string offlineScanDetail(bool on, bool online)
 {
-	if (!on)
-		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
-	if (!online)
-		return _("YOU'RE NOT ONLINE.");
-
 	const std::string ready = GuiOfflineScan::readyPhrase(OfflineAchievements::readyCount());
-	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
 	std::vector<std::string> candidates;
-	if (!last.ran)
+	if (OfflineScanJob::running())
+	{
+		const std::string head = GuiOfflineScan::runningPhrase(OfflineScanJob::current()->state());
+		candidates = { head + "  ·  " + ready, head, _("SCANNING...") };
+	}
+	else if (!on)
+		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
+	else if (!online)
+		return _("YOU'RE NOT ONLINE.");
+	else if (const CloudText::ScanStamp last = OfflineAchievements::lastScan(); !last.ran)
 		candidates = { _("NOT SCANNED YET") + std::string("  ·  ") + ready, ready };
 	else
 	{
@@ -152,7 +214,8 @@ static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
 		return;
 	const bool on = offlineScanOn();
 	const bool online = offlineScanOnline();
-	entry->setDimmed(!on || !online);
+	// A run in the background can be reopened whatever the gates say now.
+	entry->setDimmed((!on || !online) && !OfflineScanJob::running());
 	entry->setDescription(offlineScanDetail(on, online));
 }
 
@@ -160,8 +223,26 @@ static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
 // (D-UI-023: what the scan does and costs is read at the moment of
 // deciding, with why the last one could not finish as its second paragraph,
 // D-UI-029), then the page. YES first, NO last so B answers NO.
+// The scan page itself, from the row's confirmation and from the prompt
+// that follows turning the switch on (D-RA-012). The refresh it is handed
+// runs as the scan reports, when it ends and when the page closes, so the
+// row's line follows a scan left running in the background (PL-07).
+static void offlineScanStart(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
+{
+	window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
+		[weak] { offlineScanRefresh(weak); }));
+}
+
 static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
 {
+	// A scan left running in the background: the page opens on it again, no
+	// question asked -- there is nothing to decide, and the ctl would refuse
+	// a second run anyway (PL-07).
+	if (OfflineScanJob::running())
+	{
+		offlineScanStart(window, weak);
+		return;
+	}
 	if (!offlineScanOn())
 	{
 		window->pushGui(new GuiMsgBox(window, _("TURN ON OFFLINE ACHIEVEMENTS FIRST."), _("OK")));
@@ -174,17 +255,20 @@ static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> 
 	}
 
 	std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS?") + std::string("\n\n")
-		+ _("LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO IT EARNS WHILE OFFLINE. TAKES A WHILE FOR A LARGE LIBRARY AND ASKS RETROACHIEVEMENTS ONCE PER GAME.");
+		+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
 	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
 	if (last.ran && last.code != 0 && !last.why.empty())
-		text += "\n\n" + _("LAST TIME IT COULDN'T FINISH:") + " " + OfflineAchievements::scanWhy(last.why) + ".";
+	{
+		// The why as a clause, then a full stop -- unless the why is a
+		// sentence already (SOME GAMES COULDN'T BE SAVED. TRY THE SCAN
+		// AGAIN.), which brings its own.
+		const std::string why = OfflineAchievements::scanWhy(last.why);
+		text += "\n\n" + _("LAST TIME IT COULDN'T FINISH:") + " " + why
+			+ (Utils::String::endsWith(why, ".") ? "" : ".");
+	}
 
 	window->pushGui(new GuiMsgBox(window, text,
-		_("YES"), [window, weak]
-		{
-			window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
-				[weak] { offlineScanRefresh(weak); }));
-		},
+		_("YES"), [window, weak] { offlineScanStart(window, weak); },
 		_("NO"), nullptr));
 }
 
@@ -199,7 +283,7 @@ static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Wind
 	const bool online = offlineScanOnline();
 	auto entry = std::make_shared<DimmableMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"),
 		offlineScanDetail(on, online), false);
-	entry->setDimmed(!on || !online);
+	entry->setDimmed((!on || !online) && !OfflineScanJob::running());
 	std::weak_ptr<DimmableMenuEntry> weak = entry;
 
 	ComponentListRow row;
@@ -228,79 +312,175 @@ static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Wind
 //
 // hardcoreRow is the parent page's HARDCORE MODE switch, weak on purpose:
 // this page's callbacks must never keep a row of the page below alive.
-static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponent> hardcoreRow)
+// indexRow is the parent's INDEX NEW GAMES AT STARTUP switch, boxed because
+// that row is built after the row that opens this page: turning the switch
+// on turns that setting on too (below), and the row has to show it, or the
+// parent's save at close would write the row's old state back.
+static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponent> hardcoreRow,
+	std::shared_ptr<std::weak_ptr<SwitchComponent>> indexRow)
 {
-	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS").c_str());
+	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS (BETA)").c_str());
 
-	auto offline = std::make_shared<SwitchComponent>(window);
+	auto offline = std::make_shared<DimmableSwitch>(window);
 	offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
-	s->addWithLabel(_("OFFLINE ACHIEVEMENTS"), offline);
+	s->addWithLabel(_("OFFLINE ACHIEVEMENTS (BETA)"), offline);
 
-	addInfoRow(s, window, _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE."));
-	addInfoRow(s, window, _("BETA. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF."));
-	// RetroArch's disconnected badge, explained where the RetroAchievements
-	// choices are made (fork #162): rcheevos shows it while an award or a
-	// score is waiting to reach the server, and says nothing about what it
-	// means. It was the parent page's subtitle, two lines of small text at
-	// 640x480 (#166); here it has a row of its own (D-RA-003).
-	addInfoRow(s, window, _("!RA! IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."));
-
-	// The scan, under the explanation of what the switch does: a row and
-	// one line, dimmed with its reason until the switch is on and the
-	// device has an address (fork #179, D-RA-010).
+	// The two options first -- the switch above, the scan under it -- then a
+	// little space, then one block of text that explains both (RC-5 round,
+	// D-UI-054: "the two options at the top of the page, a little space, and
+	// then some text explaining it"). The scan row is dimmed with its reason
+	// until the switch is on and the device has an address (fork #179,
+	// D-RA-010). RetroArch's disconnected badge is explained here because
+	// rcheevos shows it while an award is waiting to reach the server and
+	// says nothing about what it means (fork #162); it is quoted so it reads
+	// as a thing on screen and not as a typo (D-RA-003).
 	std::weak_ptr<DimmableMenuEntry> scanRow = addOfflineScanRow(s, window);
+	addSpacerRow(s, window);
+	std::weak_ptr<TextComponent> infoRow = addInfoRow(s, window,
+		offlineInfoText(Settings::CheevosCheckIndexesAtStart()), offlineInfoText(true));
 
-	// A raw pointer on purpose: the callback lives inside the switch it
-	// captures, so a shared_ptr here would be a cycle that keeps the page
-	// alive forever. setState fires the change callback too, so a revert
-	// made from inside it would re-enter it: quiet while the code, not the
+	// Weak on purpose: the callback lives inside the switch it names, so a
+	// shared_ptr here would be a cycle that keeps the page alive forever --
+	// and the ctl's answer arrives from a thread after the page may have
+	// been closed. setState fires the change callback too, so a revert made
+	// from inside it would re-enter it: quiet while the code, not the
 	// player, sets the state.
-	SwitchComponent* offlineRow = offline.get();
+	std::weak_ptr<DimmableSwitch> offlineWeak = offline;
 	auto quiet = std::make_shared<bool>(false);
-	auto setQuietly = [offlineRow, quiet](bool state) { *quiet = true; offlineRow->setState(state); *quiet = false; };
-
-	auto apply = [window, offlineRow, hardcoreRow, setQuietly, scanRow](bool on)
+	auto setQuietly = [offlineWeak, quiet](bool state)
 	{
-		std::string last;
-		// executeScriptLegacy: the public route that hands back the real
-		// exit status and every line, as the cloud pages use it.
-		auto result = ApiSystem::executeScriptLegacy(std::string("/usr/bin/raofflineproxy-ctl ") + (on ? "enable" : "disable") + " 2>/dev/null",
-			[&last](const std::string line) { last = line; });
-		if (result.second != 0 || !Utils::String::startsWith(last, "hardcore="))
+		if (auto sw = offlineWeak.lock())
 		{
-			setQuietly(!on);
-			window->pushGui(new GuiMsgBox(window,
-				on ? _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED ON.") : _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED OFF."),
-				_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
-			return;
+			*quiet = true;
+			sw->setState(state);
+			*quiet = false;
 		}
-		bool hardcoreNow = (last == "hardcore=1");
-		if (auto row = hardcoreRow.lock())
-			row->setState(hardcoreNow);
-		SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
-		SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
-		// The scan row reads the switch: on, it offers the scan; off, it
-		// says to turn the switch on first.
-		offlineScanRefresh(scanRow);
 	};
 
-	offline->setOnChangedCallback([window, offlineRow, quiet, setQuietly, apply]
+	// The ctl runs from a thread of its own (audit #186 PL-27): disable
+	// waits on systemctl stop, up to the unit's fifteen seconds, and the
+	// interface thread never blocks on a process (es-native-ui.md). While it
+	// runs the switch is dimmed and refuses a second press; the rows are set
+	// from the ctl's answer on the interface thread (postToUiThread), the
+	// pattern sayAfterGame uses. Every row is held weakly: the player may
+	// have left the page, or the page below it, before the answer comes,
+	// and each row that is gone is simply not set -- system.cfg already
+	// holds what the ctl wrote, and the page below saves only what changed.
+	auto pending = std::make_shared<bool>(false);
+	auto apply = [window, offlineWeak, hardcoreRow, indexRow, infoRow, setQuietly, scanRow, pending](bool on)
+	{
+		if (*pending)
+			return;
+		*pending = true;
+		if (auto sw = offlineWeak.lock())
+			sw->setDimmed(true);
+
+		std::thread([window, on, offlineWeak, hardcoreRow, indexRow, infoRow, setQuietly, scanRow, pending]
+		{
+			std::string last;
+			// executeScriptLegacy: the public route that hands back the real
+			// exit status and every line, as the cloud pages use it.
+			auto result = ApiSystem::executeScriptLegacy(std::string("/usr/bin/raofflineproxy-ctl ") + (on ? "enable" : "disable") + " 2>/dev/null",
+				[&last](const std::string line) { last = line; });
+			const bool ok = result.second == 0 && Utils::String::startsWith(last, "hardcore=");
+			const bool hardcoreNow = (last == "hardcore=1");
+
+			window->postToUiThread([window, on, ok, hardcoreNow, offlineWeak, hardcoreRow, indexRow, infoRow, setQuietly, scanRow, pending]
+			{
+				*pending = false;
+				if (auto sw = offlineWeak.lock())
+					sw->setDimmed(false);
+
+				if (!ok)
+				{
+					setQuietly(!on);
+					window->pushGui(new GuiMsgBox(window,
+						on ? _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED ON.") : _("OFFLINE ACHIEVEMENTS COULDN'T BE TURNED OFF."),
+						_("OK"), nullptr, GuiMsgBoxIcon::ICON_ERROR));
+					return;
+				}
+				if (auto row = hardcoreRow.lock())
+					row->setState(hardcoreNow);
+				SystemConf::getInstance()->set("global.retroachievements.offlineproxy", on ? "1" : "0");
+				SystemConf::getInstance()->set("global.retroachievements.hardcore", hardcoreNow ? "1" : "0");
+				// The scan row reads the switch: on, it offers the scan; off, it
+				// says to turn the switch on first.
+				offlineScanRefresh(scanRow);
+
+				// The cache follows the index (D-RA-013), and the index is off
+				// by default: turning the switch on turns INDEX NEW GAMES AT
+				// STARTUP on as well, said in the confirmation above (audit
+				// #186 PL-06). Saved here, not left to the page below: its save
+				// writes the row's state, so the row is set too where it is
+				// still there, and a page already closed has already saved.
+				// The block of text gains its last sentence now that it is
+				// true. Turning the switch off leaves the setting as it is --
+				// an index is the player's, and costs nothing offline.
+				if (on && !Settings::CheevosCheckIndexesAtStart())
+				{
+					Settings::getInstance()->setBool("CheevosCheckIndexesAtStart", true);
+					Settings::getInstance()->saveFile();
+					if (auto row = indexRow->lock())
+						row->setState(true);
+					if (auto info = infoRow.lock())
+						info->setText(offlineInfoText(true));
+				}
+
+				// Turning it on offers the scan at once (D-RA-012): without it a
+				// player who skips the row plays offline with nothing cached.
+				// Offline, one line says when to come back to it.
+				if (on)
+				{
+					if (offlineScanOnline())
+					{
+						std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS NOW?") + std::string("\n\n")
+							+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
+						window->pushGui(new GuiMsgBox(window, text,
+							_("SCAN NOW"), [window, scanRow] { offlineScanStart(window, scanRow); },
+							_("LATER"), nullptr));
+					}
+					else
+					{
+						window->pushGui(new GuiMsgBox(window,
+							_("YOU'RE NOT ONLINE. SCAN GAMES FOR OFFLINE ACHIEVEMENTS WHEN YOU'RE CONNECTED, SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE."),
+							_("OK")));
+					}
+				}
+			});
+		}).detach();
+	};
+
+	offline->setOnChangedCallback([window, offlineWeak, quiet, setQuietly, apply, pending]
 	{
 		if (*quiet)
 			return;
+		auto sw = offlineWeak.lock();
+		if (!sw)
+			return;
 
-		if (!offlineRow->getState())
+		// A press while the ctl is still at work on the last one: the switch
+		// goes back to the state the ctl is making, and nothing else happens.
+		if (*pending)
+		{
+			setQuietly(!sw->getState());
+			return;
+		}
+
+		if (!sw->getState())
 		{
 			apply(false);
 			return;
 		}
 
 		// The consequence, read at the moment of deciding (D-UI-023); the
-		// page above already says what the feature does. NOT NOW is the
-		// last button, so B answers NOT NOW (GuiMsgBox's accelerator) and
-		// the switch goes back to off.
-		window->pushGui(new GuiMsgBox(window,
-			_("THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING IT ON TURNS HARDCORE MODE OFF."),
+		// page above already says what the feature does. With the startup
+		// index off, one more sentence says it goes on too (PL-06). NOT NOW
+		// is the last button, so B answers NOT NOW (GuiMsgBox's accelerator)
+		// and the switch goes back to off.
+		std::string text = _("THIS IS A BETA FEATURE. IT WORKS FOR CASUAL ACHIEVEMENTS ONLY, AND TURNING IT ON TURNS HARDCORE MODE OFF.");
+		if (!Settings::CheevosCheckIndexesAtStart())
+			text += " " + _("IT ALSO TURNS ON INDEX NEW GAMES AT STARTUP, SO GAMES YOU ADD LATER ARE SAVED FOR OFFLINE PLAY TOO.");
+		window->pushGui(new GuiMsgBox(window, text,
 			_("TURN ON"), [apply] { apply(true); },
 			_("NOT NOW"), [setQuietly] { setQuietly(false); }));
 	});
@@ -344,11 +524,13 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	// every description on this page (#166) -- and the page carries the
 	// switch with the explanation beside it. Shown only where the backend
 	// is: an image without the package has no toggle to offer.
+	// indexRow is filled once the GAME INDEXES rows exist, below.
+	auto indexRow = std::make_shared<std::weak_ptr<SwitchComponent>>();
 	if (Utils::FileSystem::exists("/usr/bin/raofflineproxy-ctl"))
 	{
 		std::weak_ptr<SwitchComponent> hardcoreRow = hardcore;
-		addWithDescription(_("OFFLINE ACHIEVEMENTS"), _("Beta. Casual achievements only."), makeArrow(mWindow),
-			[window, hardcoreRow] { openOfflineAchievements(window, hardcoreRow); }, "", false, true);
+		addWithDescription(_("OFFLINE ACHIEVEMENTS (BETA)"), _("Casual achievements only."), makeArrow(mWindow),
+			[window, hardcoreRow, indexRow] { openOfflineAchievements(window, hardcoreRow, indexRow); }, "", false, true);
 	}
 #endif
 	addSwitch(_("LEADERBOARDS"), _("Compete in high-score and best time leaderboards (requires hardcore)."), "global.retroachievements.leaderboards", false, nullptr);
@@ -409,12 +591,35 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 	addSwitch(_("SHOW RETROACHIEVEMENTS ENTRY IN MAIN MENU"), _("View your RetroAchievements stats right from the main menu!"), "RetroachievementsMenuitem", true, nullptr);
 
 	addGroup(_("GAME INDEXES"));
-	addSwitch(_("INDEX NEW GAMES AT STARTUP"), "CheevosCheckIndexesAtStart", true);
-	addEntry(_("INDEX GAMES"), true, [this]
+	// With OFFLINE ACHIEVEMENTS on, the index feeds the offline cache (fork
+	// #184, D-RA-013): as the hasher finishes, the games it identified are
+	// cached for offline play from their id and hash, and a game the index
+	// does not know is not cached at all. Maintainer: "we need to be clear
+	// that scanning for retro achievements [...] will cache new games
+	// discovered as well [...] perhaps even changing the text of that option
+	// when offline achievements are enabled." So each row says so in one
+	// line while the switch is on (D-UI-023), and reads as upstream's when
+	// it is off. Read at page build: the switch lives on the page below,
+	// and this page is built again on the way back to it.
+	bool indexFeedsOffline = false;
+#if defined(ROCKNIX)
+	indexFeedsOffline = OfflineAchievements::available() && OfflineAchievements::toggleOn();
+#endif
+	auto indexAtStartup = addSwitch(_("INDEX NEW GAMES AT STARTUP"),
+		indexFeedsOffline ? _("Also saves new games' achievement data for offline play.") : std::string(),
+		"CheevosCheckIndexesAtStart", true, nullptr);
+#if defined(ROCKNIX)
+	*indexRow = indexAtStartup;
+#endif
+	auto indexGames = [this]
 	{
 		if (ThreadedHasher::checkCloseIfRunning(mWindow))
 			mWindow->pushGui(new GuiHashStart(mWindow, ThreadedHasher::HASH_CHEEVOS_MD5));
-	});
+	};
+	if (indexFeedsOffline)
+		addWithDescription(_("INDEX GAMES"), _("Also saves their achievement data for offline play."), makeArrow(mWindow), indexGames, "", false, true);
+	else
+		addEntry(_("INDEX GAMES"), true, indexGames);
 
 	// The switch is the player's choice, and this save writes that choice
 	// and nothing else (#175). The sign-in below decides the token only. It

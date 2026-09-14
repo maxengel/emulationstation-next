@@ -78,6 +78,7 @@ void OfflineAchievements::sayAfterGame(Window* window)
 	// just exited on a handheld. The stamp is consumed first so a flush that
 	// already happened is not told after the awards that followed it; the
 	// waiting awards are the newer fact, so they win when both are true.
+	// The two sentences are the sync card's, verbatim (D-RA-017).
 	std::thread([window]
 	{
 		const bool sent = takeFlushed();
@@ -214,6 +215,11 @@ std::string OfflineAchievements::scanWhy(const std::string& token)
 		return _("YOUR GAMES COULDN'T BE READ");
 	if (token == "TOOK_TOO_LONG")
 		return _("IT TOOK TOO LONG");
+	// A fetch failed for some game, even among many that went through
+	// (audit #186 PL-24): the run could not finish, and the next scan tries
+	// those games again, since nothing marks them cached.
+	if (token == "SOME_GAMES_NOT_SAVED")
+		return _("SOME GAMES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
 	return _("SOMETHING WENT WRONG");
 }
 
@@ -234,5 +240,20 @@ void OfflineAchievements::topUpWhenOnline()
 	{
 		const auto answer = ask("topup");
 		LOG(LogInfo) << "OfflineAchievements: topup exited " << answer.second;
+	}).detach();
+}
+
+void OfflineAchievements::topUpAfterIndex()
+{
+	if (!available() || !toggleOn())
+		return;
+
+	// The index has just grown, so this run is not held to the half hour
+	// since the last attempt; the ctl still bounds it (its lock, its
+	// timeout) and stamps its outcome for the OFFLINE ACHIEVEMENTS page.
+	std::thread([]
+	{
+		const auto answer = ask("topup --after-index");
+		LOG(LogInfo) << "OfflineAchievements: topup --after-index exited " << answer.second;
 	}).detach();
 }

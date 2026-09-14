@@ -67,16 +67,31 @@ namespace OfflineAchievementsText
 	// The patch action's body. Keeps the core achievements (Flags 3) with a
 	// positive id, in the order the body gives them, which is the server's
 	// display order. ok is false for anything else -- a miss, junk, a body
-	// without PatchData.
+	// without PatchData, and a body whose Achievements is missing, not a
+	// list, or empty: the proxy caches a game for its set, so a set with
+	// nothing in it is not the shape, and must not become a page of "0 of
+	// 0" (audit #186 PL-26, guards fail closed). A set whose every entry the
+	// filter drops (all unofficial) is still the shape, with no achievements.
 	Game parsePatch(const std::string& body);
 
 	// The achievementsets action's body: the core set (Type "core"), or the
-	// first set when none says so. Same filter as parsePatch.
+	// first set when none says so. Same filter and the same rule for an
+	// empty set as parsePatch.
 	Game parseAchievementSets(const std::string& body);
 
-	// The ids in UserUnlocks. Empty for a body of any other shape; the
-	// caller decides what an empty list means from the game's body.
-	std::vector<int> parseUnlocks(const std::string& body);
+	// The ids in UserUnlocks. ok is true only for a body of that shape --
+	// Success true and UserUnlocks a list -- and the list may then be empty:
+	// an unknown game and a cached game nobody has unlocked anything in both
+	// answer 200 with none, so emptiness never decides whether a game is
+	// cached. Any other body is not ok, and the caller must not read it as
+	// "nothing unlocked" (audit #186 PL-26): validity travels apart from
+	// emptiness.
+	struct Unlocks
+	{
+		bool ok = false;
+		std::vector<int> ids;
+	};
+	Unlocks parseUnlocks(const std::string& body);
 
 	// The Error of a body that says Success false, else empty. The proxy
 	// answers a miss with 503 and this body; HttpReq hands the body back as

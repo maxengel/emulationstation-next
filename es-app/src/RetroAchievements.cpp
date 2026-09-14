@@ -300,6 +300,7 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoFromDevice(int gameId, con
 		else
 		{
 			LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer patch for game " << gameId << ": " << error;
+			ret.ProxyDidNotAnswer = true;
 			return ret;
 		}
 	}
@@ -313,6 +314,7 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoFromDevice(int gameId, con
 		else
 		{
 			LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer achievementsets: " << error;
+			ret.ProxyDidNotAnswer = true;
 			return ret;
 		}
 	}
@@ -325,14 +327,23 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoFromDevice(int gameId, con
 
 	// The unlocks are half the page; without them every badge would read
 	// locked, which is a page that lies. No answer, no page: the caller
-	// asks the web and says what it says.
+	// asks the web and says what it says. A 200 whose body is not the
+	// unlocks shape is no answer either (audit #186 PL-26): it is not read
+	// as "nothing unlocked".
 	if (!OfflineAchievements::askProxy("r=unlocks&g=" + std::to_string(game.id) + "&u=" + HttpReq::urlEncode(user), body, error))
 	{
 		LOG(LogWarning) << "RetroAchievements: the offline proxy did not answer unlocks for game " << game.id << ": " << error;
+		ret.ProxyDidNotAnswer = true;
+		return ret;
+	}
+	const OfflineAchievementsText::Unlocks unlocks = OfflineAchievementsText::parseUnlocks(body);
+	if (!unlocks.ok)
+	{
+		LOG(LogWarning) << "RetroAchievements: the offline proxy's unlocks for game " << game.id << " were not the shape expected; no page from the device";
 		return ret;
 	}
 	std::set<int> unlocked;
-	for (int id : OfflineAchievementsText::parseUnlocks(body))
+	for (int id : unlocks.ids)
 		unlocked.insert(id);
 
 	std::set<int> queued;
@@ -396,6 +407,14 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 	const auto pending = OfflineAchievements::pendingAwardIds();
 	const auto totals = OfflineAchievements::accountTotals();
 
+	// One game at a time, because the proxy answers one game at a time --
+	// it has no bulk read, and the ctl opens no store for the interface --
+	// and the first game it does not answer for ends the walk (audit #186
+	// PL-09): a proxy that has stopped is not asked a thousand times at a
+	// timeout each, and a summary that would list a fraction of the library
+	// as the whole is not shown. The caller reads the empty name as "the
+	// proxy gave no summary" and asks the web, which says in its own words
+	// that there is no connection.
 	std::vector<std::pair<std::string, RecentGame>> games;
 	for (int id : ids)
 	{
@@ -403,8 +422,20 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 		const std::string hash = file != nullptr ? file->getMetadata(MetaDataId::CheevosHash) : "";
 
 		auto game = getGameInfoFromDevice(id, hash, &pending);
+		if (game.ProxyDidNotAnswer)
+		{
+			LOG(LogWarning) << "RetroAchievements: the offline proxy stopped answering after " << games.size() << " of " << ids.size() << " cached games; no summary from the device";
+			// ret as it stands: no name, no games -- the caller's "no
+			// summary" -- with RecentlyPlayedCount already 0.
+			return ret;
+		}
 		if (game.ID == 0)
+		{
+			// The export names a game the proxy will not give a page for: a
+			// miss, or a body that was not the shape. Passed over, logged.
+			LOG(LogWarning) << "RetroAchievements: cached game " << id << " gave no page from the device (" << (game.NotOnDevice ? "not cached" : "not the shape expected") << ")";
 			continue;
+		}
 
 		RecentGame recent;
 		recent.GameID = std::to_string(game.ID);
@@ -429,6 +460,17 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 		}
 		ret.Awarded[recent.GameID] = award;
 		games.push_back(std::make_pair(Utils::String::toUpper(game.Title), recent));
+	}
+
+	// The export named games and not one of them gave a page: the proxy
+	// and its own export disagree, and a list of nothing shown as the
+	// library would be a page that lies (audit #186 PL-26). No summary; the
+	// caller asks the web. An empty export is a device with nothing cached
+	// yet, and its empty list is the truth.
+	if (!ids.empty() && games.empty())
+	{
+		LOG(LogWarning) << "RetroAchievements: none of the " << ids.size() << " cached games gave a page from the device; no summary";
+		return ret;
 	}
 
 	std::sort(games.begin(), games.end(), [](const std::pair<std::string, RecentGame>& a, const std::pair<std::string, RecentGame>& b) { return a.first < b.first; });

@@ -9,8 +9,12 @@
 #include "SystemData.h"
 #include "FileData.h"
 #include "ApiSystem.h"
+#include "OfflineAchievements.h"
+#include "CheevosIndex.h"
 #include "utils/StringUtil.h"
 #include "Log.h"
+#include "Settings.h"
+#include <ctime>
 #include <unordered_set>
 #include <queue>
 
@@ -23,12 +27,14 @@ bool ThreadedHasher::mPaused = false;
 
 static std::mutex mLoaderLock;
 
-ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileData*> searchQueue, bool forceAllGames)
-	: mWindow(window)
+ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileData*> searchQueue, const std::vector<FileData*>& lookupOnly, bool forceAllGames)
+	: mWindow(window), mWndNotification(nullptr)
 {
 	mForce = forceAllGames;
 	mExit = false;
 	mType = type;
+	mCheevosIndexed = false;
+	mThreadCount = 0;
 
 	mSearchQueue = searchQueue;
 	mTotal = mSearchQueue.size();
@@ -41,6 +47,25 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 			if (mCheevosHashes.size() == 0)
 				while (!mSearchQueue.empty())
 					mSearchQueue.pop();
+
+			// The games with a hash and no id (audit #186 PL-08): the ones
+			// the library knows join the queue for a lookup and a save, and
+			// nothing else -- their ROM is never read again. RC-5 left every
+			// game indexed in a session that ended with a reboot in this
+			// state (fork #183): the hash in its recovery file, the id
+			// decided afterwards in memory and lost. The ones the library
+			// does not know stay as they are, so a library of games without
+			// a set costs no card and no toast at every startup.
+			for (FileData* game : lookupOnly)
+			{
+				const std::string hash = Utils::String::toUpper(game->getMetadata(MetaDataId::CheevosHash));
+				if (mCheevosHashes.find(hash) == mCheevosHashes.cend())
+					continue;
+				mSearchQueue.push(game);
+				mLookupOnly.insert(game);
+				mTotal++;
+			}
+			mCheevosIndexed = !mCheevosHashes.empty() && !mSearchQueue.empty();
 		}
 		catch (const std::exception& e)
 		{
@@ -48,6 +73,11 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 			throw e;
 		}
 	}
+
+	// A run with nothing to do -- lookups alone, and the library knew none
+	// of them -- shows no card and starts no thread; start() deletes it.
+	if (mTotal == 0)
+		return;
 
 	mWndNotification = mWindow->createAsyncNotificationComponent();
 
@@ -67,10 +97,23 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 
 ThreadedHasher::~ThreadedHasher()
 {
-	if ((mType & HASH_CHEEVOS_MD5) == HASH_CHEEVOS_MD5)
+	if ((mType & HASH_CHEEVOS_MD5) == HASH_CHEEVOS_MD5 && mTotal > 0)
+	{
 		mWindow->displayNotificationMessage(ICONINDEX + _("INDEXING COMPLETED") + std::string(". ") + _("UPDATE GAMELISTS TO APPLY CHANGES."));
 
-	mWndNotification->close();
+		// The offline cache follows this index (fork #184, D-RA-013): once
+		// the games are identified, and while the device is still connected
+		// (the hash library just came from RetroAchievements), the games not
+		// yet cached for offline play are cached from the ids and hashes
+		// written above -- raofflineproxy-ctl topup --after-index, from a
+		// thread of its own, nothing on screen. Not after a run the player
+		// stopped, and not after one that identified nothing.
+		if (!mExit && mCheevosIndexed)
+			OfflineAchievements::topUpAfterIndex();
+	}
+
+	if (mWndNotification != nullptr)
+		mWndNotification->close();
 	mWndNotification = nullptr;
 
 	ThreadedHasher::mInstance = nullptr;
@@ -119,7 +162,12 @@ void ThreadedHasher::run()
 			}
 		}		
 
-		if (netplay)
+		// A game here for a lookup alone is not read: not its CRC, not its
+		// hash (checkCheevosHash returns on the hash it has; checkCrc32 would
+		// not, in a system netplay never asked for).
+		const bool lookupOnly = mLookupOnly.count(game) > 0;
+
+		if (netplay && !lookupOnly)
 		{
 			LOG(LogDebug) << "CheckCrc32 : " << label;
 			game->checkCrc32(mForce);
@@ -128,16 +176,29 @@ void ThreadedHasher::run()
 		if (cheevos)
 		{
 			LOG(LogDebug) << "CheckCheevosHash : " << label;
-			game->checkCheevosHash(mForce);
+			if (!lookupOnly)
+				game->checkCheevosHash(mForce);
 
 			auto hash = Utils::String::toUpper(game->getMetadata(MetaDataId::CheevosHash));
 			if (!hash.empty())
 			{
+				// The id reaches the disk with the hash. checkCheevosHash
+				// saved the game to the recovery folder with the hash and no
+				// id, because the id is decided here, afterwards, and until
+				// now it lived in memory until the gamelist was written at
+				// exit. The offline cache's scan reads that folder for the
+				// index (fork #184, D-RA-013), so a changed id is saved the
+				// same way.
+				const std::string before = game->getMetadata(MetaDataId::CheevosId);
 				auto cheevos = mCheevosHashes.find(hash);
-				if (cheevos != mCheevosHashes.cend())
-					game->setMetadata(MetaDataId::CheevosId, cheevos->second);
-				else
-					game->setMetadata(MetaDataId::CheevosId, "");
+				const std::string id = cheevos != mCheevosHashes.cend() ? cheevos->second : std::string();
+				game->setMetadata(MetaDataId::CheevosId, id);
+				if (id != before)
+				{
+					saveToGamelistRecovery(game);
+					if (lookupOnly)
+						LOG(LogInfo) << "ThreadedHasher: id " << id << " for " << label << " from the hash library, no file read (audit #186 PL-08)";
+				}
 			}
 
 			LOG(LogDebug) << "CheckCheevosHash OK : " << label;;
@@ -184,6 +245,9 @@ void ThreadedHasher::start(Window* window, HasherType type, bool forceAllGames, 
 	}
 	
 	std::queue<FileData*> searchQueue;
+	// The games with a hash and no id: a lookup against the library once it
+	// has come, no read (CheevosIndex, audit #186 PL-08).
+	std::vector<FileData*> lookupOnly;
 	
 	for (auto sys : SystemData::sSystemVector)
 	{
@@ -208,7 +272,10 @@ void ThreadedHasher::start(Window* window, HasherType type, bool forceAllGames, 
 		for (auto file : sys->getRootFolder()->getFilesRecursive(GAME))
 		{
 			bool netPlay = takeNetplay && (forceAllGames || file->getMetadata(MetaDataId::Crc32).empty());
-			bool cheevos = takeCheevos && (forceAllGames || file->getMetadata(MetaDataId::CheevosHash).empty());
+			CheevosIndex::Take take = CheevosIndex::Take::None;
+			if (takeCheevos)
+				take = CheevosIndex::take(forceAllGames, file->getMetadata(MetaDataId::CheevosHash), file->getMetadata(MetaDataId::CheevosId));
+			bool cheevos = take == CheevosIndex::Take::Hash;
 
 			if (cheevos)
 			{
@@ -220,10 +287,12 @@ void ThreadedHasher::start(Window* window, HasherType type, bool forceAllGames, 
 
 			if (netPlay || cheevos)
 				searchQueue.push(file);
+			else if (take == CheevosIndex::Take::Lookup)
+				lookupOnly.push_back(file);
 		}
 	}
 
-	if (searchQueue.size() == 0)
+	if (searchQueue.size() == 0 && lookupOnly.empty())
 	{
 		if (!silent)
 			window->pushGui(new GuiMsgBox(window, _("NO GAMES FIT THAT CRITERIA.")));
@@ -231,9 +300,43 @@ void ThreadedHasher::start(Window* window, HasherType type, bool forceAllGames, 
 		return;
 	}
 
+	// Lookups alone, from the silent startup run: once a day at most
+	// (CheevosIndex::lookupDue) -- the pass costs the hash library, and
+	// nearly every library has a game RetroAchievements does not know whose
+	// hash would ask for it at every boot. A run the player asked for, or
+	// one with games to hash (the library comes anyway), is not held back.
+	// The stamp is written once the library has come, so an offline boot
+	// does not spend the day's pass on a fetch that failed.
+	const bool lookupsAlone = searchQueue.empty() && silent && ((type & HASH_CHEEVOS_MD5) == HASH_CHEEVOS_MD5);
+	const long long now = (long long) time(nullptr);
+	if (lookupsAlone)
+	{
+		const long long last = strtoll(Settings::getInstance()->getString("CheevosLookupOnlyLast").c_str(), nullptr, 10);
+		if (!CheevosIndex::lookupDue(last, now))
+		{
+			LOG(LogInfo) << "ThreadedHasher: " << lookupOnly.size() << " game(s) with a hash and no id; the lookup pass ran within the day, next one later";
+			return;
+		}
+	}
+
 	try
 	{
-		ThreadedHasher::mInstance = new ThreadedHasher(window, type, searchQueue, forceAllGames);
+		ThreadedHasher* hasher = new ThreadedHasher(window, type, searchQueue, lookupOnly, forceAllGames);
+		if (lookupsAlone)
+		{
+			Settings::getInstance()->setString("CheevosLookupOnlyLast", std::to_string(now));
+			Settings::getInstance()->saveFile();
+		}
+		if (hasher->mTotal == 0)
+		{
+			// Lookups alone and the library knew none of them: nothing was
+			// started, nothing is shown -- as a run with nothing to hash.
+			delete hasher;
+			if (!silent)
+				window->pushGui(new GuiMsgBox(window, _("NO GAMES FIT THAT CRITERIA.")));
+			return;
+		}
+		ThreadedHasher::mInstance = hasher;
 	}
 	catch (const std::exception& e)
 	{

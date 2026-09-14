@@ -9,17 +9,12 @@
 #include "utils/StringUtil.h"
 #include "Log.h"
 
-#include <cctype>
 #include <cstdio>
-#include <cstdlib>
-#include <sys/wait.h>
 
-GuiOfflineScan::GuiOfflineScan(Window* window, const std::string& command, const std::function<void()>& onClosed)
+GuiOfflineScan::GuiOfflineScan(Window* window, const std::string& command, const std::function<void()>& onChanged)
 	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
-	  mCommand(command), mOnClosed(onClosed), mHandle(nullptr)
+	  mCommand(command), mOnChanged(onChanged), mShownFinished(false)
 {
-	reset();
-
 	auto theme = ThemeData::getMenuTheme();
 	mBackground.setImagePath(theme->Background.path);
 	mBackground.setEdgeColor(theme->Background.color);
@@ -88,81 +83,76 @@ GuiOfflineScan::GuiOfflineScan(Window* window, const std::string& command, const
 	mPanelPos  = Vector2f(cx - mPanelSize.x() / 2.0f, top);
 	mBackground.fitTo(mPanelSize, Vector3f(mPanelPos.x(), mPanelPos.y(), 0), Vector2f(-32, -32));
 
-	mHandle = new std::thread(&GuiOfflineScan::threadRun, this);
+	// The run in flight, when there is one (the row was pressed while a scan
+	// left in the background was still going), else a new one. Either way
+	// the row follows it from here.
+	mJob = OfflineScanJob::start(window, mCommand);
+	mJob->setOnChanged(mOnChanged);
 }
 
+// Nothing to join: the run is the job's, and goes on without the page.
 GuiOfflineScan::~GuiOfflineScan()
 {
-	if (mHandle != nullptr)
-	{
-		if (mHandle->joinable())
-			mHandle->join();
-		delete mHandle;
-	}
 }
 
-// The run's starting state: from the constructor, and again from input()
-// for TRY AGAIN once the finished worker has been joined.
-void GuiOfflineScan::reset()
-{
-	mListing = false;
-	mTotal = 0; mIndex = 0; mGame.clear();
-	mCached = 0; mSkipped = 0; mReady = -1;
-	mLimit = false; mNothingNew = false; mWhy.clear();
-	mFinished = false; mExit = -1; mShownFinished = false;
-	mElapsedMs = 0;
-	if (mCounter) mCounter->setText("");
-	if (mActivity) mActivity->setText("");
-	if (mDetail) mDetail->setText("");
-	if (mNote) mNote->setText("");
-}
-
-// Input is refused while the scan runs -- there is nothing to choose, and a
-// stray press should not close a page somebody is waiting on. Once it has
-// finished, any button dismisses it, and when the run did not complete, A
-// runs it again from here: the surface that reported the failure carries
-// the retry (D-UI-028).
+// While the scan runs, B closes the page and the scan carries on in the
+// background (audit #186 PL-07; the row's line follows it); every other
+// press is refused, since there is nothing to choose and a stray press
+// should not dismiss a page somebody is waiting on. Once it has finished,
+// any button dismisses it, and when the run did not complete, A runs it
+// again from here: the surface that reported the failure carries the retry
+// (D-UI-028).
 bool GuiOfflineScan::input(InputConfig* config, Input input)
 {
-	std::unique_lock<std::mutex> lock(mMutex);
-	if (!mFinished || !input.value)
+	if (!input.value)
 		return true;
-	const Outcome o = outcome();
-	if (!o.completed && config->isMappedTo("a", input))
+	const OfflineScanJob::State s = mJob->state();
+	if (!s.finished)
 	{
-		lock.unlock();
-		if (mHandle != nullptr)
-		{
-			if (mHandle->joinable())
-				mHandle->join();
-			delete mHandle;
-			mHandle = nullptr;
-		}
-		reset();
-		mStatus->setText(_("PREPARING..."));
-		mHandle = new std::thread(&GuiOfflineScan::threadRun, this);
+		if (config->isMappedTo(BUTTON_BACK, input))
+			close();
 		return true;
 	}
-	lock.unlock();
-	// Copied out first: the page is gone by the time it runs.
-	std::function<void()> onClosed = mOnClosed;
-	delete this;
-	if (onClosed)
-		onClosed();
+	const Outcome o = outcome(s.exit);
+	if (!o.completed && config->isMappedTo("a", input))
+	{
+		// A new run; the finished one is let go. The page shows the run
+		// from its first line again.
+		mJob = OfflineScanJob::start(mWindow, mCommand);
+		mJob->setOnChanged(mOnChanged);
+		mShownFinished = false;
+		mStatus->setText(_("PREPARING..."));
+		for (auto& t : { mCounter, mActivity, mDetail, mNote })
+			t->setText("");
+		updateHelpPrompts();
+		return true;
+	}
+	close();
 	return true;
+}
+
+void GuiOfflineScan::close()
+{
+	// Copied out first: the page is gone by the time it runs.
+	std::function<void()> onChanged = mOnChanged;
+	delete this;
+	if (onChanged)
+		onChanged();
 }
 
 std::vector<HelpPrompt> GuiOfflineScan::getHelpPrompts()
 {
 	std::vector<HelpPrompt> prompts;
-	std::unique_lock<std::mutex> lock(mMutex);
-	if (mFinished)
+	const OfflineScanJob::State s = mJob->state();
+	if (!s.finished)
 	{
-		const Outcome o = outcome();
-		if (!o.completed)
-			prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
-		prompts.push_back(HelpPrompt("b", _("CLOSE")));
+		prompts.push_back(HelpPrompt(BUTTON_BACK, _("KEEP SCANNING IN THE BACKGROUND")));
+		return prompts;
 	}
+	const Outcome o = outcome(s.exit);
+	if (!o.completed)
+		prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
+	prompts.push_back(HelpPrompt(BUTTON_BACK, _("CLOSE")));
 	return prompts;
 }
 
@@ -170,16 +160,16 @@ std::vector<HelpPrompt> GuiOfflineScan::getHelpPrompts()
 // the ctl exits with before touching anything -- not online, another scan
 // or top-up holding the lock -- and COULDN'T FINISH for everything else,
 // the refusals included: the why on line 4 says which.
-GuiOfflineScan::Outcome GuiOfflineScan::outcome() const
+GuiOfflineScan::Outcome GuiOfflineScan::outcome(int exit)
 {
 	Outcome o;
-	o.completed = mExit == 0;
-	o.skipped = mExit == CloudExit::NoNetwork || mExit == CloudExit::LockHeld;
+	o.completed = exit == 0;
+	o.skipped = exit == CloudExit::NoNetwork || exit == CloudExit::LockHeld;
 	if (o.completed)
 		o.word = _("COMPLETED");
-	else if (mExit == CloudExit::NoNetwork)
+	else if (exit == CloudExit::NoNetwork)
 		o.word = _("SKIPPED - YOU'RE NOT ONLINE");
-	else if (mExit == CloudExit::LockHeld)
+	else if (exit == CloudExit::LockHeld)
 		o.word = _("SKIPPED - A SCAN IS ALREADY RUNNING");
 	else
 		o.word = _("COULDN'T FINISH");
@@ -228,60 +218,99 @@ std::string GuiOfflineScan::readyPhrase(int ready)
 	return std::to_string(ready) + " " + std::string(_("GAMES READY FOR OFFLINE PLAY"));
 }
 
-// "GAMES ADDED: 3 . WITHOUT ACHIEVEMENTS: 12" -- what this run did, as it
-// goes and once done. The colon form keeps the count out of the noun, so
-// no language has to agree a plural with it.
-std::string GuiOfflineScan::countsLine(int cached, int skipped)
+// "SCANNING... - GAME 12 OF 40" for the row's line while the run is in the
+// background, in the words this page's lines 1 and 2 use, so the row and
+// the page say the same thing about the same run.
+std::string GuiOfflineScan::runningPhrase(const OfflineScanJob::State& state)
 {
-	// The colon travels with the words: French puts a space before it
-	// (D-UI-051), so it is the translation's to place.
-	return std::string(_("GAMES ADDED:")) + " " + std::to_string(cached)
-		+ " · " + std::string(_("WITHOUT ACHIEVEMENTS:")) + " " + std::to_string(skipped);
+	std::string head;
+	if (state.index > 0)
+		head = _("SCANNING...");
+	else if (state.listing)
+		head = _("LOOKING THROUGH YOUR GAMES...");
+	else
+		head = _("PREPARING...");
+	if (state.index > 0)
+	{
+		head += " - " + std::string(_("GAME")) + " " + std::to_string(state.index);
+		if (state.total > 0)
+			head += " " + std::string(_("OF")) + " " + std::to_string(state.total);
+	}
+	return head;
+}
+
+// "GAMES WITH ACHIEVEMENTS ADDED: 3" -- what this run did, and "NOT SAVED: 1"
+// beside it when a fetch failed for any game (the ctl's errors count, audit
+// #186 PL-24: such a run is COULDN'T FINISH, and the next scan tries those
+// games again). The games without a set are not counted here: the
+// maintainer, on the RG SP with RC-5 (2026-09-14), "I'm not that concerned
+// about the games that don't have achievements [...] I just want to know
+// that it's scanning through the games with achievements." That count still
+// travels in the stamp for the log (skipped), unused here.
+std::string GuiOfflineScan::countsLine(int cached, int skipped, int errors)
+{
+	(void) skipped;
+	std::string line = std::string(_("GAMES WITH ACHIEVEMENTS ADDED:")) + " " + std::to_string(cached);
+	if (errors > 0)
+		line += "  ·  " + std::string(_("NOT SAVED:")) + " " + std::to_string(errors);
+	return line;
 }
 
 void GuiOfflineScan::update(int deltaTime)
 {
 	GuiComponent::update(deltaTime);
 	mBusyAnim.update(deltaTime);
-	std::unique_lock<std::mutex> lock(mMutex);
-	mShownFinished = mFinished;
-	if (!mFinished)
-		mElapsedMs += deltaTime;
-	const int mins = mElapsedMs / 60000;
-	const int secs = (mElapsedMs / 1000) % 60;
+	const OfflineScanJob::State s = mJob->state();
+	if (s.finished && !mShownFinished)
+	{
+		mShownFinished = true;
+		// The help bar changes with the page: TRY AGAIN and CLOSE now.
+		updateHelpPrompts();
+	}
+	const int mins = s.elapsedMs / 60000;
+	const int secs = (s.elapsedMs / 1000) % 60;
 	char elapsed[32];
 	snprintf(elapsed, sizeof(elapsed), "%d:%02d", mins, secs);
 
-	if (mFinished)
+	if (s.finished)
 	{
 		// The same seven rows, now carrying the outcome (D-UI-028): 1 the
 		// word; 2 what this run added and passed over; 3 how many games
 		// earn offline now -- the answer the page exists to give; 4 why it
 		// stopped, when it did; 5 what to do next; 6 elapsed; 7 the buttons.
-		const Outcome o = outcome();
+		const Outcome o = outcome(s.exit);
 		mStatus->setText(fitOneLine(mTextFont, o.word, mLineWidth));
 
-		const bool ran = mTotal > 0 || mCached > 0 || mSkipped > 0 || mNothingNew;
-		mCounter->setText(ran && !mNothingNew ? fitOneLine(mSmallFont, countsLine(mCached, mSkipped), mLineWidth) : "");
+		const bool ran = s.total > 0 || s.cached > 0 || s.skipped > 0 || s.nothingNew;
+		mCounter->setText(ran && !s.nothingNew ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped, s.errors), mLineWidth) : "");
 
 		// The ctl's done line carries the count; a run that ended before it
 		// said one reads the client's export directly.
-		const int ready = mReady >= 0 ? mReady : OfflineAchievements::readyCount();
+		const int ready = s.ready >= 0 ? s.ready : OfflineAchievements::readyCount();
 		mActivity->setText(fitOneLine(mTextFont, readyPhrase(ready), mLineWidth));
 
 		std::string detail;
-		if (!o.completed && !o.skipped && !mWhy.empty())
-			detail = OfflineAchievements::scanWhy(mWhy);
+		if (!o.completed && !o.skipped && !s.why.empty())
+			detail = OfflineAchievements::scanWhy(s.why);
 		else if (!o.completed && !o.skipped)
 			detail = _("SOMETHING WENT WRONG");
 		mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
 
+		// The client's cap on cached games is out of reach on ROCKNIX (patch
+		// 004, D-RA-014), but the ctl still forwards the client's word when it
+		// says it, so the branch stays -- with a sentence that names no
+		// number, since the number is not this product's to promise
+		// (audit #186 PL-15).
 		std::string note;
-		if (mLimit)
-			note = _("THE LIMIT OF 100 GAMES WAS REACHED.");
-		else if (mNothingNew)
+		if (s.limit)
+			note = _("THAT'S AS MANY GAMES AS CAN BE SAVED FOR OFFLINE PLAY.");
+		else if (s.truncated)
+			// The walk stopped at the client's cap of files per run (#186
+			// PL-17): the games past it are the next run's.
+			note = _("NOT EVERY FOLDER WAS LOOKED AT. SCAN AGAIN TO CONTINUE.");
+		else if (s.nothingNew)
 			note = _("NOTHING NEW - EVERY GAME WAS ALREADY READY.");
-		else if (mExit == CloudExit::NoNetwork)
+		else if (s.exit == CloudExit::NoNetwork)
 			note = _("TRY AGAIN WHEN YOU'RE ONLINE.");
 		mNote->setText(fitOneLine(mSmallFont, note, mLineWidth));
 
@@ -293,147 +322,30 @@ void GuiOfflineScan::update(int deltaTime)
 		// 1 what it is doing; 2 GAME i OF n; 3 the game it is on -- the line
 		// that says it is alive, because a disc image can take a while and
 		// a frozen count is indistinguishable from a hang; 4 the counts.
-		if (mIndex > 0)
+		if (s.index > 0)
 			mStatus->setText(_("SCANNING..."));
-		else if (mListing)
+		else if (s.listing)
 			mStatus->setText(_("LOOKING THROUGH YOUR GAMES..."));
 		else
 			mStatus->setText(_("PREPARING..."));
 
 		std::string counter;
-		if (mIndex > 0)
+		if (s.index > 0)
 		{
-			counter = std::string(_("GAME")) + " " + std::to_string(mIndex);
-			if (mTotal > 0)
-				counter += " " + std::string(_("OF")) + " " + std::to_string(mTotal);
+			counter = std::string(_("GAME")) + " " + std::to_string(s.index);
+			if (s.total > 0)
+				counter += " " + std::string(_("OF")) + " " + std::to_string(s.total);
 		}
 		mCounter ->setText(counter);
-		mActivity->setText(fitOneLine(mTextFont, mGame, mLineWidth));
-		mDetail  ->setText(mIndex > 0 ? fitOneLine(mSmallFont, countsLine(mCached, mSkipped), mLineWidth) : "");
+		mActivity->setText(fitOneLine(mTextFont, s.game, mLineWidth));
+		mDetail  ->setText(s.index > 0 ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped, s.errors), mLineWidth) : "");
 		mNote    ->setText("");
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		mFooter  ->setText(_("THIS CAN TAKE A WHILE. YOU CAN LEAVE IT RUNNING."));
+		// 7. That the page can be left: the longest form that fits the line
+		// (D-UI-035), so a 640x480 panel keeps the sentence to one row.
+		std::shared_ptr<Font> font = mSmallFont;
+		mFooter  ->setText(CloudText::chooseThatFits(
+			{ _("THIS CAN TAKE A WHILE. PRESS B TO KEEP SCANNING IN THE BACKGROUND."), _("PRESS B TO KEEP SCANNING IN THE BACKGROUND.") },
+			mLineWidth, [font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; }));
 	}
-}
-
-// The ctl talks to this page through ">>> " lines (raofflineproxy-ctl's
-// header is the contract):
-//   ">>> doing listing"        the library is being walked
-//   ">>> total <n>"            how many ROMs will be looked at
-//   ">>> game <i>|<n>|<name>"  the one it is on now
-//   ">>> cached <c>|<s>"       added so far, and passed over so far
-//   ">>> note <TOKEN>"         LIMIT_REACHED, NOTHING_NEW
-//   ">>> why <TOKEN>"          why it stopped, in the ctl's token
-//   ">>> done <c>|<s>|<ready>|<limit>"
-// Everything else on stdout is the client's own and is not shown.
-void GuiOfflineScan::handleLine(const std::string& line)
-{
-	if (line.rfind(">>> ", 0) != 0)
-		return;
-	const std::string body = line.substr(4);
-	const size_t space = body.find(' ');
-	const std::string word = body.substr(0, space);
-	const std::string rest = space == std::string::npos ? "" : Utils::String::trim(body.substr(space + 1));
-	const std::vector<std::string> fields = Utils::String::split(rest, '|', false);
-	auto num = [](const std::string& s) -> int
-	{
-		const std::string t = Utils::String::trim(s);
-		if (t.empty() || t.size() > 9)
-			return 0;
-		for (char c : t)
-			if (c < '0' || c > '9')
-				return 0;
-		return std::stoi(t);
-	};
-
-	std::unique_lock<std::mutex> lock(mMutex);
-	if (word == "doing")
-		mListing = rest == "listing";
-	else if (word == "total")
-		mTotal = num(rest);
-	else if (word == "game" && fields.size() >= 3)
-	{
-		mListing = false;
-		mIndex = num(fields[0]);
-		mTotal = num(fields[1]);
-		// The name may itself contain '|', so everything past the second is it.
-		std::string name = fields[2];
-		for (size_t i = 3; i < fields.size(); i++)
-			name += "|" + fields[i];
-		mGame = name;
-	}
-	else if (word == "cached" && fields.size() >= 2)
-	{
-		mCached = num(fields[0]);
-		mSkipped = num(fields[1]);
-	}
-	else if (word == "note")
-	{
-		if (rest == "LIMIT_REACHED") mLimit = true;
-		else if (rest == "NOTHING_NEW") mNothingNew = true;
-	}
-	else if (word == "why")
-		mWhy = rest;
-	else if (word == "done" && fields.size() >= 4)
-	{
-		mCached = num(fields[0]);
-		mSkipped = num(fields[1]);
-		mReady = num(fields[2]);
-		mLimit = num(fields[3]) != 0;
-	}
-}
-
-void GuiOfflineScan::threadRun()
-{
-	int ret = -1;
-	// Braces around the whole command: a trailing redirection binds to the
-	// last element of a sequence only (GuiCloudTransfer learnt it).
-	FILE* pipe = popen(("{ " + mCommand + " ; } 2>&1").c_str(), "r");
-	if (pipe != nullptr)
-	{
-		std::string buf;
-		int c;
-		while ((c = fgetc(pipe)) != EOF)
-		{
-			if (c != '\n' && c != '\r')
-			{
-				if (buf.size() < 1024)
-					buf += (char) c;
-				continue;
-			}
-			handleLine(cleanLine(buf));
-			buf.clear();
-		}
-		if (!buf.empty())
-			handleLine(cleanLine(buf));
-
-		int status = pclose(pipe);
-		if (WIFEXITED(status))
-			ret = WEXITSTATUS(status);
-	}
-
-	std::unique_lock<std::mutex> lock(mMutex);
-	mExit = ret;
-	mFinished = true;
-	LOG(LogInfo) << "GuiOfflineScan: " << mCommand << " exited " << ret
-		<< " (cached " << mCached << ", skipped " << mSkipped << ", ready " << mReady << ")";
-}
-
-// Drop C0 controls and DEL, keep every UTF-8 byte (a game's name may carry
-// one), then trim.
-std::string GuiOfflineScan::cleanLine(const std::string& raw)
-{
-	std::string clean;
-	for (size_t i = 0; i < raw.size(); ++i)
-	{
-		if (raw[i] == 0x1B)
-		{
-			while (i < raw.size() && !isalpha((unsigned char) raw[i]))
-				i++;
-			continue;
-		}
-		if (((unsigned char) raw[i] >= 32 && (unsigned char) raw[i] < 127) || (unsigned char) raw[i] >= 0x80)
-			clean += raw[i];
-	}
-	return Utils::String::trim(clean);
 }
