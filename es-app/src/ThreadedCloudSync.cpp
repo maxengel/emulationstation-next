@@ -721,7 +721,7 @@ bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal, bool evenIfPlaye
 		if (sync == nullptr)
 			return false;
 		// The player pressed this one; a launch does not override it on its
-		// own -- only their answer to the question does (D-CLOUD-114).
+		// own -- only their answer to the question does (D-CLOUD-129).
 		if (!evenIfPlayerStarted && sync->mOrigin != Origin::Startup && sync->mOrigin != Origin::Exit)
 		{
 			if (refusal != nullptr)

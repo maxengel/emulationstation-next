@@ -719,7 +719,7 @@ static void launchNow(Window* window, FileData* game, const LaunchGameOptions& o
 }
 
 // Wait behind a spinner for a sync or transfer that has been told to stop,
-// then launch (D-CLOUD-114). stillRunning is asked every 50 ms; hardStop,
+// then launch (D-CLOUD-129). stillRunning is asked every 50 ms; hardStop,
 // when given, is sent once at five seconds for an rclone slow to act on
 // SIGTERM; at twenty the wait gives up and says so -- a run that will not
 // die is not one to start a game over (cancelForLaunch's rule, on a longer
@@ -790,7 +790,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// when the sync is in progress and someone tries to start the new game,
 	// we might as well give them the option as to whether they'd like to
 	// cancel or keep waiting." So each is a question with two answers
-	// (D-CLOUD-114). STOP IT AND PLAY sends the run's process group SIGTERM,
+	// (D-CLOUD-129). STOP IT AND PLAY sends the run's process group SIGTERM,
 	// waits behind a spinner for it to be gone -- the automatic sync's wait,
 	// for the same reason: a rename must not land under a game that has the
 	// save open -- and then launches through ViewController, launch effect

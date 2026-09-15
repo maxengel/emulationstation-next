@@ -61,7 +61,7 @@ public:
 	// the row that launched it goes back to saying what it does.
 	static void dismiss(const std::shared_ptr<CloudTransferJob>& job);
 	// A launch the player chose over the run in flight (STOP IT AND PLAY,
-	// D-CLOUD-114): the run's process group is sent SIGTERM -- SIGKILL when
+	// D-CLOUD-129): the run's process group is sent SIGTERM -- SIGKILL when
 	// hard -- and the run is marked stopped for a game, so its outcome reads
 	// SKIPPED - A GAME WAS STARTED rather than a failure. False when no run
 	// is in flight. The caller waits for running() to turn false before the

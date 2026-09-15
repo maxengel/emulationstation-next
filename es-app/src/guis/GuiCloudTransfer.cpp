@@ -333,7 +333,7 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 {
 	Outcome o;
-	// Stopped by a launch the player chose over it (D-CLOUD-114): the
+	// Stopped by a launch the player chose over it (D-CLOUD-129): the
 	// card's word for the same thing, and no failed item -- nothing went
 	// wrong, and the next run finishes what this one did not.
 	if (job.mStoppedForGame)
