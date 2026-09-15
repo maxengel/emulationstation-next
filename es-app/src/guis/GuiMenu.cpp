@@ -5598,10 +5598,13 @@ static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, 
 		return;
 	}
 
-	auto theme = ThemeData::getMenuTheme();
 	ComponentListRow row;
 	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
-	entry->setColor((theme->Text.color & 0xFFFFFF00) | 0x50);
+	// Dimmed by the entry on every frame, not by a colour set once here:
+	// ComponentList recolours every element from the theme each frame, and
+	// a row dimmed at construction was back to full colour by the first one
+	// -- these rows never once rendered dim (fork #182).
+	entry->setDimmed(true);
 	row.addElement(entry, true);
 	row.makeAcceptInputHandler([window]
 	{

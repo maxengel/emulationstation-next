@@ -1,4 +1,5 @@
 #include "utils/TimeUtil.h"
+#include "utils/TimeText.h"
 #include "utils/StringUtil.h"
 #include "LocaleES.h"
 #include "Settings.h"
@@ -186,9 +187,27 @@ namespace Utils
 			time_t     clockNow = getTime();
 			struct tm  clockTstruct = *localtime(&clockNow);
 
-			char       clockBuf[256];
-			strftime(clockBuf, sizeof(clockBuf), "%x %R", &clockTstruct);
-			return clockBuf;
+			// The date as the locale writes it, then the hour as SHOW CLOCK IN
+			// 12-HOUR FORMAT says, read at each call (fork #195, D-UI-058). It
+			// was a fixed "%x %R": a 24-hour time whatever the switch said,
+			// while the clock in the corner and the cloud rows' LAST lines
+			// followed it -- so the SAVE STATE MANAGER's "09/13/2026 09:07",
+			// a Sunday-morning file, was read as 9:07 pm on a Monday night.
+			// The words are clockText's, which es-unit-tests holds to them;
+			// this is the shell that asks the locale and the setting. Both
+			// strftime results are taken by their returned length: an empty
+			// %p (French) returns 0 and says nothing about the buffer.
+			char dateBuf[64];
+			const size_t dateLen = strftime(dateBuf, sizeof(dateBuf), "%x", &clockTstruct);
+
+			const bool twelveHour = Settings::ClockMode12();
+			char markerBuf[32];
+			size_t markerLen = 0;
+			if (twelveHour)
+				markerLen = strftime(markerBuf, sizeof(markerBuf), "%p", &clockTstruct);
+
+			return std::string(dateBuf, dateLen) + " "
+				+ clockText(clockTstruct, twelveHour, std::string(markerBuf, markerLen));
 		}
 
 		Duration::Duration(const time_t& _time)

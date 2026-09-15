@@ -2,6 +2,7 @@
 #include "Window.h"
 #include "components/TextComponent.h"
 #include "components/ComponentGrid.h"
+#include "components/ComponentList.h"
 #include "math/Vector2i.h"
 #include "math/Vector2f.h"
 #include "ThemeData.h"
@@ -14,8 +15,10 @@ MultiLineMenuEntry::MultiLineMenuEntry(Window* window, const std::string& text, 
 {
 	mMultiLine = multiLine;
 	mSizeChanging = false;
+	mDimmed = false;
 
 	auto theme = ThemeData::getMenuTheme();
+	mColor = theme->Text.color;
 
 	mText = std::make_shared<TextComponent>(mWindow, text.c_str(), theme->Text.font, theme->Text.color);
 	mText->setMultiLine(TextComponent::MultiLineType::SINGLELINE);
@@ -53,8 +56,16 @@ MultiLineMenuEntry::MultiLineMenuEntry(Window* window, const std::string& text, 
 
 void MultiLineMenuEntry::setColor(unsigned int color)
 {
-	mText->setColor(color);
-	mSubstring->setColor(Utils::HtmlColor::applyColorOpacity(color, SUBSTRING_OPACITY));
+	mColor = color;
+	const unsigned int shown = mDimmed ? ComponentListFlags::dimmed(color) : color;
+	mText->setColor(shown);
+	mSubstring->setColor(Utils::HtmlColor::applyColorOpacity(shown, SUBSTRING_OPACITY));
+}
+
+void MultiLineMenuEntry::setDimmed(bool dimmed)
+{
+	mDimmed = dimmed;
+	setColor(mColor);
 }
 
 // A ComponentGrid draws nothing of its own, so padding set on the entry has
