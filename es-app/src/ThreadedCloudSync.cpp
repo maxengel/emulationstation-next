@@ -704,7 +704,7 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
 }
 
-bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal)
+bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal, bool evenIfPlayerStarted)
 {
 	// Stopping unless we find otherwise: it covers the sync that was
 	// signalled and has not gone yet, and the one that had already gone
@@ -720,8 +720,9 @@ bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal)
 		sync = ThreadedCloudSync::mInstance;
 		if (sync == nullptr)
 			return false;
-		// The player pressed this one; the launch does not override it.
-		if (sync->mOrigin != Origin::Startup && sync->mOrigin != Origin::Exit)
+		// The player pressed this one; a launch does not override it on its
+		// own -- only their answer to the question does (D-CLOUD-114).
+		if (!evenIfPlayerStarted && sync->mOrigin != Origin::Startup && sync->mOrigin != Origin::Exit)
 		{
 			if (refusal != nullptr)
 				*refusal = CancelRefusal::PlayerStarted;

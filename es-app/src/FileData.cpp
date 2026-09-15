@@ -34,6 +34,10 @@
 #include "ThreadedCloudSync.h"
 #include "CloudTransferJob.h"
 #include "guis/GuiCloudTransfer.h"
+#include "guis/GuiLoading.h"
+#include "views/ViewController.h"
+#include <chrono>
+#include <thread>
 #include "OfflineAchievements.h"
 #include "Paths.h"
 #include "resources/TextureData.h"
@@ -706,6 +710,54 @@ std::string FileData::getMessageFromExitCode(int exitCode)
 	return _("UKNOWN ERROR") + " : " + std::to_string(exitCode);
 }
 
+// The launch a STOP IT AND PLAY leads to, on the next frame: the dialog or
+// spinner that asked is off the stack first, and the launch effect and the
+// emulator take the screen from the view, as a press on the game would.
+static void launchNow(Window* window, FileData* game, const LaunchGameOptions& options)
+{
+	window->postToUiThread([game, options] { ViewController::get()->launch(game, options); });
+}
+
+// Wait behind a spinner for a sync or transfer that has been told to stop,
+// then launch (D-CLOUD-114). stillRunning is asked every 50 ms; hardStop,
+// when given, is sent once at five seconds for an rclone slow to act on
+// SIGTERM; at twenty the wait gives up and says so -- a run that will not
+// die is not one to start a game over (cancelForLaunch's rule, on a longer
+// leash and behind a spinner rather than a frozen menu).
+static void launchWhenGone(Window* window, FileData* game, const LaunchGameOptions& options,
+	const std::function<bool()>& stillRunning, const std::function<void()>& hardStop)
+{
+	window->pushGui(new GuiLoading<bool>(window, _("STOPPING IT SO YOU CAN PLAY..."),
+		[stillRunning, hardStop](IGuiLoadingHandler*)
+		{
+			const auto started = std::chrono::steady_clock::now();
+			bool hard = false;
+			while (stillRunning())
+			{
+				const long ms = (long) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+				if (ms >= 20000)
+					return false;
+				if (!hard && ms >= 5000 && hardStop != nullptr)
+				{
+					hardStop();
+					hard = true;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			}
+			return true;
+		},
+		[window, game, options](bool gone)
+		{
+			if (!gone)
+			{
+				LOG(LogWarning) << "launch: the sync or transfer did not stop within 20 s; the game was not started";
+				window->pushGui(new GuiMsgBox(window, _("IT DIDN'T STOP IN TIME. TRY AGAIN IN A MOMENT.")));
+				return;
+			}
+			launchNow(window, game, options);
+		}));
+}
+
 bool FileData::launchGame(Window* window, LaunchGameOptions options)
 {
 	LOG(LogInfo) << "Attempting to launch game...";
@@ -729,38 +781,65 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// transfer that had lost its link was refused for as long as rclone's
 	// own timeouts let it run (#103).
 	//
-	// A sync the player asked for keeps this refusal: they pressed it, and
-	// can wait for it or stop it themselves. Behind the refusal the scripts'
-	// own flock refuses a second writer.
+	// A sync the player asked for, and a back up, restore or match they
+	// started on the transfer page and left running (fork #187,
+	// D-CLOUD-113), used to refuse the launch outright: theirs to wait for.
+	// Maintainer, 2026-09-15, having met the refusal on the RG SP: "We
+	// should say for the user, would you like to cancel and play, or would
+	// you like to stop the sync or continue ... If it shows a modal anyways
+	// when the sync is in progress and someone tries to start the new game,
+	// we might as well give them the option as to whether they'd like to
+	// cancel or keep waiting." So each is a question with two answers
+	// (D-CLOUD-114). STOP IT AND PLAY sends the run's process group SIGTERM,
+	// waits behind a spinner for it to be gone -- the automatic sync's wait,
+	// for the same reason: a rename must not land under a game that has the
+	// save open -- and then launches through ViewController, launch effect
+	// and all; KEEP WAITING (B as well) leaves it running. Stopping is safe
+	// for the reason the automatic cancel is: the scripts are rclone copy,
+	// each file renamed into place whole, so the next run finishes what this
+	// one did not, and a match's deletions stop where they are. The run's
+	// outcome reads SKIPPED - A GAME WAS STARTED, as the card's does.
 	//
-	// Two refusals, two sentences (#115). Waiting is the answer to a sync
-	// the player pressed: nothing is stopping it, and the card at the top
-	// will say when it is done. It is the wrong answer to the other
-	// refusal -- an automatic sync that was signalled for this launch and
-	// had not gone within the two-second budget -- because that one is on
-	// its way out and a moment later the same press works. Told to wait
-	// for it, somebody waits for a card that has already gone.
+	// An automatic sync that was signalled for this launch and had not gone
+	// within cancelForLaunch's two-second budget used to be a modal too --
+	// IT'S STOPPING SO YOU CAN PLAY, TRY AGAIN IN A MOMENT -- which the
+	// maintainer met as "it told me it was stopping so I couldn't play". It
+	// is on its way out, so the launch now waits for it behind the same
+	// spinner and goes.
 	ThreadedCloudSync::CancelRefusal refusal = ThreadedCloudSync::CancelRefusal::Stopping;
 	if (ThreadedCloudSync::isRunning() && !ThreadedCloudSync::cancelForLaunch(&refusal))
 	{
-		window->pushGui(new GuiMsgBox(window,
-			refusal == ThreadedCloudSync::CancelRefusal::PlayerStarted
-				? _("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE STARTING A GAME - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")
-				: _("YOUR SAVES ARE STILL FINISHING UP WITH THE CLOUD.\n\nIT'S STOPPING SO YOU CAN PLAY - TRY AGAIN IN A MOMENT.")));
+		if (refusal == ThreadedCloudSync::CancelRefusal::PlayerStarted)
+		{
+			window->pushGui(new GuiMsgBox(window,
+				_("YOUR SAVES ARE SYNCING WITH THE CLOUD.") + "\n\n" + _("IF YOU STOP IT, THE NEXT SYNC FINISHES WHAT THIS ONE DID NOT."),
+				_("STOP IT AND PLAY"), [this, window, options]
+				{
+					LOG(LogInfo) << "launch: the player chose to stop their sync for a game";
+					ThreadedCloudSync::CancelRefusal again = ThreadedCloudSync::CancelRefusal::Stopping;
+					if (ThreadedCloudSync::cancelForLaunch(&again, true) || !ThreadedCloudSync::isRunning())
+						launchNow(window, this, options);
+					else
+						launchWhenGone(window, this, options, [] { return ThreadedCloudSync::isRunning(); }, nullptr);
+				},
+				_("KEEP WAITING"), nullptr));
+			return false;
+		}
+		launchWhenGone(window, this, options, [] { return ThreadedCloudSync::isRunning(); }, nullptr);
 		return false;
 	}
 
-	// A back up, restore or match the player started on the transfer page
-	// and left running in the background (fork #187) is theirs to wait for,
-	// as the sync they pressed is: a deliberate transfer refuses a launch
-	// while it runs (D-CLOUD-113), and a restore renaming a save into place
-	// under a game that has it open is what the refusal is for. Until #187
-	// the page took every button, so this never needed a sentence; now the
-	// sentence names the run and where to watch it.
 	if (const std::shared_ptr<CloudTransferJob> transfer = CloudTransferJob::current(); transfer != nullptr && !transfer->finished())
 	{
-		window->pushGui(new GuiMsgBox(window, GuiCloudTransfer::stillRunningSentence(transfer)
-			+ "\n\n" + _("WAIT FOR IT TO FINISH BEFORE STARTING A GAME. THE CLOUD PAGE UNDER GAME SETTINGS SHOWS HOW IT'S GOING.")));
+		window->pushGui(new GuiMsgBox(window,
+			GuiCloudTransfer::stillRunningSentence(transfer) + "\n\n" + _("IF YOU STOP IT, WHAT IT HAS NOT MOVED YET WAITS FOR THE NEXT RUN."),
+			_("STOP IT AND PLAY"), [this, window, options]
+			{
+				LOG(LogInfo) << "launch: the player chose to stop the transfer for a game";
+				CloudTransferJob::stopForLaunch(false);
+				launchWhenGone(window, this, options, [] { return CloudTransferJob::running(); }, [] { CloudTransferJob::stopForLaunch(true); });
+			},
+			_("KEEP WAITING"), nullptr));
 		return false;
 	}
 

@@ -2,8 +2,10 @@
 #ifndef ES_APP_CLOUD_TRANSFER_JOB_H
 #define ES_APP_CLOUD_TRANSFER_JOB_H
 
+#include <atomic>
 #include <chrono>
 #include <ctime>
+#include <sys/types.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -58,6 +60,14 @@ public:
 	// The outcome has been read on a page: the run is no longer current, and
 	// the row that launched it goes back to saying what it does.
 	static void dismiss(const std::shared_ptr<CloudTransferJob>& job);
+	// A launch the player chose over the run in flight (STOP IT AND PLAY,
+	// D-CLOUD-114): the run's process group is sent SIGTERM -- SIGKILL when
+	// hard -- and the run is marked stopped for a game, so its outcome reads
+	// SKIPPED - A GAME WAS STARTED rather than a failure. False when no run
+	// is in flight. The caller waits for running() to turn false before the
+	// game starts: the signal is not the end of the run, the process ending
+	// is (ThreadedCloudSync::cancelForLaunch says why).
+	static bool stopForLaunch(bool hard);
 
 	const std::string& command() const { return mCommand; }
 	const std::string& title() const { return mTitle; }
@@ -66,6 +76,8 @@ public:
 	bool finished() const;
 	// When the run ended, epoch seconds; 0 while it runs.
 	time_t finishedAt() const;
+	// Stopped by stopForLaunch: the launch's word, not a failure.
+	bool stoppedForGame() const { return mStoppedForGame; }
 
 private:
 	friend class GuiCloudTransfer;
@@ -152,6 +164,12 @@ private:
 	std::chrono::steady_clock::time_point mStarted;
 	int mElapsedMs;             // frozen when the run ends
 	time_t mFinishedAt;
+	// The command's process group (run() starts it under setsid and reads
+	// its ">>> pid N" first line), for stopForLaunch; and whether that
+	// happened. Atomics: written by the reader thread and the launch gate,
+	// read by the page.
+	std::atomic<pid_t> mPid{0};
+	std::atomic<bool> mStoppedForGame{false};
 
 	static std::mutex sMutex;
 	static std::shared_ptr<CloudTransferJob> sCurrent;
