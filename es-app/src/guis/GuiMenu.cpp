@@ -23,6 +23,8 @@
 #include "CloudText.h"
 #include "WifiText.h"
 #include "guis/GuiCloudTransfer.h"
+#include "CloudTransferJob.h"
+#include "math/Misc.h"
 #include "guis/GuiLoading.h"
 #include "guis/GuiNetPlaySettings.h"
 #include "guis/GuiRetroAchievementsSettings.h"
@@ -4360,6 +4362,27 @@ static std::string cloudRunOrigin(time_t when)
 	return "";
 }
 
+// "LAST <date>" in the player's own date format and clock, not ours.
+//
+// timeToString already resolves through localtime(), so the timezone comes
+// from /etc/localtime and was never wrong; the hardcoded "%Y-%m-%d %H:%M"
+// was. Somebody who set SHOW CLOCK IN 12-HOUR FORMAT gets 24-hour times
+// here and nowhere else in the app, which reads as a bug in the row rather
+// than a setting that did not reach it.
+//
+// The date half comes from the system locale (getSystemDateFormat caches,
+// which is fine -- a locale does not change while the menu is open). The
+// time half is decided live, because ClockMode12 is a switch the player can
+// flip and come straight back to this page. One helper, so the row under a
+// transfer left running (fork #187) dates its outcome the way every other
+// LAST row does.
+static std::string cloudLastLabel(time_t when)
+{
+	const std::string fmt = Utils::Time::getSystemDateFormat()
+		+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
+	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt);
+}
+
 static std::string cloudLastRunDetail(const std::string& name)
 {
 	CloudLastRun r = cloudReadLastRun(name);
@@ -4377,20 +4400,6 @@ static std::string cloudLastRunDetail(const std::string& name)
 	if (!r.ran)
 		return _("NOT DONE ON THIS DEVICE YET");
 	const time_t when = r.when;
-	// The player's own date format and clock, not ours.
-	//
-	// timeToString already resolves through localtime(), so the timezone comes
-	// from /etc/localtime and was never wrong; the hardcoded "%Y-%m-%d %H:%M"
-	// was. Somebody who set SHOW CLOCK IN 12-HOUR FORMAT gets 24-hour times
-	// here and nowhere else in the app, which reads as a bug in the row rather
-	// than a setting that did not reach it.
-	//
-	// The date half comes from the system locale (getSystemDateFormat caches,
-	// which is fine -- a locale does not change while the menu is open). The
-	// time half is decided live, because ClockMode12 is a switch the player can
-	// flip and come straight back to this page.
-	const std::string fmt = Utils::Time::getSystemDateFormat()
-		+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
 
 	// An automatic run says which one it was instead of its date: the date is
 	// what the player would have had to reason from to work that out, and the
@@ -4399,8 +4408,7 @@ static std::string cloudLastRunDetail(const std::string& name)
 	if (!origin.empty())
 		return origin + "  -  " + r.outcome;
 
-	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt)
-		+ "  -  " + r.outcome;
+	return cloudLastLabel(when) + "  -  " + r.outcome;
 }
 
 // The second paragraph of the confirmation dialog: why the last run could
@@ -4904,6 +4912,183 @@ static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 	}).detach();
 }
 
+// The three rows of BACKUP AND RESTORE follow a transfer left running in
+// the background (fork #187; the scan row under SCAN GAMES is the model,
+// audit #186 PL-07). The transfer page can be closed with B while its run
+// goes on, so the run needs a place to be seen from: the row that launched
+// it carries the run's line while it runs (BACKING UP... - ITEM 2 OF 4 .
+// NES), its outcome once it has ended and nobody has opened the page (LAST
+// <date> - COMPLETED), and its own line again once the outcome has been
+// read; pressing that row opens the page on the run, or on the outcome with
+// TRY AGAIN. The other two rows dim meanwhile -- the scripts' flock refuses
+// a second run, so the only thing a press on them can do is show the one in
+// flight, which it does. Nothing here is written to disk: the scripts stamp
+// each part of a run as they always did (last-backup, last-content-restore,
+// ...), and the rows that read those stamps go on reading them. The line
+// returns to what the row does because that is the line the maintainer
+// chose for these rows (2026-09-06: a stamp on MATCH read as a third kind of
+// row beside two submenus); it changes only while there is a run to report.
+
+// A hub row that can be dimmed while another row's run is in flight. The
+// dim has to be applied by the entry itself: ComponentList::render sets
+// every element's colour every frame from the theme, so a colour set once
+// is gone by the first frame (the same class the offline scan row uses in
+// GuiRetroAchievementsSettings.cpp; a shared home is for the day a third
+// page needs it).
+class CloudDimmableEntry : public MultiLineMenuEntry
+{
+public:
+	using MultiLineMenuEntry::MultiLineMenuEntry;
+	void setDimmed(bool dimmed) { mDimmed = dimmed; }
+	void setColor(unsigned int color) override
+	{
+		MultiLineMenuEntry::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
+	}
+private:
+	bool mDimmed = false;
+};
+
+// The three rows, held weakly as every row on a page is, each with the line
+// it returns to.
+struct CloudHubRows
+{
+	struct Row
+	{
+		std::weak_ptr<CloudDimmableEntry> entry;
+		std::string idle;
+	};
+	Row backup, restore, match;
+};
+
+// The line under the row that launched the run: in flight, the page's own
+// words for it (GuiCloudTransfer::rowWords) with the item where the panel
+// has room and the verb's word as the form that fits any panel (D-UI-035);
+// ended, the outcome dated the way every LAST row is. The description is
+// drawn in the menu's small font, in a row that spans the menu less its
+// insets; 0.86 of the menu width is what a 640x480 frame showed the line
+// to have (the scan row's measure).
+static std::string cloudTransferRowLine(const std::shared_ptr<CloudTransferJob>& job)
+{
+	std::vector<std::string> candidates;
+	if (!job->finished())
+	{
+		const GuiCloudTransfer::RowWords w = GuiCloudTransfer::rowWords(job);
+		if (!w.item.empty())
+			candidates.push_back(w.counted + "  ·  " + w.item);
+		if (w.counted != w.word)
+			candidates.push_back(w.counted);
+		candidates.push_back(w.word);
+	}
+	else
+	{
+		const std::string outcome = GuiCloudTransfer::outcomeWord(job);
+		candidates.push_back(cloudLastLabel(job->finishedAt()) + "  -  " + outcome);
+		candidates.push_back(outcome);
+	}
+	auto theme = ThemeData::getMenuTheme();
+	const float menuWidth = Renderer::ScreenSettings::fullScreenMenus()
+		? (float) Renderer::getScreenWidth()
+		: (float) Math::min((int) Renderer::getScreenHeight(), (int) (Renderer::getScreenWidth() * 0.90f));
+	std::shared_ptr<Font> font = theme->TextSmall.font;
+	return CloudText::chooseThatFits(candidates, menuWidth * 0.86f,
+		[font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; });
+}
+
+static void cloudHubRefreshRow(CloudHubRows::Row& row, const std::shared_ptr<CloudTransferJob>& job, bool launchedHere)
+{
+	auto entry = row.entry.lock();
+	if (!entry)
+		return;
+	std::string text = row.idle;
+	bool dimmed = false;
+	if (job != nullptr)
+	{
+		if (launchedHere)
+			text = cloudTransferRowLine(job);
+		else
+			dimmed = true;
+	}
+	entry->setDimmed(dimmed);
+	// Only when the words change: the refresher asks once a second, and a
+	// line set to itself would still lay the row out again.
+	if (text != entry->getDescription())
+		entry->setDescription(text);
+}
+
+static void cloudHubRefresh(const std::shared_ptr<CloudHubRows>& rows)
+{
+	const std::shared_ptr<CloudTransferJob> job = CloudTransferJob::current();
+	const CloudText::TransferKind kind = job != nullptr
+		? CloudText::transferKind(job->command()) : CloudText::TransferKind::Other;
+	cloudHubRefreshRow(rows->backup,  job, kind == CloudText::TransferKind::Backup);
+	cloudHubRefreshRow(rows->restore, job, kind == CloudText::TransferKind::Restore);
+	cloudHubRefreshRow(rows->match,   job, kind == CloudText::TransferKind::Match);
+}
+
+// The run reports to no page while it is in the background, so the hub
+// carries one component that is never drawn and never focused, asks once a
+// second while the page is open, and refreshes the rows -- which change
+// their words only when they differ (cloudHubRefreshRow). Owned by the page
+// (EXTRACHILDREN: GuiComponent's destructor deletes it), so it dies with
+// the page; ticked by the page's update, which Window gives to the top page
+// alone, so the transfer page over it pauses it and the rows catch up the
+// second the page is left. The same shape as the scan row's refresher.
+class CloudHubRefresher : public GuiComponent
+{
+public:
+	CloudHubRefresher(Window* window, const std::shared_ptr<CloudHubRows>& rows)
+		: GuiComponent(window), mRows(rows), mElapsedMs(0)
+	{
+		setVisible(false);
+		setExtraType(ExtraType::EXTRACHILDREN);
+	}
+
+	void update(int deltaTime) override
+	{
+		GuiComponent::update(deltaTime);
+		mElapsedMs += deltaTime;
+		if (mElapsedMs < 1000)
+			return;
+		mElapsedMs = 0;
+		cloudHubRefresh(mRows);
+	}
+
+private:
+	std::shared_ptr<CloudHubRows> mRows;
+	int mElapsedMs;
+};
+
+// A row of BACKUP AND RESTORE: cloudAddGatedEntry's row -- the label over
+// one wrapped line, the action on A, the setup offer before a cloud is
+// connected -- as an entry the page keeps a weak hold of once the cloud is
+// connected, so its line can follow a run. A press while a run is current
+// opens the run's page: there is nothing else it can do (the flock), and
+// the page shows the run or its outcome.
+static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured, CloudHubRows::Row& slot,
+	const std::string& label, const std::string& description, const std::function<void()>& action)
+{
+	slot.idle = description;
+	if (!configured)
+	{
+		cloudAddGatedEntry(s, window, false, label, description, action);
+		return;
+	}
+	auto entry = std::make_shared<CloudDimmableEntry>(window, Utils::String::toUpper(label), description, true);
+	slot.entry = entry;
+	ComponentListRow row;
+	row.addElement(entry, true);
+	row.makeAcceptInputHandler([window, action]
+	{
+		if (const std::shared_ptr<CloudTransferJob> job = CloudTransferJob::current())
+		{
+			window->pushGui(new GuiCloudTransfer(window, job));
+			return;
+		}
+		action();
+	});
+	s->addRow(row);
+}
+
 // The cloud hub. One page, reachable from one place.
 //
 // Cloud used to live in two menus: saves and content under GAME SETTINGS,
@@ -4917,11 +5102,14 @@ void GuiMenu::openCloud(Window* window)
 	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 	auto s = new GuiSettings(window, _("CLOUD"));
 
+	// The three rows follow a transfer left running in the background
+	// (fork #187): see cloudAddTransferRow and the refresher below.
+	auto rows = std::make_shared<CloudHubRows>();
 	s->addGroup(_("BACKUP AND RESTORE"));
-	cloudAddGatedEntry(s, window, configured, _("BACK UP TO THE CLOUD"),
+	cloudAddTransferRow(s, window, configured, rows->backup, _("BACK UP TO THE CLOUD"),
 		_("SEND THIS DEVICE'S DATA TO YOUR CLOUD."),
 		[window] { cloudOpenTransfer(window, true); });
-	cloudAddGatedEntry(s, window, configured, _("RESTORE FROM THE CLOUD"),
+	cloudAddTransferRow(s, window, configured, rows->restore, _("RESTORE FROM THE CLOUD"),
 		_("BRING DATA BACK ONTO THIS DEVICE."),
 		[window] { cloudOpenTransfer(window, false); });
 
@@ -4935,9 +5123,13 @@ void GuiMenu::openCloud(Window* window)
 		// something, so that is the line -- the preview then names every ROM.
 		// It briefly carried its last-run stamp instead, which read as a third
 		// kind of row beside two submenus (maintainer, 2026-09-06).
-		cloudAddGatedEntry(s, window, configured, _("MATCH THIS DEVICE TO THE CLOUD"),
+		cloudAddTransferRow(s, window, configured, rows->match, _("MATCH THIS DEVICE TO THE CLOUD"),
 			_("REMOVE ROMS YOUR CLOUD NO LONGER HAS."), [window] { cloudOpenMatch(window); });
 	}
+	// Once now, so the first frame is right, then once a second while the
+	// page is up.
+	cloudHubRefresh(rows);
+	s->addChild(new CloudHubRefresher(window, rows));
 
 	s->addGroup(_("SAVE MANAGEMENT"));
 

@@ -196,6 +196,20 @@ namespace CloudText
 	enum class Verb { Sync, Backup, Restore, Other };
 	Verb verbOf(const std::string& cmd);
 
+	// Which transfer a page's command runs (fork #187): a match removes
+	// (--match), a restore brings down (cloud_restore, cloud_content_restore),
+	// a back up sends up (cloud_backup, cloud_content_backup). verbOf answers
+	// the card's question about the saves scripts and reads the content
+	// scripts as Other; this reads a whole composed command by the scripts
+	// it names, for the row that follows a run left in the background and
+	// for the launch gate's sentence over it. backuptool decides nothing: it
+	// appears in a settings restore (restore --then-cloud) and a settings
+	// backup alike, and the cloud script beside it says which. A command
+	// naming a restore and a backup script both is the card's sync, not a
+	// page's run, and Other.
+	enum class TransferKind { Backup, Restore, Match, Other };
+	TransferKind transferKind(const std::string& cmd);
+
 	// The first candidate that fits the width, else the last one offered.
 	// measure is the row's own font, handed in because a font is a GL
 	// resource and this has to stay free of one; an empty measure or a
@@ -293,6 +307,31 @@ namespace CloudText
 	// The bar never moves back once a phase is known: the larger of what is
 	// drawn and what is proposed, with -1 on either side meaning nothing.
 	int forwardOnly(int shown, int proposed);
+
+	// The startup card's network step (fork #192). cloud_net_ready prints
+	// ">>> doing network" whenever it has to wait at all -- the three
+	// seconds it holds a connection that is already up included -- so the
+	// card read WAITING FOR THE NETWORK on a device whose Wi-Fi had been up
+	// since fifteen seconds after boot. Maintainer, on the RG SP: "doesn't
+	// the device know if it's online by the time it starts up and shows
+	// EmulationStation?" It does, and the words follow the link, not the
+	// script: with a link the step is the check it is -- whether the
+	// connection has settled, a different question from whether the link
+	// is up -- and reads CHECKING; without one it is a wait, and the line
+	// says how long, from the bound the command hands cloud_net_ready
+	// (--wait N, or --wait=N; the script's own default when the command
+	// names none, which is also the fallback loop's minute). A zero is
+	// handed back as one -- the caller then names no number rather than
+	// "up to 0 seconds". The words themselves stay with the caller
+	// (D-UI-055: a sentence must be true of what happens).
+	enum class NetworkStep { Checking, Waiting };
+	struct NetworkStepChoice
+	{
+		NetworkStep step = NetworkStep::Checking;
+		int waitSeconds = 60;
+	};
+	constexpr int NETWORK_WAIT_DEFAULT_S = 60;
+	NetworkStepChoice networkStep(bool linkUp, const std::string& command);
 
 	// The offline RetroAchievements proxy's answers, read as text (fork
 	// #173, D-RA-004). raofflineproxy-ctl prints them; OfflineAchievements

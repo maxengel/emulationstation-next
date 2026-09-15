@@ -586,6 +586,39 @@ TEST_CASE("verbOf reads the direction out of the command")
 
 // ------------------------------------------------------------------ fitting
 
+TEST_CASE("transferKind reads which transfer a page's command runs")
+{
+	// The hub's compositions (GuiMenu::cloudOpenTransfer), in the part that
+	// matters: the scripts a command names.
+	CHECK(transferKind("rc=0 ; _t=0 ; { /usr/bin/cloud_backup --yes --saves-only ; } || _t=$? ; echo \">>> tier SAVES|$_t\" ; exit $rc") == TransferKind::Backup);
+	CHECK(transferKind("rc=0 ; _t=0 ; { /usr/bin/cloud_content_backup --selected --with-media ; } || _t=$? ; exit $rc") == TransferKind::Backup);
+	CHECK(transferKind("echo '>>> unit SETTINGS||' ; echo '>>> doing archive' ; /usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only") == TransferKind::Backup);
+	CHECK(transferKind("/usr/bin/cloud_restore --yes --saves-only") == TransferKind::Restore);
+	CHECK(transferKind("/usr/bin/cloud_content_restore --selected --media-only") == TransferKind::Restore);
+
+	// The settings restore names backuptool too; the cloud script beside it
+	// says which way the run goes.
+	CHECK(transferKind("echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only && { echo '>>> doing unpack' ; /usr/bin/backuptool restore --then-cloud --no-restart ; }") == TransferKind::Restore);
+
+	// The journey's first restore (main.cpp): two restore scripts, one kind.
+	CHECK(transferKind("rc=0 ; _t=0 ; { /usr/bin/cloud_content_restore --all ; } || _t=$? ; _t=0 ; { /usr/bin/cloud_restore --yes ; } || _t=$? ; exit $rc") == TransferKind::Restore);
+
+	// A match is the restore script with --match, and a kind of its own: it
+	// is the one transfer that deletes.
+	CHECK(transferKind("/usr/bin/cloud_content_restore --match --apply") == TransferKind::Match);
+
+	// Both directions is the card's sync, not a page's run; nothing named
+	// is nothing known.
+	CHECK(transferKind("/usr/bin/cloud_restore --yes --method=copy --update --saves-only; /usr/bin/cloud_backup --yes --method=copy --update --saves-only") == TransferKind::Other);
+	CHECK(transferKind("/usr/bin/cloud_migrate_layout --apply") == TransferKind::Other);
+	CHECK(transferKind("") == TransferKind::Other);
+
+	// verbOf, the card's reader, does not know the content scripts; that is
+	// why this exists.
+	CHECK(verbOf("/usr/bin/cloud_content_backup --selected") == Verb::Other);
+	CHECK(verbOf("/usr/bin/cloud_backup --yes --saves-only") == Verb::Backup);
+}
+
 TEST_CASE("chooseThatFits takes the first candidate that fits")
 {
 	// One character, one unit of width, so a case reads as its lengths.
@@ -825,6 +858,66 @@ TEST_CASE("forwardOnly never moves the bar back")
 	bar = forwardOnly(bar, phaseBar(Phase::Sending, -1));    CHECK(bar == 50);
 	bar = forwardOnly(bar, phaseBar(Phase::Sending, 30));    CHECK(bar == 65);
 	bar = forwardOnly(bar, phaseBar(Phase::Sending, 100));   CHECK(bar == 100);
+}
+
+// ---------------------------------------------------------------- the network step (#192)
+
+TEST_CASE("networkStep reads the link, not the script")
+{
+	// The startup command as main.cpp composes it, in the part that matters.
+	const std::string startup = "if [ -x /usr/bin/cloud_net_ready ]; then /usr/bin/cloud_net_ready --wait 60; _w=$?; [ \"$_w\" = 0 ] || exit \"$_w\"; else ip -4 route show default; fi; echo \">>> doing receive\"";
+
+	// cloud_net_ready announces its wait whenever it waits at all, the grace
+	// it gives a connection that is already up included. The card's words
+	// come from the link the interface sees, not from the announcement: a
+	// link makes the step a check (the maintainer's device had been online
+	// for fifteen seconds and read WAITING FOR THE NETWORK), no link makes
+	// it a wait.
+	CHECK(networkStep(true, startup).step == NetworkStep::Checking);
+	CHECK(networkStep(false, startup).step == NetworkStep::Waiting);
+
+	// Whatever the command says, or does not say.
+	CHECK(networkStep(true, "").step == NetworkStep::Checking);
+	CHECK(networkStep(false, "").step == NetworkStep::Waiting);
+	CHECK(networkStep(true, "cloud_net_ready --wait 5").step == NetworkStep::Checking);
+}
+
+TEST_CASE("networkStep reads the wait's bound out of the command")
+{
+	// The number the shell runs is the number the card says, so the two
+	// cannot drift: --wait N as main.cpp spells it, and --wait=N as the
+	// script also takes it.
+	CHECK(networkStep(false, "/usr/bin/cloud_net_ready --wait 60; _w=$?").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait 45").waitSeconds == 45);
+	CHECK(networkStep(false, "cloud_net_ready --wait=45").waitSeconds == 45);
+	CHECK(networkStep(false, "cloud_net_ready --wait   7 ; echo x").waitSeconds == 7);
+	CHECK(networkStep(false, "cloud_net_ready --wait 120\"").waitSeconds == 120);
+
+	// No bound named: the script's own default, which is also the fallback
+	// loop's minute on an image without the script.
+	CHECK(NETWORK_WAIT_DEFAULT_S == 60);
+	CHECK(networkStep(false, "cloud_net_ready").waitSeconds == 60);
+	CHECK(networkStep(false, "").waitSeconds == 60);
+	CHECK(networkStep(false, "while :; do timeout 4 ping -q -c1 -W2 google.com && break; [ $(( $(date +%s) - _t0 )) -lt 60 ] || break; sleep 2; done").waitSeconds == 60);
+
+	// Junk after the flag is not a bound, as the script's own parser would
+	// refuse it: the default stands rather than a number nobody set.
+	CHECK(networkStep(false, "cloud_net_ready --wait abc").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait=").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait 60abc").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait 12345678").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait -5").waitSeconds == 60);
+
+	// A zero is handed back as one: the caller then names no number rather
+	// than promising "up to 0 seconds".
+	CHECK(networkStep(false, "cloud_net_ready --wait 0").waitSeconds == 0);
+
+	// The first --wait is the script's; a later one is somebody else's.
+	CHECK(networkStep(false, "cloud_net_ready --wait 30; other --wait 99").waitSeconds == 30);
+
+	// The bound is read whether or not the caller needs it.
+	CHECK(networkStep(true, "cloud_net_ready --wait 45").waitSeconds == 45);
 }
 
 // ---------------------------------------------------------------- offline achievements (#173)

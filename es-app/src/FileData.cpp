@@ -32,6 +32,8 @@
 #include "LocaleES.h"
 #include "guis/GuiMsgBox.h"
 #include "ThreadedCloudSync.h"
+#include "CloudTransferJob.h"
+#include "guis/GuiCloudTransfer.h"
 #include "OfflineAchievements.h"
 #include "Paths.h"
 #include "resources/TextureData.h"
@@ -745,6 +747,20 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 			refusal == ThreadedCloudSync::CancelRefusal::PlayerStarted
 				? _("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE STARTING A GAME - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")
 				: _("YOUR SAVES ARE STILL FINISHING UP WITH THE CLOUD.\n\nIT'S STOPPING SO YOU CAN PLAY - TRY AGAIN IN A MOMENT.")));
+		return false;
+	}
+
+	// A back up, restore or match the player started on the transfer page
+	// and left running in the background (fork #187) is theirs to wait for,
+	// as the sync they pressed is: a deliberate transfer refuses a launch
+	// while it runs (D-CLOUD-113), and a restore renaming a save into place
+	// under a game that has it open is what the refusal is for. Until #187
+	// the page took every button, so this never needed a sentence; now the
+	// sentence names the run and where to watch it.
+	if (const std::shared_ptr<CloudTransferJob> transfer = CloudTransferJob::current(); transfer != nullptr && !transfer->finished())
+	{
+		window->pushGui(new GuiMsgBox(window, GuiCloudTransfer::stillRunningSentence(transfer)
+			+ "\n\n" + _("WAIT FOR IT TO FINISH BEFORE STARTING A GAME. THE CLOUD PAGE UNDER GAME SETTINGS SHOWS HOW IT'S GOING.")));
 		return false;
 	}
 

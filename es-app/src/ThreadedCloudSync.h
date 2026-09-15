@@ -113,8 +113,9 @@ private:
 	Origin						mOrigin;
 
 	// Set and read across the worker and the main thread; see
-	// cancelForLaunch. mWaitingForNetwork is what the card reads to say
-	// WAITING FOR THE NETWORK...; it no longer gates the cancel.
+	// cancelForLaunch. mWaitingForNetwork records that the network step is
+	// under way (CHECKING THE CONNECTION... / WAITING FOR A NETWORK..., fork
+	// #192); it no longer gates the cancel.
 	std::atomic<pid_t>			mPid{0};
 	std::atomic<bool>			mWaitingForNetwork{false};
 	std::atomic<bool>			mCancelled{false};
