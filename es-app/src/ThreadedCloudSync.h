@@ -81,7 +81,7 @@ public:
 		Stopping
 	};
 	// evenIfPlayerStarted: the player has answered STOP IT AND PLAY to the
-	// question over their own sync (D-CLOUD-114), so its origin no longer
+	// question over their own sync (D-CLOUD-129), so its origin no longer
 	// protects it; the card says SKIPPED - A GAME WAS STARTED as for an
 	// automatic one.
 	static bool cancelForLaunch(CancelRefusal* refusal = nullptr, bool evenIfPlayerStarted = false);

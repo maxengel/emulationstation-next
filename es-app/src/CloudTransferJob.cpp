@@ -542,7 +542,7 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 	// the shell a process group leader and ">>> pid N" tells stopForLaunch
 	// which group to signal, so the shell, the scripts and their rclone go
 	// together -- the shape ThreadedCloudSync gives its commands, for the
-	// same cancel (D-CLOUD-114). shellQuote, so a command with a quote in it
+	// same cancel (D-CLOUD-129). shellQuote, so a command with a quote in it
 	// survives the trip.
 	const std::string wrapped = "setsid sh -c "
 		+ Utils::String::shellQuote("echo \">>> pid $$\"; { trap '' PIPE; " + mCommand + " ; }") + " 2>&1";

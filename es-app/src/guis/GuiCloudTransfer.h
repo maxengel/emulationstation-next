@@ -94,7 +94,7 @@ public:
 	// SKIPPED with its reason.
 	static std::string outcomeWord(const std::shared_ptr<CloudTransferJob>& job);
 	// The sentence the launch gate asks over a run in the background
-	// (D-CLOUD-114: STOP IT AND PLAY or KEEP WAITING): YOUR BACKUP TO THE
+	// (D-CLOUD-129: STOP IT AND PLAY or KEEP WAITING): YOUR BACKUP TO THE
 	// CLOUD IS STILL RUNNING., in the run's own verb.
 	static std::string stillRunningSentence(const std::shared_ptr<CloudTransferJob>& job);
 
