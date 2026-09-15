@@ -2580,12 +2580,6 @@ msgstr "À CHAQUE SAUVEGARDE"
 msgid "Never overwrite old savestates, always make new ones."
 msgstr "Crée un nouvel emplacement à chaque sauvegarde d’état."
 
-msgid "INCREMENT SLOT"
-msgstr "NOUVEL EMPLACEMENT"
-
-msgid "Increment slot on a new game."
-msgstr "Crée un nouvel emplacement à chaque nouvelle partie."
-
 msgid "DO NOT INCREMENT"
 msgstr "EMPLACEMENT ACTUEL"
 
