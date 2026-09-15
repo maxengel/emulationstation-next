@@ -504,6 +504,20 @@ void ThreadedCloudSync::run()
 	if (mOrigin != Origin::Manual || CloudText::verbOf(mCommand) == CloudText::Verb::Sync)
 		recordOutcome(mOrigin, ret, token, mWhy);
 
+	// A manual backup or restore stopped for a game (the player's answer to
+	// the launch question, D-CLOUD-129): the script's own stamp -- what the
+	// BACK UP and RESTORE rows read -- carries its trap's 130 and no token,
+	// which the row reads as COULDN'T FINISH (guest d, 2026-09-15: LAST
+	// 18:42 - COULDN'T FINISH for a run nobody saw fail). This process knows
+	// why it stopped; the stamp says so, in the shape the reader already
+	// knows, written after the trap's since pclose returned after it.
+	if (cancelled && mOrigin == Origin::Manual)
+	{
+		const CloudText::Verb verb = CloudText::verbOf(mCommand);
+		if (verb == CloudText::Verb::Backup || verb == CloudText::Verb::Restore)
+			writeStamp(std::string("/storage/.cache/cloud_sync/last-") + (verb == CloudText::Verb::Backup ? "backup" : "restore"), ret, token, "");
+	}
+
 	// Offline achievements ride this card (fork #173, D-RA-004): no monitor
 	// of their own, no mention of the link, only what happens next. As the
 	// exit card ends, the proxy is asked how many casual awards it is still
@@ -809,9 +823,13 @@ void ThreadedCloudSync::recordOutcome(Origin origin, int rc, const std::string& 
 		: origin == Origin::Manual ? "manual" : nullptr;
 	if (name == nullptr)
 		return;
+	writeStamp(std::string("/storage/.cache/cloud_sync/last-sync-") + name, rc, token, why);
+}
 
-	const std::string dir = "/storage/.cache/cloud_sync";
-	if (!Utils::FileSystem::createDirectory(dir))
+// One stamp file, in the shape above, whichever surface reads it.
+void ThreadedCloudSync::writeStamp(const std::string& path, int rc, const std::string& token, const std::string& why)
+{
+	if (!Utils::FileSystem::createDirectory(Utils::FileSystem::getParent(path)))
 		return;
 
 	// One line: the why is kept to printable characters and a single line
@@ -822,7 +840,6 @@ void ThreadedCloudSync::recordOutcome(Origin origin, int rc, const std::string& 
 			sentence += c;
 	sentence = Utils::String::trim(sentence);
 
-	const std::string path = dir + "/last-sync-" + name;
 	const std::string tmp = path + ".tmp";
 	Utils::FileSystem::writeAllText(tmp,
 		std::to_string(static_cast<long long>(time(nullptr))) + " " + std::to_string(rc) + " " + token

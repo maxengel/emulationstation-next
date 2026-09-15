@@ -63,7 +63,7 @@ public:
 	// A launch the player chose over the run in flight (STOP IT AND PLAY,
 	// D-CLOUD-129): the run's process group is sent SIGTERM -- SIGKILL when
 	// hard -- and the run is marked stopped for a game, so its outcome reads
-	// SKIPPED - A GAME WAS STARTED rather than a failure. False when no run
+	// SKIPPED - YOU STARTED A GAME rather than a failure. False when no run
 	// is in flight. The caller waits for running() to turn false before the
 	// game starts: the signal is not the end of the run, the process ending
 	// is (ThreadedCloudSync::cancelForLaunch says why).

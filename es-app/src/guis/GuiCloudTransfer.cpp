@@ -334,14 +334,15 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 {
 	Outcome o;
 	// Stopped by a launch the player chose over it (D-CLOUD-129): the
-	// card's word for the same thing, and no failed item -- nothing went
-	// wrong, and the next run finishes what this one did not.
+	// card's own phrase for the same thing (ThreadedCloudSync's cancel), and
+	// no failed item -- nothing went wrong, and the next run finishes what
+	// this one did not.
 	if (job.mStoppedForGame)
 	{
 		o.completed = false;
 		o.partial = false;
 		o.skipped = true;
-		o.word = _("SKIPPED - A GAME WAS STARTED");
+		o.word = _("SKIPPED - YOU STARTED A GAME");
 		return o;
 	}
 	o.completed = job.mExit == 0 || job.mExit == 9;

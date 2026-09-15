@@ -798,7 +798,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// for the reason the automatic cancel is: the scripts are rclone copy,
 	// each file renamed into place whole, so the next run finishes what this
 	// one did not, and a match's deletions stop where they are. The run's
-	// outcome reads SKIPPED - A GAME WAS STARTED, as the card's does.
+	// outcome reads SKIPPED - YOU STARTED A GAME, as the card's does.
 	//
 	// An automatic sync that was signalled for this launch and had not gone
 	// within cancelForLaunch's two-second budget used to be a modal too --
