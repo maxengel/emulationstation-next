@@ -112,36 +112,12 @@ static void addSpacerRow(GuiSettings* s, Window* window)
 // and the dim has to be applied by the entry itself: ComponentList::render
 // sets every element's colour every frame from the theme, so a colour set
 // once at construction is gone by the first frame (the same reason a QR
-// code in a row needs UntintedImageComponent, es-native-ui.md).
-class DimmableMenuEntry : public MultiLineMenuEntry
-{
-public:
-	using MultiLineMenuEntry::MultiLineMenuEntry;
-	void setDimmed(bool dimmed) { mDimmed = dimmed; }
-	void setColor(unsigned int color) override
-	{
-		MultiLineMenuEntry::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
-	}
-private:
-	bool mDimmed = false;
-};
-
-// The OFFLINE ACHIEVEMENTS switch, dimmed while raofflineproxy-ctl is
-// enabling or disabling on its behalf (audit #186 PL-27): the same
-// per-frame colour rule as the entry above, so the dim is applied by the
-// switch itself.
-class DimmableSwitch : public SwitchComponent
-{
-public:
-	using SwitchComponent::SwitchComponent;
-	void setDimmed(bool dimmed) { mDimmed = dimmed; }
-	void setColor(unsigned int color) override
-	{
-		SwitchComponent::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
-	}
-private:
-	bool mDimmed = false;
-};
+// code in a row needs UntintedImageComponent, es-native-ui.md). That is
+// MultiLineMenuEntry::setDimmed, and for the OFFLINE ACHIEVEMENTS switch
+// -- dimmed while raofflineproxy-ctl is enabling or disabling on its
+// behalf (audit #186 PL-27) -- SwitchComponent::setDimmed: the rule first
+// lived in two classes here and moved into es-core so the cloud rows
+// share it (fork #182).
 
 static bool offlineScanOn()
 {
@@ -241,7 +217,7 @@ static std::string offlineScanDetail(bool on, bool online)
 		[font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; });
 }
 
-static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
+static void offlineScanRefresh(const std::weak_ptr<MultiLineMenuEntry>& weak)
 {
 	auto entry = weak.lock();
 	if (!entry)
@@ -273,7 +249,7 @@ static void offlineScanRefresh(const std::weak_ptr<DimmableMenuEntry>& weak)
 class OfflineRowRefresher : public GuiComponent
 {
 public:
-	OfflineRowRefresher(Window* window, const std::weak_ptr<DimmableMenuEntry>& row)
+	OfflineRowRefresher(Window* window, const std::weak_ptr<MultiLineMenuEntry>& row)
 		: GuiComponent(window), mRow(row), mElapsedMs(0)
 	{
 		setVisible(false);
@@ -295,7 +271,7 @@ public:
 	}
 
 private:
-	std::weak_ptr<DimmableMenuEntry> mRow;
+	std::weak_ptr<MultiLineMenuEntry> mRow;
 	int mElapsedMs;
 };
 
@@ -307,13 +283,13 @@ private:
 // that follows turning the switch on (D-RA-012). The refresh it is handed
 // runs as the scan reports, when it ends and when the page closes, so the
 // row's line follows a scan left running in the background (PL-07).
-static void offlineScanStart(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
+static void offlineScanStart(Window* window, std::weak_ptr<MultiLineMenuEntry> weak)
 {
 	window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
 		[weak] { offlineScanRefresh(weak); }));
 }
 
-static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> weak)
+static void offlineScanPressed(Window* window, std::weak_ptr<MultiLineMenuEntry> weak)
 {
 	// A scan left running in the background: the page opens on it again, no
 	// question asked -- there is nothing to decide, and the ctl would refuse
@@ -352,7 +328,7 @@ static void offlineScanPressed(Window* window, std::weak_ptr<DimmableMenuEntry> 
 		_("NO"), nullptr));
 }
 
-static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Window* window)
+static std::shared_ptr<MultiLineMenuEntry> addOfflineScanRow(GuiSettings* s, Window* window)
 {
 	// The line goes in at construction: ComponentList sizes the row from the
 	// entry as it is added, and an entry made with no substring is one line
@@ -361,10 +337,10 @@ static std::shared_ptr<DimmableMenuEntry> addOfflineScanRow(GuiSettings* s, Wind
 	// Later refreshes only change the words, so the height holds.
 	const bool on = offlineScanOn();
 	const bool online = offlineScanOnline();
-	auto entry = std::make_shared<DimmableMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"),
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"),
 		offlineScanDetail(on, online), false);
 	entry->setDimmed((!on || !online) && !offlineScanShowsRun());
-	std::weak_ptr<DimmableMenuEntry> weak = entry;
+	std::weak_ptr<MultiLineMenuEntry> weak = entry;
 
 	ComponentListRow row;
 	row.addElement(entry, true);
@@ -401,7 +377,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 {
 	auto s = new GuiSettings(window, _("OFFLINE ACHIEVEMENTS (BETA)").c_str());
 
-	auto offline = std::make_shared<DimmableSwitch>(window);
+	auto offline = std::make_shared<SwitchComponent>(window);
 	offline->setState(SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"));
 	s->addWithLabel(_("OFFLINE ACHIEVEMENTS (BETA)"), offline);
 
@@ -414,7 +390,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// rcheevos shows it while an award is waiting to reach the server and
 	// says nothing about what it means (fork #162); it is quoted so it reads
 	// as a thing on screen and not as a typo (D-RA-003).
-	std::weak_ptr<DimmableMenuEntry> scanRow = addOfflineScanRow(s, window);
+	std::weak_ptr<MultiLineMenuEntry> scanRow = addOfflineScanRow(s, window);
 	// The row follows a top-up the ctl runs while the page is open (fork
 	// #189); the page owns the component and deletes it with itself.
 	s->addChild(new OfflineRowRefresher(window, scanRow));
@@ -428,7 +404,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// been closed. setState fires the change callback too, so a revert made
 	// from inside it would re-enter it: quiet while the code, not the
 	// player, sets the state.
-	std::weak_ptr<DimmableSwitch> offlineWeak = offline;
+	std::weak_ptr<SwitchComponent> offlineWeak = offline;
 	auto quiet = std::make_shared<bool>(false);
 	auto setQuietly = [offlineWeak, quiet](bool state)
 	{
