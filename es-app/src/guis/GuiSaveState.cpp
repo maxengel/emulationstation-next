@@ -97,7 +97,14 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	// will use. At 1280x800 the scale is 1 and nothing changes.
 	const float minSide = (float)Math::min(Renderer::getScreenHeight(), Renderer::getScreenWidth());
 	const float screenScale = Renderer::ScreenSettings::fontScale() > 0.0f ? Renderer::ScreenSettings::fontScale() : 1.0f;
-	int requested = Math::max(1, (int)((float)theme->TextSmall.font->getSize() / screenScale + 0.5f));
+	//
+	// One point under the theme's small font (maintainer, 2026-09-15, on
+	// the RG SP with RC-12: "the save state manager looks great, but the
+	// text could be a tiny bit smaller, maybe one point or so"): 15 px
+	// where the 640x480 panel's small font is 16, the date-width shrink
+	// below still applying after it.
+	const int pointsUnderSmall = 1;
+	int requested = Math::max(1, (int)((float)theme->TextSmall.font->getSize() / screenScale + 0.5f) - pointsUnderSmall);
 	std::shared_ptr<Font> labelFont = Font::get(requested, theme->TextSmall.font->getPath());
 	labelFont->sizeText(ascii);
 	{
