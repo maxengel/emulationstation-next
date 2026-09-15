@@ -16,11 +16,13 @@ parser, a label, a rule about a string, a schedule. Today `es-app/src/CloudText.
 `-DRAPIDJSON_INCLUDE_DIR=<dir>` on a host without it), `es-app/src/CheevosIndex.cpp`
 (#186 PL-08, what the game index owes a game), `es-core/src/utils/TimeText.cpp`
 (#195, the time of day beside a save's date: the 12-hour switch and a locale
-with no AM/PM), `Utils::String::maskSecrets` in `es-core/src/utils/StringUtil.cpp`
-(#177, the credential mask every logged command line goes through) and the log's
-rules in `es-core/src/LogPolicy.h` (#178, header-only: the level tags, the
-`LogLevel` setting, which lines also reach stderr), tested with doctest
-(`external/doctest/doctest.h`); the binary compiles those five files,
+with no AM/PM), `es-app/src/WifiText.cpp` (#191, the Wi-Fi rows' reading of what
+`wifictl` prints: the remembered networks, the joined one, a forget's outcome),
+`Utils::String::maskSecrets` in `es-core/src/utils/StringUtil.cpp` (#177, the
+credential mask every logged command line goes through) and the log's rules in
+`es-core/src/LogPolicy.h` (#178, header-only: the level tags, the `LogLevel`
+setting, which lines also reach stderr), tested with doctest
+(`external/doctest/doctest.h`); the binary compiles those six files,
 `StringUtil.cpp`, and the tests, and no more.
 
 **Does not:** anything touching `Window`, `Settings`, `SystemConf`, a font, a

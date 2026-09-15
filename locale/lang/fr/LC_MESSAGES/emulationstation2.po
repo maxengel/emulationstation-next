@@ -4466,3 +4466,45 @@ msgstr "Déverrouillé"
 
 msgid "Unlocked - will be sent when you're connected"
 msgstr "Déverrouillé - sera envoyé à votre prochaine connexion"
+
+msgid "CONNECTED TO"
+msgstr "CONNECTÉ À"
+
+msgid "COULDN'T CHECK"
+msgstr "VÉRIFICATION IMPOSSIBLE"
+
+msgid "MANAGE NETWORKS"
+msgstr "GÉRER LES RÉSEAUX"
+
+msgid "REMEMBERED NETWORKS"
+msgstr "RÉSEAUX MÉMORISÉS"
+
+msgid "NO REMEMBERED NETWORKS"
+msgstr "AUCUN RÉSEAU MÉMORISÉ"
+
+msgid "IN USE"
+msgstr "UTILISÉ"
+
+msgid "FORGET %s?"
+msgstr "OUBLIER %s ?"
+
+msgid "YOU'RE CONNECTED TO IT NOW, SO YOU'LL BE DISCONNECTED."
+msgstr "VOUS Y ÊTES CONNECTÉ, VOUS SEREZ DONC DÉCONNECTÉ."
+
+msgid "THIS DEVICE WON'T JOIN IT AGAIN ON ITS OWN."
+msgstr "CET APPAREIL NE S’Y CONNECTERA PLUS TOUT SEUL."
+
+msgid "FORGOTTEN"
+msgstr "OUBLIÉ"
+
+msgid "FORGOTTEN, AND YOU'RE DISCONNECTED"
+msgstr "OUBLIÉ, ET VOUS ÊTES DÉCONNECTÉ"
+
+msgid "COULDN'T FORGET"
+msgstr "IMPOSSIBLE D’OUBLIER"
+
+msgid "TRY AGAIN."
+msgstr "RÉESSAYEZ."
+
+msgid "COULDN'T READ THE REMEMBERED NETWORKS. TRY AGAIN."
+msgstr "IMPOSSIBLE DE LIRE LES RÉSEAUX MÉMORISÉS. RÉESSAYEZ."

@@ -53,6 +53,7 @@ set(ES_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudText.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CheevosRetry.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CheevosIndex.h
+	${CMAKE_CURRENT_SOURCE_DIR}/src/WifiText.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievements.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievementsText.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineScanJob.h
@@ -175,6 +176,7 @@ set(ES_SOURCES
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudText.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CheevosRetry.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CheevosIndex.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/src/WifiText.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievements.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievementsText.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineScanJob.cpp

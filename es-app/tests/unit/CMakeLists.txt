@@ -18,13 +18,14 @@ endif()
 
 get_filename_component(ES_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUTE)
 
-# Seven files of EmulationStation and no more: the pure text, the offline
+# Eight files of EmulationStation and no more: the pure text, the offline
 # proxy's answers, the string helpers they call (with the credential mask
 # every logged command line goes through, fork #177), the token check's
-# retry schedule, the index's rule for what a game is owed, and the time of
-# day a save's date carries (fork #195) -- plus the log's header-only rules
-# (es-core/src/LogPolicy.h, fork #178). Anything that needs a window, a font
-# or a file does not belong in this binary -- see README.md.
+# retry schedule, the index's rule for what a game is owed, the time of day
+# a save's date carries (fork #195), and the Wi-Fi rows' reading of wifictl
+# (fork #191) -- plus the log's header-only rules (es-core/src/LogPolicy.h,
+# fork #178). Anything that needs a window, a font or a file does not belong
+# in this binary -- see README.md.
 add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/CloudTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/CheevosRetryTests.cpp
@@ -33,10 +34,12 @@ add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/TimeTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/MaskSecretsTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/LogPolicyTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/WifiTextTests.cpp
 	${ES_ROOT}/es-app/src/CloudText.cpp
 	${ES_ROOT}/es-app/src/CheevosRetry.cpp
 	${ES_ROOT}/es-app/src/OfflineAchievementsText.cpp
 	${ES_ROOT}/es-app/src/CheevosIndex.cpp
+	${ES_ROOT}/es-app/src/WifiText.cpp
 	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
 	${ES_ROOT}/es-core/src/utils/TimeText.cpp
 )

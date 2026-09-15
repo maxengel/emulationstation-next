@@ -21,6 +21,7 @@
 #include "ThreadedCloudSync.h"
 #include "CloudExit.h"
 #include "CloudText.h"
+#include "WifiText.h"
 #include "guis/GuiCloudTransfer.h"
 #include "guis/GuiLoading.h"
 #include "guis/GuiNetPlaySettings.h"
@@ -8684,6 +8685,37 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 	}).detach();
 }
 
+// The line under WI-FI SSID: the network the device is joined to now, from
+// NetworkManager, asked off the interface thread as the IP address and the
+// internet status are (fork #191). wifi.ssid -- the value on the right, the
+// one the row edits -- is the network configured last, and once autoconnect
+// has joined a remembered network the two differ: the RG SP showed the
+// setting as though it were the connection (maintainer, 2026-09-15). Three
+// answers, kept apart: the network, NOT CONNECTED when the device is joined
+// to none, COULDN'T CHECK when NetworkManager did not answer -- a silence is
+// not "not connected". The row keeps its height, since the line goes in at
+// construction (CHECKING...) and only its words change.
+static void networkSettingsFillInSsid(Window* window, const std::shared_ptr<MultiLineMenuEntry>& ssidRow)
+{
+	std::weak_ptr<MultiLineMenuEntry> entry = ssidRow;
+	const std::string connectedTo = _("CONNECTED TO");
+	const std::string notConnected = _("NOT CONNECTED");
+	const std::string couldNotCheck = _("COULDN'T CHECK");
+
+	std::thread([window, entry, connectedTo, notConnected, couldNotCheck]
+	{
+		std::string ssid;
+		const bool answered = ApiSystem::getInstance()->getCurrentWifiSsid(ssid);
+		const std::string text = !answered ? couldNotCheck : (ssid.empty() ? notConnected : connectedTo + " " + ssid);
+		window->postToUiThread([entry, text]
+		{
+			auto row = entry.lock();
+			if (row != nullptr)
+				row->setDescription(text);
+		});
+	}).detach();
+}
+
 // Connect or disconnect Wi-Fi off the interface thread. wifictl connect can
 // take the better part of two minutes on a healthy stack (ApiSystem::
 // enableWifi says why), and every caller of this is a menu callback: the
@@ -8786,7 +8818,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	{
 		if (!baseAdhocEnabled)
 		{
-			s->addInputTextConfigRow(_("WI-FI SSID"), "wifi.ssid", false, false, &openWifiSettings);
+			// The value on the right is wifi.ssid, the network configured
+			// last, and the row still edits it. The line under the label
+			// is the network the device is on now, from NetworkManager,
+			// which autoconnect can have made a different one (fork #191).
+			auto ssidRow = s->addInputTextConfigRowWithDescription(_("WI-FI SSID"), _("CHECKING..."), "wifi.ssid", false, false, &openWifiSettings);
+			networkSettingsFillInSsid(window, ssidRow);
 			s->addInputTextConfigRow(_("WI-FI KEY"), "wifi.key", true);
 
 #if !WIN32
@@ -8805,6 +8842,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		        s->addWithLabel(_("WI-FI COUNTRY"), country);
 		        s->addSaveFunc([country] { SystemConf::getInstance()->set("wifi.country", country->getSelected()); });
 #endif
+
+			// The networks NetworkManager remembers, and the way to forget
+			// one. A page, not a line here: there is more than one thing to
+			// do behind it (es-player-text: a row that leads somewhere is a
+			// label).
+			s->addEntry(_("MANAGE NETWORKS"), true, [window] { GuiMenu::openManageNetworks(window); });
 		}
 
 		if (ApiSystem::getInstance()->isWifiAPModeSupported())
@@ -9151,6 +9194,142 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	});
 
 	mWindow->pushGui(s);
+}
+
+// MANAGE NETWORKS (fork #191): the networks NetworkManager remembers -- one
+// profile per network the device has joined, autoconnected to whichever is
+// in range -- with the one in use marked, and A to forget one. Without this
+// page a network joined once was joined again on every boot it was in range
+// for, with nothing on the device to say so or to stop it.
+
+// The help bar says what A does here: FORGET, and only while there is a
+// network to forget -- a prompt for a key that does nothing is worse than
+// none (es-code-traps).
+class GuiManageNetworks : public GuiSettings
+{
+public:
+	GuiManageNetworks(Window* window, bool hasNetworks)
+		: GuiSettings(window, _("MANAGE NETWORKS")), mHasNetworks(hasNetworks) { }
+
+	std::vector<HelpPrompt> getHelpPrompts() override
+	{
+		std::vector<HelpPrompt> prompts;
+		for (const auto& prompt : GuiSettings::getHelpPrompts())
+			if (prompt.first != BUTTON_OK)
+				prompts.push_back(prompt);
+		if (mHasNetworks)
+			prompts.push_back(HelpPrompt(BUTTON_OK, _("FORGET")));
+		return prompts;
+	}
+
+private:
+	bool mHasNetworks;
+};
+
+// A press on a network: the question names it and says what changes -- the
+// device stops joining it on its own, and, for the one in use, drops it now.
+// YES first, NO last so B answers NO (es-ui-style-guide). The delete is one
+// nmcli call, bounded in ApiSystem, behind the spinner; the page is then
+// rebuilt from NetworkManager so every row reads the list as it is now, and
+// the toast over it says what happened, disconnection included.
+static void manageNetworksForget(Window* window, GuiSettings* page, const std::string& name, bool inUse)
+{
+	std::string text = Utils::String::format(_("FORGET %s?").c_str(), name.c_str()) + "\n\n";
+	if (inUse)
+		text += _("YOU'RE CONNECTED TO IT NOW, SO YOU'LL BE DISCONNECTED.") + " ";
+	text += _("THIS DEVICE WON'T JOIN IT AGAIN ON ITS OWN.");
+
+	window->pushGui(new GuiMsgBox(window, text, _("YES"), [window, page, name]
+	{
+		LOG(LogInfo) << "manage networks: forgetting " << name;
+		window->pushGui(new GuiLoading<std::pair<bool, bool>>(window, _("PLEASE WAIT"),
+			[name](IGuiLoadingHandler*)
+			{
+				bool disconnected = false;
+				const bool forgotten = ApiSystem::getInstance()->forgetWifiNetwork(name, disconnected);
+				return std::make_pair(forgotten, disconnected);
+			},
+			[window, page, name](std::pair<bool, bool> result)
+			{
+				if (!result.first)
+				{
+					LOG(LogWarning) << "manage networks: could not forget " << name;
+					window->pushGui(new GuiMsgBox(window, _("COULDN'T FORGET") + " " + name + ". " + _("TRY AGAIN."), _("OK")));
+					return;
+				}
+				LOG(LogInfo) << "manage networks: forgot " << name << (result.second ? ", disconnected" : "");
+				delete page;
+				GuiMenu::openManageNetworks(window);
+				window->displayNotificationMessage(_U("\uF058  ") + name + " : "
+					+ (result.second ? _("FORGOTTEN, AND YOU'RE DISCONNECTED") : _("FORGOTTEN")));
+			}));
+	}, _("NO"), nullptr));
+}
+
+static void manageNetworksAddRow(Window* window, GuiSettings* page, const WifiText::SavedNetwork& network)
+{
+	auto theme = ThemeData::getMenuTheme();
+	ComponentListRow row;
+
+	// The name as NetworkManager has it. A network's name is case-sensitive
+	// and is what the player recognises it by, so the row is built by hand:
+	// addWithLabel and addWithDescription upper-case their label.
+	auto name = std::make_shared<TextComponent>(window, network.name, theme->Text.font, theme->Text.color);
+	if (EsLocale::isRTL())
+		name->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
+	row.addElement(name, true);
+
+	// The mark, on the right, at the row's own weight: a fact beside an
+	// action rather than a line under it, so every row stays one line high.
+	if (network.inUse)
+	{
+		const std::string inUse = _("IN USE");
+		auto mark = std::make_shared<TextComponent>(window, inUse, theme->Text.font, theme->Text.color, Alignment::ALIGN_RIGHT);
+		mark->setSize(theme->Text.font->sizeText(inUse + "  ").x(), 0);
+		row.addElement(mark, false);
+	}
+
+	const std::string networkName = network.name;
+	const bool inUse = network.inUse;
+	row.makeAcceptInputHandler([window, page, networkName, inUse] { manageNetworksForget(window, page, networkName, inUse); });
+	page->addRow(row);
+}
+
+static void manageNetworksShow(Window* window, const std::vector<WifiText::SavedNetwork>& networks)
+{
+	auto page = new GuiManageNetworks(window, !networks.empty());
+	page->addGroup(_("REMEMBERED NETWORKS"));
+	if (networks.empty())
+		page->addEntry(_("NO REMEMBERED NETWORKS"), false);
+	for (const auto& network : networks)
+		manageNetworksAddRow(window, page, network);
+	window->pushGui(page);
+}
+
+void GuiMenu::openManageNetworks(Window* window)
+{
+	// The list is one nmcli call, but over D-Bus to a NetworkManager that
+	// can stop answering (fork #102), so it is fetched behind the spinner
+	// with ApiSystem's bound rather than in a page's constructor. A list
+	// that could not be read is a dialog, not an empty page: NO REMEMBERED
+	// NETWORKS is a fact about the device, and that would be a guess.
+	window->pushGui(new GuiLoading<std::pair<bool, std::vector<WifiText::SavedNetwork>>>(window, _("PLEASE WAIT"),
+		[](IGuiLoadingHandler*)
+		{
+			std::vector<WifiText::SavedNetwork> networks;
+			const bool readable = ApiSystem::getInstance()->getSavedWifiNetworks(networks);
+			return std::make_pair(readable, networks);
+		},
+		[window](std::pair<bool, std::vector<WifiText::SavedNetwork>> result)
+		{
+			if (!result.first)
+			{
+				LOG(LogWarning) << "manage networks: the remembered networks could not be read";
+				window->pushGui(new GuiMsgBox(window, _("COULDN'T READ THE REMEMBERED NETWORKS. TRY AGAIN."), _("OK")));
+				return;
+			}
+			manageNetworksShow(window, result.second);
+		}));
 }
 
 bool GuiMenu::IsTailscaleUp(Window* window) {

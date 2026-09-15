@@ -11,6 +11,7 @@
 #include "guis/GuiMsgBox.h"
 #include "components/SwitchComponent.h"
 #include "components/OptionListComponent.h"
+#include "components/MultiLineMenuEntry.h"
 
 GuiSettings::GuiSettings(Window* window, const std::string& title, bool tabbedUI) : GuiSettings(window, title, "", nullptr, false, tabbedUI) { }
 
@@ -166,6 +167,18 @@ void GuiSettings::addSubMenu(const std::string& label, const std::function<void(
 void GuiSettings::addInputTextConfigRow(const std::string& title, const std::string& settingsID, bool password, bool storeInSettings
 	, const std::function<void(Window*, std::string/*title*/, std::string /*value*/, const std::function<void(std::string)>& onsave)>& customEditor)
 {
+	buildInputTextConfigRow(title, "", settingsID, password, storeInSettings, customEditor);
+}
+
+std::shared_ptr<MultiLineMenuEntry> GuiSettings::addInputTextConfigRowWithDescription(const std::string& title, const std::string& description, const std::string& settingsID, bool password, bool storeInSettings
+	, const std::function<void(Window*, std::string/*title*/, std::string /*value*/, const std::function<void(std::string)>& onsave)>& customEditor)
+{
+	return buildInputTextConfigRow(title, description, settingsID, password, storeInSettings, customEditor);
+}
+
+std::shared_ptr<MultiLineMenuEntry> GuiSettings::buildInputTextConfigRow(const std::string& title, const std::string& description, const std::string& settingsID, bool password, bool storeInSettings
+	, const std::function<void(Window*, std::string/*title*/, std::string /*value*/, const std::function<void(std::string)>& onsave)>& customEditor)
+{
 	auto theme = ThemeData::getMenuTheme();
 	std::shared_ptr<Font> font = theme->Text.font;
 	unsigned int color = theme->Text.color;
@@ -174,11 +187,25 @@ void GuiSettings::addInputTextConfigRow(const std::string& title, const std::str
 	Window *window = mWindow;
 	ComponentListRow row;
 
-	auto lbl = std::make_shared<TextComponent>(window, title, font, color);
-	if (EsLocale::isRTL())
-		lbl->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
+	std::shared_ptr<MultiLineMenuEntry> entry;
+	if (description.empty())
+	{
+		auto lbl = std::make_shared<TextComponent>(window, title, font, color);
+		if (EsLocale::isRTL())
+			lbl->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
 
-	row.addElement(lbl, true); // label
+		row.addElement(lbl, true); // label
+	}
+	else
+	{
+		// One line under the label, clamped to a line and scrolling while
+		// the row is focused: the shape MenuComponent::addWithDescription
+		// gives an action row, and the per-frame update it asks of the list
+		// for that scroll.
+		entry = std::make_shared<MultiLineMenuEntry>(window, title, description, false);
+		mMenu.setUpdateType(ComponentListFlags::UpdateType::UPDATE_ALWAYS);
+		row.addElement(entry, true);
+	}
 
 	std::string value = storeInSettings ? Settings::getInstance()->getString(settingsID) : SystemConf::getInstance()->get(settingsID);
 
@@ -198,7 +225,7 @@ void GuiSettings::addInputTextConfigRow(const std::string& title, const std::str
 
 	auto bracket = std::make_shared<ImageComponent>(mWindow);
 	bracket->setImage(theme->Icons.arrow);
-	bracket->setResize(Vector2f(0, lbl->getFont()->getLetterHeight()));
+	bracket->setResize(Vector2f(0, font->getLetterHeight()));
 
 	if (EsLocale::isRTL())
 		bracket->setFlipX(true);
@@ -248,6 +275,7 @@ void GuiSettings::addInputTextConfigRow(const std::string& title, const std::str
 	});
 
 	addRow(row);
+	return entry;
 }
 
 void GuiSettings::addInputTextRow(const std::string& title, const std::string& value, bool password

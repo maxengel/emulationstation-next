@@ -613,6 +613,54 @@ bool ApiSystem::disableWifi()
 	return executeScript("timeout 30 wifictl disable");
 }
 
+// The three below are one nmcli call each, over D-Bus to a NetworkManager
+// that can stop answering (fork #102), so each is time-boxed and read by
+// the word it prints -- a script that printed nothing and exited 0 is not
+// an answer (engineering-practices: guards fail closed). Names go through
+// shellQuote, as enableWifi's do: they are the player's and carry anything.
+
+bool ApiSystem::getCurrentWifiSsid(std::string& ssid)
+{
+	std::vector<std::string> lines;
+	auto result = executeScript("timeout 10 wifictl current", [&lines](const std::string line) { lines.push_back(line); });
+	ssid = WifiText::parseCurrent(lines);
+	// 0 with the SSID, 1 for "joined to none"; anything else (2 when
+	// NetworkManager could not be asked, 124 from timeout) is no answer.
+	if (result.second == 0)
+		return !ssid.empty();
+	ssid.clear();
+	return result.second == 1;
+}
+
+bool ApiSystem::getSavedWifiNetworks(std::vector<WifiText::SavedNetwork>& networks)
+{
+	std::vector<std::string> lines;
+	auto result = executeScript("timeout 15 wifictl saved", [&lines](const std::string line) { lines.push_back(line); });
+	networks = WifiText::parseSaved(lines);
+	if (result.second != 0)
+	{
+		networks.clear();
+		return false;
+	}
+	return true;
+}
+
+bool ApiSystem::forgetWifiNetwork(const std::string& name, bool& disconnected)
+{
+	disconnected = false;
+	if (name.empty())
+		return false;
+
+	std::vector<std::string> lines;
+	auto result = executeScript("timeout 30 wifictl forget " + Utils::String::shellQuote(name),
+		[&lines](const std::string line) { lines.push_back(line); });
+	const WifiText::ForgetOutcome outcome = WifiText::parseForget(lines);
+	if (result.second != 0 || !outcome.forgotten)
+		return false;
+	disconnected = outcome.disconnected;
+	return true;
+}
+
 std::string ApiSystem::getIpAddress()
 {
 	LOG(LogDebug) << "ApiSystem::getIpAddress";
@@ -2164,7 +2212,10 @@ std::pair<std::string, int> ApiSystem::executeScript(const std::string command, 
 		return std::pair<std::string, int>("Error starting command : " + shown, -1);
 	}
 
-	char line[1024];
+	// Zeroed: the pair's first member is built from this buffer after the
+	// loop, and a command that printed nothing -- wifictl current with no
+	// network joined -- used to hand it back uninitialised.
+	char line[1024] = "";
 	while (fgets(line, 1024, pipe))
 	{
 		strtok(line, "\n");
