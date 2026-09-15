@@ -165,6 +165,11 @@ std::string RetroAchievements::getLoginErrorMessage(HttpReq& req)
 	return req.getErrorMsg();
 }
 
+// How long a page waits on the web in all before the device's copy is shown
+// instead (fork #190): the connect limit alone (10 s) left a summary on a
+// dead link on PLEASE WAIT with no end on the RG SP.
+static const long PAGE_REQUEST_MS = 15000L;
+
 // Use empty UserAgent with doRequest.php calls
 static HttpReqOptions getHttpOptions()
 {
@@ -527,6 +532,9 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId
 	}
 
 	auto options = getHttpOptions();
+	// A page's request ends: the device's copy follows a web that did not
+	// answer in time (fork #190; the hash library keeps its unbounded fetch).
+	options.timeout = PAGE_REQUEST_MS;
 	HttpReq httpreq(getApiUrl("API_GetGameInfoAndUserProgress", "u=" + HttpReq::urlEncode(usrName) + "&g=" + std::to_string(gameId)), &options);
 	if (httpreq.wait())
 	{
@@ -629,6 +637,7 @@ UserSummary RetroAchievements::getUserSummary(const std::string& userName, int g
 	std::string count = std::to_string(gameCount);
 
 	auto options = getHttpOptions();
+	options.timeout = PAGE_REQUEST_MS;   // fork #190, as the game page
 	HttpReq httpreq(getApiUrl("API_GetUserSummary", "u="+ HttpReq::urlEncode(usrName) +"&g="+ count +"&a="+ count), &options);
 	if (httpreq.wait())
 	{
@@ -750,6 +759,7 @@ UserRankAndScore RetroAchievements::getUserRankAndScore(const std::string& userN
 		return ret;
 
 	auto options = getHttpOptions();
+	options.timeout = PAGE_REQUEST_MS;   // fork #190
 
 	HttpReq request(getApiUrl("API_GetUserRankAndScore", "u=" + HttpReq::urlEncode(usrName)), &options);
 	if (request.wait())
