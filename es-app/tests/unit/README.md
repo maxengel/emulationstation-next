@@ -17,7 +17,8 @@ parser, a label, a rule about a string, a schedule. Today `es-app/src/CloudText.
 (#186 PL-08, what the game index owes a game), `es-core/src/utils/TimeText.cpp`
 (#195, the time of day beside a save's date: the 12-hour switch and a locale
 with no AM/PM), `es-app/src/WifiText.cpp` (#191, the Wi-Fi rows' reading of what
-`wifictl` prints: the remembered networks, the joined one, a forget's outcome),
+`wifictl` prints: the saved networks, the joined one, a forget's outcome, and the
+rule for the line under WI-FI SSID),
 `Utils::String::maskSecrets` in `es-core/src/utils/StringUtil.cpp` (#177, the
 credential mask every logged command line goes through),
 `es-core/src/utils/OfflineProxyUrl.cpp` (#199, the offline proxy's address and

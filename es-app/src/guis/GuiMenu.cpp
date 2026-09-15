@@ -8878,31 +8878,56 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 
 // The line under WI-FI SSID: the network the device is joined to now, from
 // NetworkManager, asked off the interface thread as the IP address and the
-// internet status are (fork #191). wifi.ssid -- the value on the right, the
-// one the row edits -- is the network configured last, and once autoconnect
-// has joined a remembered network the two differ: the RG SP showed the
-// setting as though it were the connection (maintainer, 2026-09-15). Three
-// answers, kept apart: the network, NOT CONNECTED when the device is joined
-// to none, COULDN'T CHECK when NetworkManager did not answer -- a silence is
-// not "not connected". The row keeps its height, since the line goes in at
-// construction (CHECKING...) and only its words change.
-static void networkSettingsFillInSsid(Window* window, const std::shared_ptr<MultiLineMenuEntry>& ssidRow)
+// internet status are (fork #191) -- written only when it says something
+// the value on the right does not. wifi.ssid, the value, the one the row
+// edits, is the network configured last, and once autoconnect has joined a
+// remembered network the two differ: the RG SP showed the setting as though
+// it were the connection (maintainer, 2026-09-15). The same day, on seeing
+// the name twice in one row: "we don't need to list the Wi-Fi SSID under
+// the Wi-Fi SSID label ... It's redundant to have it in both places." So
+// the row is one line while the device is on the configured network and
+// grows a line for the answers worth one (WifiText::ssidLine): another
+// network, NOT CONNECTED when joined to none, COULDN'T CHECK when
+// NetworkManager did not answer -- a silence is not "not connected". The
+// page is re-laid when the row grows, as it is when an address arrives.
+static void networkSettingsFillInSsid(Window* window, GuiSettings* s, const std::shared_ptr<MultiLineMenuEntry>& ssidRow)
 {
+	std::weak_ptr<ComponentList> list = s->getMenu().getList();
 	std::weak_ptr<MultiLineMenuEntry> entry = ssidRow;
+	const std::string configured = SystemConf::getInstance()->get("wifi.ssid");
 	const std::string connectedTo = _("CONNECTED TO");
 	const std::string notConnected = _("NOT CONNECTED");
 	const std::string couldNotCheck = _("COULDN'T CHECK");
 
-	std::thread([window, entry, connectedTo, notConnected, couldNotCheck]
+	std::thread([window, s, list, entry, configured, connectedTo, notConnected, couldNotCheck]
 	{
-		std::string ssid;
-		const bool answered = ApiSystem::getInstance()->getCurrentWifiSsid(ssid);
-		const std::string text = !answered ? couldNotCheck : (ssid.empty() ? notConnected : connectedTo + " " + ssid);
-		window->postToUiThread([entry, text]
+		std::string joined;
+		const bool answered = ApiSystem::getInstance()->getCurrentWifiSsid(joined);
+		std::string text;
+		switch (WifiText::ssidLine(answered, joined, configured))
 		{
+		case WifiText::SsidLine::None:
+			return;
+		case WifiText::SsidLine::ConnectedTo:
+			text = connectedTo + " " + joined;
+			break;
+		case WifiText::SsidLine::NotConnected:
+			text = notConnected;
+			break;
+		case WifiText::SsidLine::CouldNotCheck:
+			text = couldNotCheck;
+			break;
+		}
+		window->postToUiThread([s, list, entry, text]
+		{
+			// The list goes with the page and nothing else holds it, so a
+			// lock on it says the page -- and s -- is still there.
 			auto row = entry.lock();
-			if (row != nullptr)
-				row->setDescription(text);
+			auto rows = list.lock();
+			if (row == nullptr || rows == nullptr)
+				return;
+			row->setDescription(text);
+			s->updateSize();
 		});
 	}).detach();
 }
@@ -9011,10 +9036,11 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		{
 			// The value on the right is wifi.ssid, the network configured
 			// last, and the row still edits it. The line under the label
-			// is the network the device is on now, from NetworkManager,
-			// which autoconnect can have made a different one (fork #191).
-			auto ssidRow = s->addInputTextConfigRowWithDescription(_("WI-FI SSID"), _("CHECKING..."), "wifi.ssid", false, false, &openWifiSettings);
-			networkSettingsFillInSsid(window, ssidRow);
+			// arrives only when the device is on another network, on none,
+			// or NetworkManager did not answer (fork #191); the row is one
+			// line until then, and stays one while the two names agree.
+			auto ssidRow = s->addInputTextConfigRowWithDescription(_("WI-FI SSID"), "", "wifi.ssid", false, false, &openWifiSettings);
+			networkSettingsFillInSsid(window, s, ssidRow);
 			s->addInputTextConfigRow(_("WI-FI KEY"), "wifi.key", true);
 
 #if !WIN32
@@ -9038,7 +9064,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 			// one. A page, not a line here: there is more than one thing to
 			// do behind it (es-player-text: a row that leads somewhere is a
 			// label).
-			s->addEntry(_("MANAGE NETWORKS"), true, [window] { GuiMenu::openManageNetworks(window); });
+			s->addEntry(_("MANAGE SAVED NETWORKS"), true, [window] { GuiMenu::openManageNetworks(window); });
 		}
 
 		if (ApiSystem::getInstance()->isWifiAPModeSupported())
@@ -9387,11 +9413,13 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	mWindow->pushGui(s);
 }
 
-// MANAGE NETWORKS (fork #191): the networks NetworkManager remembers -- one
-// profile per network the device has joined, autoconnected to whichever is
-// in range -- with the one in use marked, and A to forget one. Without this
-// page a network joined once was joined again on every boot it was in range
-// for, with nothing on the device to say so or to stop it.
+// MANAGE SAVED NETWORKS (fork #191): the networks NetworkManager saved --
+// one profile per network the device has joined, autoconnected to whichever
+// is in range -- with the one in use marked, and A to forget one. Without
+// this page a network joined once was joined again on every boot it was in
+// range for, with nothing on the device to say so or to stop it. "Saved" is
+// the maintainer's word for them (2026-09-15) and wifictl's; the page, its
+// group and its dialogs use no other.
 
 // The help bar says what A does here: FORGET, and only while there is a
 // network to forget -- a prompt for a key that does nothing is worse than
@@ -9400,7 +9428,7 @@ class GuiManageNetworks : public GuiSettings
 {
 public:
 	GuiManageNetworks(Window* window, bool hasNetworks)
-		: GuiSettings(window, _("MANAGE NETWORKS")), mHasNetworks(hasNetworks) { }
+		: GuiSettings(window, _("MANAGE SAVED NETWORKS")), mHasNetworks(hasNetworks) { }
 
 	std::vector<HelpPrompt> getHelpPrompts() override
 	{
@@ -9489,9 +9517,9 @@ static void manageNetworksAddRow(Window* window, GuiSettings* page, const WifiTe
 static void manageNetworksShow(Window* window, const std::vector<WifiText::SavedNetwork>& networks)
 {
 	auto page = new GuiManageNetworks(window, !networks.empty());
-	page->addGroup(_("REMEMBERED NETWORKS"));
+	page->addGroup(_("SAVED NETWORKS"));
 	if (networks.empty())
-		page->addEntry(_("NO REMEMBERED NETWORKS"), false);
+		page->addEntry(_("NO SAVED NETWORKS"), false);
 	for (const auto& network : networks)
 		manageNetworksAddRow(window, page, network);
 	window->pushGui(page);
@@ -9502,7 +9530,7 @@ void GuiMenu::openManageNetworks(Window* window)
 	// The list is one nmcli call, but over D-Bus to a NetworkManager that
 	// can stop answering (fork #102), so it is fetched behind the spinner
 	// with ApiSystem's bound rather than in a page's constructor. A list
-	// that could not be read is a dialog, not an empty page: NO REMEMBERED
+	// that could not be read is a dialog, not an empty page: NO SAVED
 	// NETWORKS is a fact about the device, and that would be a guess.
 	window->pushGui(new GuiLoading<std::pair<bool, std::vector<WifiText::SavedNetwork>>>(window, _("PLEASE WAIT"),
 		[](IGuiLoadingHandler*)
@@ -9515,8 +9543,8 @@ void GuiMenu::openManageNetworks(Window* window)
 		{
 			if (!result.first)
 			{
-				LOG(LogWarning) << "manage networks: the remembered networks could not be read";
-				window->pushGui(new GuiMsgBox(window, _("COULDN'T READ THE REMEMBERED NETWORKS. TRY AGAIN."), _("OK")));
+				LOG(LogWarning) << "manage networks: the saved networks could not be read";
+				window->pushGui(new GuiMsgBox(window, _("COULDN'T READ THE SAVED NETWORKS. TRY AGAIN."), _("OK")));
 				return;
 			}
 			manageNetworksShow(window, result.second);

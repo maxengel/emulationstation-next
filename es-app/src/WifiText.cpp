@@ -54,6 +54,17 @@ std::string WifiText::parseCurrent(const std::vector<std::string>& lines)
 	return "";
 }
 
+WifiText::SsidLine WifiText::ssidLine(bool answered, const std::string& joined, const std::string& configured)
+{
+	if (!answered)
+		return SsidLine::CouldNotCheck;
+	if (joined.empty())
+		return SsidLine::NotConnected;
+	if (joined == configured)
+		return SsidLine::None;
+	return SsidLine::ConnectedTo;
+}
+
 WifiText::ForgetOutcome WifiText::parseForget(const std::vector<std::string>& lines)
 {
 	ForgetOutcome outcome;
