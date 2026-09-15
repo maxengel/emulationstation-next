@@ -83,12 +83,17 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #    conflict resolution is read too; a line a merge carries in from a
   #    side branch is then reported twice, which costs nothing. The awk
   #    keeps the commit and file each added line came from; grep decides.
+  #    One exemption, as narrow as it reads: a line in a unit test that hands
+  #    its string to maskSecrets( is a fixture for the credential mask itself
+  #    (fork #177) and is credential-shaped on purpose; anything else in a
+  #    test file is still scanned.
   hits="$(git log --format='@@commit %h' -p --no-color --diff-merges=first-parent --diff-filter=AM "${range}" -- 2>/dev/null \
     | awk 'BEGIN { c = ""; f = "" }
            /^@@commit / { c = substr($0, 10); next }
            /^\+\+\+ b\// { f = substr($0, 7); next }
            /^\+\+\+ / { next }
            /^\+/ { print c ":" f ": " $0 }' \
+    | grep -v -E '^[0-9a-f]+:es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp: \+.*maskSecrets\(' \
     | grep -E "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -5 || true)"
   if [ -n "${hits}" ]; then
     echo "pre-push: ${where}: a commit in this push adds a credential-shaped line:" >&2
