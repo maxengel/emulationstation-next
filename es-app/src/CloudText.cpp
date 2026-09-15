@@ -373,6 +373,17 @@ Verb verbOf(const std::string& cmd)
 	return Verb::Other;
 }
 
+TransferKind transferKind(const std::string& cmd)
+{
+	if (cmd.find("--match") != std::string::npos)
+		return TransferKind::Match;
+	const bool restore = cmd.find("cloud_restore") != std::string::npos || cmd.find("cloud_content_restore") != std::string::npos;
+	const bool backup  = cmd.find("cloud_backup")  != std::string::npos || cmd.find("cloud_content_backup")  != std::string::npos;
+	if (restore && !backup) return TransferKind::Restore;
+	if (backup && !restore) return TransferKind::Backup;
+	return TransferKind::Other;
+}
+
 std::string chooseThatFits(const std::vector<std::string>& candidates, float width,
 	const std::function<float(const std::string&)>& measure)
 {

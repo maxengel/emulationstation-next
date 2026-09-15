@@ -196,6 +196,20 @@ namespace CloudText
 	enum class Verb { Sync, Backup, Restore, Other };
 	Verb verbOf(const std::string& cmd);
 
+	// Which transfer a page's command runs (fork #187): a match removes
+	// (--match), a restore brings down (cloud_restore, cloud_content_restore),
+	// a back up sends up (cloud_backup, cloud_content_backup). verbOf answers
+	// the card's question about the saves scripts and reads the content
+	// scripts as Other; this reads a whole composed command by the scripts
+	// it names, for the row that follows a run left in the background and
+	// for the launch gate's sentence over it. backuptool decides nothing: it
+	// appears in a settings restore (restore --then-cloud) and a settings
+	// backup alike, and the cloud script beside it says which. A command
+	// naming a restore and a backup script both is the card's sync, not a
+	// page's run, and Other.
+	enum class TransferKind { Backup, Restore, Match, Other };
+	TransferKind transferKind(const std::string& cmd);
+
 	// The first candidate that fits the width, else the last one offered.
 	// measure is the row's own font, handed in because a font is a GL
 	// resource and this has to stay free of one; an empty measure or a

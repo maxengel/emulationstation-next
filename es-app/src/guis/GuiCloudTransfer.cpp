@@ -3,6 +3,7 @@
 #include "CloudExit.h"
 #include "CloudOffer.h"
 #include "CloudText.h"
+#include "CloudTransferJob.h"
 #include "ThreadedCloudSync.h"
 #include "Window.h"
 #include "ThemeData.h"
@@ -17,17 +18,26 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <sys/wait.h>
 
 GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, const std::string& title,
 	int itemsExpected, int itemsAfterContent)
-	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
-	  mCommand(command), mTitleText(title),
-	  mItemsExpected(itemsExpected > 0 ? itemsExpected : 0), mItemsAfterContent(itemsAfterContent > 0 ? itemsAfterContent : 0),
-	  mHandle(nullptr)
+	: GuiCloudTransfer(window, CloudTransferJob::start(command, title, itemsExpected, itemsAfterContent))
 {
-	reset();
+	// start() hands back a run already in flight rather than starting a
+	// second (the scripts' flock would refuse it), so a page opened for one
+	// command may be showing another's run. It shows it truthfully -- the
+	// title is the run's -- and it must not take the command's completed
+	// action when that other run ends: a settings restore's restart (#114)
+	// fired by somebody else's backup finishing is the case this guards.
+	mOtherRun = mJob->command() != command;
+	if (mOtherRun)
+		LOG(LogWarning) << "GuiCloudTransfer: a run is already in flight; showing it in place of: " << command;
+}
 
+GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::shared_ptr<CloudTransferJob>& job)
+	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
+	  mJob(job), mOtherRun(false), mShownFinished(false), mShownPercent(-1)
+{
 	auto theme = ThemeData::getMenuTheme();
 	mBackground.setImagePath(theme->Background.path);
 	mBackground.setEdgeColor(theme->Background.color);
@@ -40,7 +50,7 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 
 	mTextFont  = theme->Text.font;
 	mSmallFont = theme->TextSmall.font;
-	mTitle    = std::make_shared<TextComponent>(window, Utils::String::toUpper(title), theme->Title.font, theme->Title.color, ALIGN_CENTER);
+	mTitle    = std::make_shared<TextComponent>(window, Utils::String::toUpper(mJob->title()), theme->Title.font, theme->Title.color, ALIGN_CENTER);
 	mStatus   = std::make_shared<TextComponent>(window, _("PREPARING..."), mTextFont,  theme->Text.color,      ALIGN_CENTER);
 	mCounter  = std::make_shared<TextComponent>(window, "",                mSmallFont, theme->TextSmall.color, ALIGN_CENTER);
 	mActivity = std::make_shared<TextComponent>(window, "",                mTextFont,  theme->Text.color,      ALIGN_CENTER);
@@ -147,87 +157,83 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 	mPanelSize = Vector2f(w + SW * 0.06f, H);
 	mPanelPos  = Vector2f(cx - mPanelSize.x() / 2.0f, top);
 	mBackground.fitTo(mPanelSize, Vector3f(mPanelPos.x(), mPanelPos.y(), 0), Vector2f(-32, -32));
-
-	mHandle = new std::thread(&GuiCloudTransfer::threadRun, this);
 }
 
+// Nothing to join: the run is the job's, and goes on without the page
+// (fork #187). The page that owned its worker made quitting the interface
+// wait on a restore, and could not be left while one ran.
 GuiCloudTransfer::~GuiCloudTransfer()
 {
-	if (mHandle != nullptr)
-	{
-		if (mHandle->joinable())
-			mHandle->join();
-		delete mHandle;
-	}
 }
 
+// Set before the page is pushed and read on the interface thread alone
+// (input, update, getHelpPrompts), so no lock: the run's mutex guards the
+// run's state, and this is the page's.
 void GuiCloudTransfer::setCompletedAction(const std::function<void()>& action, const std::string& helpVerb,
 	const std::string& footer, const std::string& note)
 {
-	std::unique_lock<std::mutex> lock(mMutex);
+	if (mOtherRun)
+	{
+		LOG(LogWarning) << "GuiCloudTransfer: completed action refused, the page shows another command's run";
+		return;
+	}
 	mCompletedAction = action;
 	mCompletedHelpVerb = helpVerb;
 	mCompletedFooter = footer;
 	mCompletedNote = note;
 }
 
-// The run's starting state. Called from the constructor, and again from
-// input() for TRY AGAIN once the finished worker has been joined -- so no
-// other thread reads these while they are set. The rows that only the done
-// state writes are cleared here too, since the running state never touches
-// them and a retry would otherwise start under last time's note.
-void GuiCloudTransfer::reset()
+void GuiCloudTransfer::clearDoneRows()
 {
-	mItemIndex = 0; mItemCount = mItemsExpected; mTrailing = mItemsAfterContent; mScriptBase = 0; mLastScriptIndex = 0;
-	mUnitBytes = 0; mUnitFiles = 0; mRunBytes = 0; mRunFiles = 0; mRunSized = false;
-	mRemovedFiles = 0; mRemovedBytes = 0; mRemovedDetail.clear(); mAnyTransferred = false;
-	mFilesThisBlock = 0; mSeenBlock = false;
-	mChecksDone = 0; mChecksTotal = 0; mListed = 0; mChecksThisBlock = 0;
-	mBytePercent = -1; mFilePercent = -1; mCheckPercent = -1; mPercent = -1;
-	mFinished = false; mExit = -1; mShownFinished = false; mShownPercent = -1;
-	mElapsedMs = 0;
-	mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear(); mUnitLabel.clear(); mDoing.clear(); mChecking.clear();
-	mTiers.clear(); mFailed.clear(); mPendingWhys.clear(); mUnitsSinceTier.clear(); mWhy.clear();
-	// TRY AGAIN runs the command again from this page, and the question the
-	// last run asked is the last run's: a retry that reached the cloud and
-	// found the folder there must not still end by offering to create it.
-	mOffer.clear(); mOfferArgs.clear();
 	if (mNote) mNote->setText("");
 	if (mCounter) mCounter->setText("");
 	if (mDetail) mDetail->setText("");
 }
 
-// Input is refused while the transfer runs -- there is nothing to choose, and
-// a stray press should not close a page somebody is waiting on. Once it has
-// finished the page waits for the person rather than the other way round: any
-// button dismisses it, and when the run did not complete, A runs the same
-// command again from this page -- the surface that reported the failure
-// carries the retry (D-CLOUD-077, D-UI-028). A question the run asked us to
-// put to the player is raised as the page goes, once the outcome has been
-// read (#145).
+// While the transfer runs, B closes the page and the run carries on in the
+// background (fork #187; the row on the CLOUD page follows it in its line,
+// and pressing that row opens this page on it again); every other press is
+// refused, since there is nothing to choose and a stray press should not
+// dismiss a page somebody is waiting on. Not B either on a page whose
+// completed run has an action in place of an exit (setCompletedAction): a
+// settings restore is replacing the configuration under this process, and
+// there is nowhere safe to go while it does. Once it has finished the page
+// waits for the person rather than the other way round: any button
+// dismisses it, and when the run did not complete, A runs the same command
+// again from this page -- the surface that reported the failure carries the
+// retry (D-CLOUD-077, D-UI-028). A question the run asked us to put to the
+// player is raised as the page goes, once the outcome has been read (#145).
 bool GuiCloudTransfer::input(InputConfig* config, Input input)
 {
-	std::unique_lock<std::mutex> lock(mMutex);
-	if (!mFinished || !input.value)
+	if (!input.value)
 		return true;
-	const Outcome o = outcome();
+	CloudTransferJob& job = *mJob;
+	std::unique_lock<std::mutex> lock(job.mMutex);
+	if (!job.mFinished)
+	{
+		if (leaveable() && config->isMappedTo(BUTTON_BACK, input))
+		{
+			lock.unlock();
+			delete this;
+		}
+		return true;
+	}
+	const Outcome o = outcome(job);
 	if (!o.completed && config->isMappedTo("a", input))
 	{
-		// The worker has set mFinished and is about to return, or has; join
-		// it before the counters it wrote are reset under it. mCommand is
+		// A new run of the same command; the finished one is let go, and the
+		// page shows the new run from its first line. The command is
 		// unchanged, so a backup that includes the settings archive
 		// re-archives on retry -- rotation keeps three, and stripping the
 		// parts that finished is not worth the complexity.
+		const std::string command = job.mCommand, title = job.mTitle;
+		const int items = job.mItemsExpected, after = job.mItemsAfterContent;
 		lock.unlock();
-		if (mHandle != nullptr)
-		{
-			if (mHandle->joinable())
-				mHandle->join();
-			delete mHandle;
-			mHandle = nullptr;
-		}
-		reset();
-		mHandle = new std::thread(&GuiCloudTransfer::threadRun, this);
+		mJob = CloudTransferJob::start(command, title, items, after);
+		clearDoneRows();
+		mShownFinished = false;
+		mShownPercent = -1;
+		updateHelpPrompts();
 		return true;
 	}
 	// A restore may have brought files into folders the lists scanned at
@@ -236,10 +242,10 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	// of it did: a saves restore that landed under a ROMs restore that did
 	// not still put screenshots where the lists cannot see them.
 	bool anyTierOk = false;
-	for (auto& t : mTiers)
+	for (auto& t : job.mTiers)
 		if (t.rc == 0 || t.rc == 9)
 			anyTierOk = true;
-	const bool restored = (o.completed || anyTierOk) && mCommand.find("restore") != std::string::npos;
+	const bool restored = (o.completed || anyTierOk) && job.mCommand.find("restore") != std::string::npos;
 	// A completed run with an action set has nowhere to go back to
 	// (setCompletedAction), so the press that would have closed the page
 	// takes the action instead. Copied out first: the page is gone by the
@@ -264,10 +270,13 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	std::vector<std::string> offerArgs;
 	if (o.completed && !completedAction)
 	{
-		offer = mOffer;
-		offerArgs = mOfferArgs;
+		offer = job.mOffer;
+		offerArgs = job.mOfferArgs;
 	}
 	lock.unlock();
+	// The outcome has been read: the run is no longer the CLOUD page's to
+	// report, and its row goes back to saying what it does (fork #187).
+	CloudTransferJob::dismiss(mJob);
 	Window* window = mWindow;
 	delete this;
 	if (completedAction)
@@ -284,17 +293,21 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 {
 	std::vector<HelpPrompt> prompts;
-	std::unique_lock<std::mutex> lock(mMutex);
-	if (mFinished)
+	CloudTransferJob& job = *mJob;
+	std::unique_lock<std::mutex> lock(job.mMutex);
+	if (!job.mFinished)
 	{
-		const Outcome o = outcome();
-		if (!o.completed)
-			prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
-		// The page's one exit says what it does: CLOSE, or the word the
-		// action was given (setCompletedAction).
-		prompts.push_back(HelpPrompt("b", o.completed && mCompletedAction && !mCompletedHelpVerb.empty()
-			? mCompletedHelpVerb : _("CLOSE")));
+		if (leaveable())
+			prompts.push_back(HelpPrompt(BUTTON_BACK, _("KEEP IT RUNNING IN THE BACKGROUND")));
+		return prompts;
 	}
+	const Outcome o = outcome(job);
+	if (!o.completed)
+		prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
+	// The page's one exit says what it does: CLOSE, or the word the
+	// action was given (setCompletedAction).
+	prompts.push_back(HelpPrompt(BUTTON_BACK, o.completed && mCompletedAction && !mCompletedHelpVerb.empty()
+		? mCompletedHelpVerb : _("CLOSE")));
 	return prompts;
 }
 
@@ -317,13 +330,13 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 // else; the why goes on line 4 with the items it stopped. A run with no
 // tier lines -- the match, or a command composed before they existed -- is
 // read from its exit code alone, as it always was.
-GuiCloudTransfer::Outcome GuiCloudTransfer::outcome() const
+GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 {
 	Outcome o;
-	o.completed = completed();
+	o.completed = job.mExit == 0 || job.mExit == 9;
 	bool anyOk = false, anyBad = false, anyUnitOk = false;
 	int onlyCode = -2;   // the one code every failed tier shares, or -1 when they differ
-	for (auto& t : mTiers)
+	for (auto& t : job.mTiers)
 	{
 		const bool ok = t.rc == 0 || t.rc == 9;
 		anyOk = anyOk || ok;
@@ -335,9 +348,9 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome() const
 			onlyCode = onlyCode == -2 ? t.rc : onlyCode == t.rc ? onlyCode : -1;
 		}
 	}
-	const bool match = mCommand.find("--match") != std::string::npos;
-	o.partial = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && mRemovedFiles > 0));
-	const int code = mTiers.empty() ? mExit : onlyCode;
+	const bool match = job.mCommand.find("--match") != std::string::npos;
+	o.partial = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && job.mRemovedFiles > 0));
+	const int code = job.mTiers.empty() ? job.mExit : onlyCode;
 	o.skipped = !o.completed && !o.partial && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
 	if (o.completed)
 		o.word = _("COMPLETED");
@@ -350,6 +363,63 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome() const
 	else
 		o.word = _("COULDN'T FINISH");
 	return o;
+}
+
+// The verb's word for a run, from its command (CloudText::transferKind), in
+// the running form the cards use (BACKING UP SAVES, SYNCING SAVES...): the
+// head of the row's line while the run is in the background.
+std::string GuiCloudTransfer::verbWord(const CloudTransferJob& job)
+{
+	switch (CloudText::transferKind(job.mCommand))
+	{
+		case CloudText::TransferKind::Backup:  return _("BACKING UP...");
+		case CloudText::TransferKind::Restore: return _("RESTORING...");
+		case CloudText::TransferKind::Match:   return _("MATCHING...");
+		default:                               return _("WORKING...");
+	}
+}
+
+// "BACKING UP... - ITEM 2 OF 4", and the item, in the words this page's
+// rows 1 and 2 use, so the row and the page say the same thing about the
+// same run. Never an OF with nothing on either side: while the count is
+// unknown the row reads ITEM i alone, as the page does.
+GuiCloudTransfer::RowWords GuiCloudTransfer::rowWords(const std::shared_ptr<CloudTransferJob>& job)
+{
+	RowWords w;
+	if (job == nullptr)
+		return w;
+	std::unique_lock<std::mutex> lock(job->mMutex);
+	w.word = verbWord(*job);
+	w.counted = w.word;
+	if (job->mItemIndex > 0)
+	{
+		w.counted += " - " + std::string(_("ITEM")) + " " + std::to_string(job->mItemIndex);
+		if (job->mItemCount > 0)
+			w.counted += " " + std::string(_("OF")) + " " + std::to_string(job->mItemCount);
+		w.item = Utils::String::toUpper(job->mUnitLabel);
+	}
+	return w;
+}
+
+std::string GuiCloudTransfer::outcomeWord(const std::shared_ptr<CloudTransferJob>& job)
+{
+	if (job == nullptr)
+		return "";
+	std::unique_lock<std::mutex> lock(job->mMutex);
+	return outcome(*job).word;
+}
+
+std::string GuiCloudTransfer::stillRunningSentence(const std::shared_ptr<CloudTransferJob>& job)
+{
+	if (job == nullptr)
+		return "";
+	switch (CloudText::transferKind(job->command()))
+	{
+		case CloudText::TransferKind::Backup:  return _("YOUR BACKUP TO THE CLOUD IS STILL RUNNING.");
+		case CloudText::TransferKind::Restore: return _("YOUR RESTORE FROM THE CLOUD IS STILL RUNNING.");
+		case CloudText::TransferKind::Match:   return _("THIS DEVICE IS STILL BEING MATCHED TO THE CLOUD.");
+		default:                               return _("YOUR CLOUD TRANSFER IS STILL RUNNING.");
+	}
 }
 
 void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
@@ -372,7 +442,7 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 		t->render(trans);
 
 	// The bar is drawn from the snapshot update() took under the lock, along
-	// with the text above it -- not from mPercent, which the worker may have
+	// with the text above it -- not from the run's percent, which its worker may have
 	// moved on since. One block per frame, for every row and the bar alike.
 	if (!mShownFinished)
 	{
@@ -428,31 +498,9 @@ std::string GuiCloudTransfer::sizeLabel(unsigned long bytes)
 	return CloudText::sizeLabel(bytes);
 }
 
-long GuiCloudTransfer::parseBytes(const std::string& field)
-{
-	return CloudText::parseBytes(field);
-}
-
 std::string GuiCloudTransfer::roundSizes(const std::string& f)
 {
 	return CloudText::roundSizes(f);
-}
-
-// The unit's last "Transferred:" pair becomes the run's. Called with mMutex
-// held: at the next ">>> unit", when the command exits, and when the byte
-// counter drops -- rclone's never does within one invocation, so a drop
-// means a second one started inside the unit, and what the first moved is
-// banked before its numbers are replaced. A drop of the count line folds
-// the files alone, in handleLine: the byte line of the same block comes
-// first and has settled the bytes by then, and folding both again here
-// banked the new rclone's first bytes twice whenever the old one had moved
-// nothing but empty files (review, 2026-09-08).
-void GuiCloudTransfer::foldUnit()
-{
-	mRunBytes += mUnitBytes;
-	mRunFiles += mUnitFiles;
-	mUnitBytes = 0;
-	mUnitFiles = 0;
 }
 
 // rclone's fragments in the player's units, precision and separators:
@@ -519,27 +567,32 @@ void GuiCloudTransfer::update(int deltaTime)
 {
 	GuiComponent::update(deltaTime);
 	mBusyAnim.update(deltaTime);
-	std::unique_lock<std::mutex> lock(mMutex);
+	CloudTransferJob& job = *mJob;
+	std::unique_lock<std::mutex> lock(job.mMutex);
 	// One snapshot per frame for the bar (render() draws from it) and the
-	// rows below, so they cannot show two different stats blocks.
-	mShownFinished = mFinished;
-	mShownPercent  = mPercent;
-	if (!mFinished)
-		mElapsedMs += deltaTime;
-	const int mins = mElapsedMs / 60000;
-	const int secs = (mElapsedMs / 1000) % 60;
+	// rows below, so they cannot show two different stats blocks. The help
+	// bar changes with the page -- TRY AGAIN and CLOSE once it is done --
+	// and is refreshed after the lock: getHelpPrompts takes it too.
+	const bool justFinished = job.mFinished && !mShownFinished;
+	mShownFinished = job.mFinished;
+	mShownPercent  = job.mPercent;
+	// The run's clock, not a page's: this page may be the second one opened
+	// on the run, and elapsed is how long the run has been going.
+	const int elapsedMs = job.elapsedMsLocked();
+	const int mins = elapsedMs / 60000;
+	const int secs = (elapsedMs / 1000) % 60;
 	char elapsed[32];
 	snprintf(elapsed, sizeof(elapsed), "%d:%02d", mins, secs);
 
-	if (mFinished)
+	if (job.mFinished)
 	{
 		// Seven lines, the same rows as the run (D-UI-024/026), now carrying
 		// the outcome (D-UI-028): 1 the word; 2 how many items did not finish,
 		// when partial; 3 what moved; 4 the items that did not finish and why; 5
 		// what is in place, or what to do next; 6 elapsed; 7 the buttons.
-		const Outcome o = outcome();
-		const bool restore = mCommand.find("restore") != std::string::npos;
-		const bool match = mCommand.find("--match") != std::string::npos;
+		const Outcome o = outcome(job);
+		const bool restore = job.mCommand.find("restore") != std::string::npos;
+		const bool match = job.mCommand.find("--match") != std::string::npos;
 		mStatus->setText(fitOneLine(mTextFont, o.word, mLineWidth));
 
 		// 2. When partial, the count: N distinct items that did not finish of the
@@ -549,36 +602,36 @@ void GuiCloudTransfer::update(int deltaTime)
 		if (o.partial)
 		{
 			std::vector<std::string> names;
-			for (auto& f : mFailed)
+			for (auto& f : job.mFailed)
 				if (std::find(names.begin(), names.end(), f.label) == names.end())
 					names.push_back(f.label);
 			const int n = (int) names.size();
-			const int m = std::max(std::max(mItemCount, mItemIndex), n);
+			const int m = std::max(std::max(job.mItemCount, job.mItemIndex), n);
 			counter = std::to_string(n) + " " + std::string(_("OF")) + " " + std::to_string(m) + " "
 				+ std::string(n == 1 && m == 1 ? _("ITEM DID NOT FINISH") : _("ITEMS DID NOT FINISH"));
 		}
 		mCounter->setText(fitOneLine(mSmallFont, counter, mLineWidth));
 
 		// 3 and 4: what moved, and what did not.
-		if (mRemovedFiles > 0)
+		if (job.mRemovedFiles > 0)
 		{
 			// A match is mostly deletion, and rclone's totals for a deletion
 			// are "0 B / 0 B" -- true and useless. Line 3 carries what the
 			// confirmation showed instead: what went. Line 4 is per system
 			// when the match completed, and the items it did not reach when
 			// it was cut (below).
-			std::string removed = std::string(_("REMOVED")) + " " + std::to_string(mRemovedFiles) + " "
-				+ std::string(mRemovedFiles == 1 ? _("FILE FROM THIS DEVICE") : _("FILES FROM THIS DEVICE"));
-			if (mRemovedBytes > 0)
-				removed += " · " + sizeLabel(mRemovedBytes);
+			std::string removed = std::string(_("REMOVED")) + " " + std::to_string(job.mRemovedFiles) + " "
+				+ std::string(job.mRemovedFiles == 1 ? _("FILE FROM THIS DEVICE") : _("FILES FROM THIS DEVICE"));
+			if (job.mRemovedBytes > 0)
+				removed += " · " + sizeLabel(job.mRemovedBytes);
 			mActivity->setText(fitOneLine(mTextFont, removed, mLineWidth));
 			if (o.completed)
 			{
 				std::string detail;
-				for (auto& d : mRemovedDetail)
+				for (auto& d : job.mRemovedDetail)
 					detail += (detail.empty() ? "" : "   ") + d;
 				mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
-				if (mAnyTransferred)
+				if (job.mAnyTransferred)
 					mCounter->setText(fitOneLine(mSmallFont, _("FILES YOUR CLOUD HAD AND THIS DEVICE DIDN'T CAME DOWN TOO."), mLineWidth));
 			}
 		}
@@ -599,16 +652,16 @@ void GuiCloudTransfer::update(int deltaTime)
 			// its files and no size, rather than claim as BACKED UP bytes
 			// that were not.
 			std::string summary;
-			const bool sized = o.completed && mRunBytes > 0;
-			if (mRunSized && (mRunFiles > 0 || sized))
+			const bool sized = o.completed && job.mRunBytes > 0;
+			if (job.mRunSized && (job.mRunFiles > 0 || sized))
 			{
-				if (mRunFiles > 0)
-					summary = std::to_string(mRunFiles) + " " + std::string(mRunFiles == 1 ? _("FILE") : _("FILES"));
+				if (job.mRunFiles > 0)
+					summary = std::to_string(job.mRunFiles) + " " + std::string(job.mRunFiles == 1 ? _("FILE") : _("FILES"));
 				if (sized)
-					summary += (summary.empty() ? "" : " · ") + sizeLabel((unsigned long) mRunBytes);
+					summary += (summary.empty() ? "" : " · ") + sizeLabel((unsigned long) job.mRunBytes);
 				summary += " " + std::string(restore ? _("RESTORED") : _("BACKED UP"));
 			}
-			else if (mRunSized && o.completed)
+			else if (job.mRunSized && o.completed)
 			{
 				// Nothing moved and the run succeeded: everything was there
 				// already. On a failure the same zero means something else,
@@ -633,7 +686,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			// there is to say about every part, and a list of them under it
 			// would read as a list of failures.
 			std::vector<std::pair<std::string, std::vector<std::string>>> groups;
-			for (auto& f : mFailed)
+			for (auto& f : job.mFailed)
 			{
 				auto g = groups.begin();
 				for (; g != groups.end(); ++g)
@@ -662,21 +715,21 @@ void GuiCloudTransfer::update(int deltaTime)
 		// content run that changed the ROMs on this device is not visible in
 		// the game lists until they are rebuilt, and nobody should have to
 		// know that (maintainer, 2026-09-07).
-		const bool contentRun = mCommand.find("cloud_content_restore") != std::string::npos;
+		const bool contentRun = job.mCommand.find("cloud_content_restore") != std::string::npos;
 		std::string note;
 		if (!o.completed)
 		{
-			const bool moved = mAnyTransferred || mRunFiles > 0;
+			const bool moved = job.mAnyTransferred || job.mRunFiles > 0;
 			if (match)
-				note = mRemovedFiles == 0 ? _("NOTHING WAS REMOVED FROM THIS DEVICE.")
-					: mRemovedFiles == 1 ? _("1 FILE WAS REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS IT.")
-					: std::to_string(mRemovedFiles) + " " + std::string(_("FILES WERE REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS THEM."));
+				note = job.mRemovedFiles == 0 ? _("NOTHING WAS REMOVED FROM THIS DEVICE.")
+					: job.mRemovedFiles == 1 ? _("1 FILE WAS REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS IT.")
+					: std::to_string(job.mRemovedFiles) + " " + std::string(_("FILES WERE REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS THEM."));
 			else if (restore)
 				note = moved ? _("WHAT MADE IT IS ON THIS DEVICE. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
 			else
 				note = moved ? _("WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.") : _("DON'T WORRY, NOTHING CHANGED.");
 		}
-		else if (contentRun && (mRemovedFiles > 0 || mAnyTransferred))
+		else if (contentRun && (job.mRemovedFiles > 0 || job.mAnyTransferred))
 			note = _("UPDATE GAMELISTS UNDER GAME SETTINGS TO SEE THE CHANGE.");
 		// A completed run whose only exit is an action says what that
 		// action does here, where a run that finished cleanly otherwise has
@@ -705,18 +758,18 @@ void GuiCloudTransfer::update(int deltaTime)
 		// systems read ITEM 1 OF 4 through ITEM 4 OF 4 whichever script is
 		// speaking. Never an OF with nothing on either side: while the count
 		// is unknown the row reads ITEM i alone.
-		if (mItemIndex == 0)
+		if (job.mItemIndex == 0)
 		{
 			mStatus ->setText(_("PREPARING..."));
 			mCounter->setText("");
 		}
 		else
 		{
-			const std::string item = Utils::String::toUpper(mUnitLabel);
+			const std::string item = Utils::String::toUpper(job.mUnitLabel);
 			mStatus->setText(item.empty() ? _("WORKING...") : fitOneLine(mTextFont, item, mLineWidth));
-			std::string counter = std::string(_("ITEM")) + " " + std::to_string(mItemIndex);
-			if (mItemCount > 0)
-				counter += " " + std::string(_("OF")) + " " + std::to_string(mItemCount);
+			std::string counter = std::string(_("ITEM")) + " " + std::to_string(job.mItemIndex);
+			if (job.mItemCount > 0)
+				counter += " " + std::string(_("OF")) + " " + std::to_string(job.mItemCount);
 			mCounter->setText(counter);
 		}
 
@@ -724,7 +777,7 @@ void GuiCloudTransfer::update(int deltaTime)
 		// A thousand small BIOS files spend minutes between percentage
 		// changes, and a frozen percentage is indistinguishable from a hang.
 		std::string doing;
-		if (!mCurrent.empty())
+		if (!job.mCurrent.empty())
 		{
 			// "TRANSFERRING name.zip . 45% OF 2.5 MB . 300 KB/S . AND 3 MORE
 			// FILES": a single space inside a segment and " . " between them,
@@ -734,10 +787,10 @@ void GuiCloudTransfer::update(int deltaTime)
 			// before the file's own progress, and last the name alone is
 			// clipped -- half a percentage after an ellipsis says nothing,
 			// and line 4 carries the item's percentage regardless.
-			const std::string head     = std::string(_("TRANSFERRING")) + " " + mCurrent;
-			const std::string progress = mFileProgress.empty() ? "" : " · " + prettyRclone(mFileProgress);
-			const std::string more     = mFilesThisBlock > 1
-				? " · " + std::string(_("AND")) + " " + std::to_string(mFilesThisBlock - 1) + " " + std::string(_("MORE FILES")) : "";
+			const std::string head     = std::string(_("TRANSFERRING")) + " " + job.mCurrent;
+			const std::string progress = job.mFileProgress.empty() ? "" : " · " + prettyRclone(job.mFileProgress);
+			const std::string more     = job.mFilesThisBlock > 1
+				? " · " + std::string(_("AND")) + " " + std::to_string(job.mFilesThisBlock - 1) + " " + std::string(_("MORE FILES")) : "";
 			const auto fits = [this](const std::string& t) { return mTextFont && mTextFont->sizeText(t).x() <= mLineWidth; };
 			if (fits(head + progress + more))
 				doing = head + progress + more;
@@ -746,7 +799,7 @@ void GuiCloudTransfer::update(int deltaTime)
 			else
 				doing = fitOneLine(mTextFont, head, mLineWidth);   // unchanged when it fits, clipped when it does not
 		}
-		else if (mChecksTotal > 0 || mListed > 0)
+		else if (job.mChecksTotal > 0 || job.mListed > 0)
 		{
 			// Nothing in flight, plenty happening: rclone is comparing what
 			// is here with what is there, and for a device whose saves are
@@ -760,20 +813,20 @@ void GuiCloudTransfer::update(int deltaTime)
 			// as 80 -- so it is not shown as a number the player would try
 			// to reconcile with their files; the spinner on row 5 is the sign
 			// of life until the first check is queued.
-			if (mChecksTotal > 0)
-				doing = std::string(_("CHECKING")) + " " + std::to_string(mChecksDone) + " " + std::string(_("OF")) + " "
-					+ std::to_string(mChecksTotal) + " " + std::string(_("FILES"));
+			if (job.mChecksTotal > 0)
+				doing = std::string(_("CHECKING")) + " " + std::to_string(job.mChecksDone) + " " + std::string(_("OF")) + " "
+					+ std::to_string(job.mChecksTotal) + " " + std::string(_("FILES"));
 			else
 				doing = _("CHECKING FILES...");
 			// the name is the line's one optional segment, and the first to go
-			if (!mChecking.empty())
+			if (!job.mChecking.empty())
 			{
-				const std::string named = doing + " · " + mChecking;
+				const std::string named = doing + " · " + job.mChecking;
 				if (mTextFont && mTextFont->sizeText(named).x() <= mLineWidth)
 					doing = named;
 			}
 		}
-		else if (mDoing == "archive")
+		else if (job.mDoing == "archive")
 		{
 			// backuptool is writing the settings archive and prints nothing
 			// this page can use, so ES announces it (">>> doing archive") and
@@ -781,523 +834,52 @@ void GuiCloudTransfer::update(int deltaTime)
 			// rather than sitting on a spinner (maintainer, 2026-09-09).
 			doing = _("PACKING UP YOUR SETTINGS...");
 		}
-		else if (mDoing == "unpack")
+		else if (job.mDoing == "unpack")
 		{
 			// The same item on the way back: backuptool is extracting the
 			// archive over the live configuration, and says nothing this
 			// page can use either (">>> doing unpack", #114).
 			doing = _("PUTTING YOUR SETTINGS BACK...");
 		}
-		else if (mItemIndex > 0)
+		else if (job.mItemIndex > 0)
 			doing = _("WORKING...");
 		mActivity->setText(doing);
 
 		// 4: this item's totals -- the count line and the byte line of the
 		// last stats block. "12 / 45, 27%" -> "12 OF 45 FILES . 27%".
 		std::string totals;
-		if (!mFilesTotals.empty())
+		if (!job.mFilesTotals.empty())
 		{
-			auto pct = mFilesTotals.find(", ");
-			totals = Utils::String::replace(mFilesTotals.substr(0, pct), " / ", " " + std::string(_("OF")) + " ") + " " + std::string(_("FILES"));
+			auto pct = job.mFilesTotals.find(", ");
+			totals = Utils::String::replace(job.mFilesTotals.substr(0, pct), " / ", " " + std::string(_("OF")) + " ") + " " + std::string(_("FILES"));
 			if (pct != std::string::npos)
-				totals += " · " + mFilesTotals.substr(pct + 2);
+				totals += " · " + job.mFilesTotals.substr(pct + 2);
 		}
 		// "0 B / 0 B, -, 0 B/s, ETA -" is the byte line while nothing is queued
 		// to move -- the whole of a run that only compares -- and it is true of
 		// nothing anybody asked about. Line 3 says what such a run is doing;
 		// this line stays blank rather than read "0 B OF 0 B . 0 B/S".
-		if (!mTotals.empty() && mTotals.rfind("0 B / 0 B", 0) != 0)
-			totals += (totals.empty() ? "" : "   ") + prettyRclone(mTotals);
+		if (!job.mTotals.empty() && job.mTotals.rfind("0 B / 0 B", 0) != 0)
+			totals += (totals.empty() ? "" : "   ") + prettyRclone(job.mTotals);
 		mDetail->setText(fitOneLine(mSmallFont, totals, mLineWidth));
 
 		mElapsed->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		mFooter ->setText(_("THIS CAN TAKE A WHILE. YOU CAN LEAVE IT RUNNING."));
+		// 7. That the page can be left, and how: the longest form that fits
+		// the line (D-UI-035), so a 640x480 panel keeps the sentence to one
+		// row. A page that cannot be left (setCompletedAction) says only
+		// that it takes a while -- the old footer said the player could
+		// leave it running while the page took every button.
+		if (leaveable())
+		{
+			std::shared_ptr<Font> font = mSmallFont;
+			mFooter->setText(CloudText::chooseThatFits(
+				{ _("THIS CAN TAKE A WHILE. PRESS B TO KEEP IT RUNNING IN THE BACKGROUND."), _("PRESS B TO KEEP IT RUNNING IN THE BACKGROUND.") },
+				mLineWidth, [font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; }));
+		}
+		else
+			mFooter->setText(_("THIS CAN TAKE A WHILE."));
 	}
-}
-
-void GuiCloudTransfer::handleLine(const std::string& line)
-{
-	std::unique_lock<std::mutex> lock(mMutex);
-
-	// "Transferred:   \t 1.4 GiB / 2.0 GiB, 70%, 2.5 MiB/s, ETA 3m2s"
-	//
-	// It appears twice per block: once for bytes, once for the file count
-	// ("0 / 6, 0%"). The byte one is the one carrying a unit, which is also
-	// the one somebody wants -- a count of files says nothing about how long
-	// this will take when the files are a save game and a disc image.
-	//
-	// The scripts talk to this page through the ">>> " markers on stdout:
-	//
-	//   ">>> unit <label>|<i>|<n>" -- an item starts: a system ("nes|2|5")
-	//     or a phase ("SAVES||", "SETTINGS||"). Everything per-block is reset
-	//     with it; the label survives. The page numbers items across the
-	//     whole run itself (row 2, ITEM i OF n; D-UI-026), because one run
-	//     chains several scripts and each counts only its own units: a label
-	//     that differs from the current one is the next item, the same label
-	//     again is a re-announcement and does not advance (ES announces
-	//     SETTINGS before backuptool runs, then cloud_backup announces it
-	//     again). The script's own i|n are read for one thing: an
-	//     announcement carrying n says how many units that script has, so
-	//     n = the items counted before that script's first announcement
-	//     + its n + the single-item phases ES chained after it (mTrailing).
-	//     Until a script says, n is ES's estimate from the constructor; 0 is
-	//     unknown and row 2 reads ITEM i alone. i never exceeds n on the
-	//     page. A script whose i starts over, or that carries a count after
-	//     one that did not, is a new script.
-	//   ">>> doing <keyword>" -- what the item is busy with while rclone is
-	//     not running yet. "archive": backuptool is writing the settings
-	//     archive (its own output is discarded), and row 3 says so until the
-	//     next per-file, checks or totals line, or the next unit. "unpack":
-	//     the same tool putting one back. Any other keyword is a newer
-	//     script's and is ignored rather than shown raw.
-	//   ">>> removed <files>|<bytes>|<per-system>" -- a match's summary, for
-	//     the done page (below). A match cut off by the network prints it
-	//     before exiting 69, so the page can say what had already gone.
-	//   ">>> why <sentence>" -- a script saying, at the point of failure and
-	//     in the player's words, what went wrong (D-UI-028). Attached to the
-	//     unit it arrived under; before any unit, to the tier that reports
-	//     next. The last one is the run's why for a command with no tiers.
-	//   ">>> tier <label>|<rc>" -- GuiMenu's run composition reporting each
-	//     of its parts as it ends (SAVES, ROMS AND BIOS, SETTINGS), so the
-	//     done page can say which finished and which did not.
-	//   ">>> offer <name>|<arg>|..." -- a question the script wants put to
-	//     the player, and cannot put itself. Kept until the page is
-	//     dismissed and raised then (input); the words are CloudOffer's,
-	//     shared with the card.
-	//
-	// Which line is which is CloudText::classifyProtocolLine -- the one
-	// parser both cloud surfaces read this protocol with -- and what each
-	// kind does to this page stays here.
-	//
-	// It used to be a second parser living in this function, which knew
-	// ">>> unit" and ">>> removed" and had never heard of ">>> offer": so
-	// the empty-cloud question (#100, #127) was put to the player by the
-	// card and not by this page, on the very route a freshly set-up
-	// handheld takes (#145).
-	//
-	// Nothing carrying ">>> " is rclone's, so nothing carrying ">>> "
-	// reaches the rclone parsers below -- a marker newer than this build
-	// included. It is dropped deliberately here rather than left to fall
-	// through to matchers that were never asked about it.
-	const CloudText::ProtocolLine protocol = CloudText::classifyProtocolLine(line);
-	if (protocol.kind != CloudText::ProtocolKind::NotProtocol)
-	{
-		switch (protocol.kind)
-		{
-		case CloudText::ProtocolKind::Why:
-		{
-			// An empty why is a why line with nothing in it: the one this
-			// page already had stands, and no item is blamed for it.
-			if (protocol.text.empty())
-				break;
-			mWhy = protocol.text;
-			mPendingWhys.push_back({ Utils::String::toUpper(mUnitLabel), protocol.text });
-			break;
-		}
-		case CloudText::ProtocolKind::Tier:
-		{
-			Tier t;
-			t.label = protocol.text;
-			t.rc = protocol.number;
-			t.unitsAnnounced = (int) mUnitsSinceTier.size();
-			t.unitsFailed = 0;
-			t.tierLevelFail = false;
-			// A tier with no label is no tier: nothing is recorded, and the
-			// whys waiting under it stay waiting for one that has a name.
-			if (t.label.empty())
-				break;
-			const bool ok = t.rc == 0 || t.rc == 9;
-			if (!ok)
-			{
-				std::vector<std::string> named;
-				for (auto& w : mPendingWhys)
-				{
-					// A why printed before any unit is the tier's own; the tier
-					// as a whole is the item that did not finish.
-					const std::string label = w.label.empty() ? t.label : w.label;
-					if (w.label.empty())
-						t.tierLevelFail = true;
-					else if (std::find(named.begin(), named.end(), w.label) == named.end())
-						named.push_back(w.label);
-					// The last why for an item wins; the scripts may say more
-					// than one thing about the same unit as they give up on it.
-					bool seen = false;
-					for (auto& f : mFailed)
-						if (f.label == label) { f.why = w.why; seen = true; }
-					if (!seen)
-						mFailed.push_back({ label, w.why });
-				}
-				t.unitsFailed = (int) named.size();
-				// A part that failed without a word: the part is the item, and
-				// the code supplies the why. Its units are not presumed to have
-				// finished, because nothing said they did.
-				if (mPendingWhys.empty())
-				{
-					t.tierLevelFail = true;
-					mFailed.push_back({ t.label, ThreadedCloudSync::whyForCode(t.rc) });
-				}
-			}
-			mTiers.push_back(t);
-			mPendingWhys.clear();
-			mUnitsSinceTier.clear();
-			break;
-		}
-		case CloudText::ProtocolKind::Removed:
-		{
-			mRemovedFiles = protocol.files;
-			mRemovedBytes = protocol.bytes;
-			mRemovedDetail.clear();
-			for (auto& sys : protocol.systems)
-			{
-				std::string d = sys.system + " " + sys.files + " " + std::string(sys.files == "1" ? _("FILE") : _("FILES"));
-				if (sys.bytes > 0)
-					d += " · " + sizeLabel((unsigned long) sys.bytes);
-				mRemovedDetail.push_back(d);
-			}
-			break;
-		}
-		case CloudText::ProtocolKind::Unit:
-		{
-			foldUnit();   // the unit that just ended: its last totals are the run's now
-			const std::string label = protocol.text;
-			const int scriptIndex   = protocol.number;
-			const int scriptCount   = protocol.count;
-			// The next item, unless it is the current one announced again. The
-			// first announcement is an item whatever its label says.
-			if (mItemIndex == 0 || label != mUnitLabel)
-			{
-				if (scriptCount > 0 && (mLastScriptIndex == 0 || scriptIndex <= mLastScriptIndex))
-					mScriptBase = mItemIndex;   // a script's first announcement: what came before it is its base
-				mItemIndex++;
-				mUnitsSinceTier.push_back(Utils::String::toUpper(label));
-			}
-			mLastScriptIndex = scriptCount > 0 ? scriptIndex : 0;
-			if (scriptCount > 0)
-				mItemCount = mScriptBase + scriptCount + mTrailing;
-			// Never ITEM 5 OF 4: a script that announced more than anybody
-			// expected grows the count rather than overrun it.
-			if (mItemCount > 0 && mItemIndex > mItemCount)
-				mItemCount = mItemIndex;
-			mUnitLabel = label;
-			mDoing.clear();
-			mCurrent.clear(); mFileProgress.clear(); mTotals.clear(); mFilesTotals.clear(); mChecking.clear();
-			mFilesThisBlock = 0; mChecksThisBlock = 0; mSeenBlock = false;
-			mChecksDone = 0; mChecksTotal = 0; mListed = 0;
-			mBytePercent = -1; mFilePercent = -1; mCheckPercent = -1; mPercent = -1;
-			break;
-		}
-		case CloudText::ProtocolKind::Doing:
-			// Any keyword a newer script prints is ignored rather than shown
-			// raw: row 3 says what the item is doing in the player's words,
-			// and a word out of a script is not those.
-			if (protocol.text == "archive" || protocol.text == "unpack")
-				mDoing = protocol.text;
-			break;
-		case CloudText::ProtocolKind::Offer:
-			// A question for the player, kept until the run is over and the
-			// outcome has been read: while the page is running, the run is
-			// all it has to say (#145, and input() raises it).
-			mOffer = protocol.text;
-			mOfferArgs = protocol.args;
-			break;
-		default:
-			// Pid is the card's, for the process group it may have to
-			// signal; this page's run is not cancelled for a launch.
-			// Unknown is a marker newer than this build.
-			break;
-		}
-		return;
-	}
-
-	// From here on the line is rclone's, so whatever the item was busy with
-	// before rclone ran is over.
-	if (line.rfind("Transferred:", 0) == 0)
-	{
-		std::string body = Utils::String::trim(line.substr(12));
-		if (body.find('/') == std::string::npos)
-			return;
-		mDoing.clear();
-		if (body.find("iB") == std::string::npos && body.find(" B") == std::string::npos)
-		{
-			mFilesTotals = body;   // the count line of the block: "12 / 45, 27%"
-			mFilePercent = parsePercent(body);
-			refreshPercent();
-			// "12 / 45" -- twelve files done so far in this unit; it only
-			// grows, so a smaller number is a new rclone inside the unit.
-			// Files only -- the bytes were settled by this block's byte line,
-			// which comes first (foldUnit).
-			const long files = atol(body.c_str());
-			if (files < mUnitFiles)
-				mRunFiles += mUnitFiles;
-			mUnitFiles = files;
-			return;
-		}
-
-		mTotals = body;
-		if (body.rfind("0 B /", 0) != 0)
-			mAnyTransferred = true;
-		// "80 KiB / 300 KiB" -- what this unit has moved so far, read from the
-		// first field. Recorded only when it parsed; a byte line that was
-		// seen at all is what lets the done page show any number.
-		const long bytes = parseBytes(body.substr(0, body.find('/')));
-		if (bytes >= 0)
-		{
-			mRunSized = true;
-			if (bytes < mUnitBytes)
-				foldUnit();
-			mUnitBytes = bytes;
-		}
-		// A block that carried no per-file line had nothing in flight -- the
-		// unit's files are done or being checked -- so the name row does not
-		// keep showing a file that finished a block ago. The same for a name
-		// caught mid-comparison.
-		if (mSeenBlock && mFilesThisBlock == 0)
-		{
-			mCurrent.clear();
-			mFileProgress.clear();
-		}
-		if (mSeenBlock && mChecksThisBlock == 0)
-			mChecking.clear();
-		mSeenBlock = true;
-		mFilesThisBlock = 0;    // a new block: the next " * " line is the head of it
-		mChecksThisBlock = 0;
-
-		// Each percentage is its own line's last word, and a "-" parses to
-		// -1, so a line that prints no number clears its own value. The
-		// other two are not reset here: rclone prints the Checks and the
-		// count lines in every block once it has printed them at all (their
-		// counters only grow), so a value left standing is one it is about
-		// to overwrite a few microseconds on -- and resetting it made the
-		// bar read the bytes alone for that instant, 100% over a run still
-		// comparing. The one on screen is left as it is until this block
-		// has produced a number: a bar that fell back to the spinner for
-		// the instant between two lines would flicker once a second.
-		mBytePercent = parsePercent(body);
-		refreshPercent();
-		return;
-	}
-	// "Checks:                12 / 45, 27%, Listed 300" -- what rclone has
-	// compared rather than moved, and how much of both sides it has listed.
-	// Before anything is queued to compare it reads "0 / 0, -, Listed 300"
-	// (rclone 1.75 prints the line once checks, their total, or the listing
-	// is non-zero), so the listing count is the first sign of life on a run
-	// against a large remote. Older rclones end the line at the percentage.
-	if (line.rfind("Checks:", 0) == 0)
-	{
-		std::string body = Utils::String::trim(line.substr(7));
-		auto slash = body.find(" / ");
-		if (slash == std::string::npos)
-			return;
-		mDoing.clear();
-		mChecksDone  = atol(body.substr(0, slash).c_str());
-		mChecksTotal = atol(body.substr(slash + 3).c_str());
-		auto listed = body.find("Listed ");
-		if (listed != std::string::npos)
-			mListed = atol(body.substr(listed + 7).c_str());
-		mCheckPercent = parsePercent(body);
-		refreshPercent();
-		return;
-	}
-
-	// " *   Some Game.zip: 45% /2.5Mi, 300Ki/s, 5s" -- one per parallel
-	// transfer, four by default. The first names what to show; the rest are
-	// counted, because "and 3 more" is the difference between a device that
-	// looks stalled on one file and one that is saturating the link.
-	if (!line.empty() && line[0] == '*')
-	{
-		mDoing.clear();
-		std::string body = Utils::String::trim(line.substr(1));
-
-		// " *   name: checking" -- a file rclone caught mid-comparison, under
-		// its "Checking:" heading. Not a transfer: it is the name for the
-		// CHECKING line, and counting it would promise a file that never
-		// moves. " *   name: transferring" is one that is queued with no
-		// bytes yet, so there is no percentage to split on; the name is
-		// real and the progress is empty.
-		static const std::string CHECKING = ": checking";
-		static const std::string QUEUED   = ": transferring";
-		if (body.size() > CHECKING.size() && body.compare(body.size() - CHECKING.size(), CHECKING.size(), CHECKING) == 0)
-		{
-			mChecking = Utils::FileSystem::getFileName(Utils::String::trim(body.substr(0, body.size() - CHECKING.size())));
-			mChecksThisBlock++;
-			return;
-		}
-		if (body.size() > QUEUED.size() && body.compare(body.size() - QUEUED.size(), QUEUED.size(), QUEUED) == 0)
-			body = Utils::String::trim(body.substr(0, body.size() - QUEUED.size()));
-
-		if (mFilesThisBlock == 0)
-		{
-			// "name.zip: 45% /2.5Mi, 300Ki/s, 5s" -- the name and its progress
-			// arrive on one line; shown on two, so neither wraps.
-			//
-			// rclone prints the percentage as %3d, so the separator is ": " at
-			// 45% and ":" at 100% ("name.zip:100% /40Mi, 1Mi/s, 0s"). Splitting
-			// on ": " put the whole line on the name row at 100%, and the
-			// basename of "1Mi/s, 0s" is "s" -- the file the maintainer saw
-			// called "S". The separator is the last ':' followed by a
-			// percentage; a name may contain ':' but not ':' + digits + '%'.
-			size_t sep = std::string::npos;
-			for (size_t i = body.size(); i-- > 0; )
-			{
-				if (body[i] != ':')
-					continue;
-				size_t j = i + 1;
-				while (j < body.size() && body[j] == ' ')
-					j++;
-				size_t d = j;
-				while (d < body.size() && isdigit((unsigned char) body[d]))
-					d++;
-				if (d > j && d < body.size() && body[d] == '%')
-				{
-					sep = i;
-					break;
-				}
-			}
-			std::string name = sep == std::string::npos ? body : body.substr(0, sep);
-			mFileProgress = sep == std::string::npos ? "" : Utils::String::trim(body.substr(sep + 1));
-			mCurrent = Utils::FileSystem::getFileName(Utils::String::trim(name));
-		}
-		mFilesThisBlock++;
-		return;
-	}
-}
-
-// The first percentage in an rclone stats field: "12 / 45, 27%, Listed 300"
-// gives 27; "0 B / 0 B, -, 0 B/s, ETA -" gives -1. Only a number that was
-// printed is ever returned -- the caller shows a spinner for -1 rather than
-// a bar at a position nobody measured.
-int GuiCloudTransfer::parsePercent(const std::string& body)
-{
-	auto pp = body.find('%');
-	if (pp == std::string::npos || pp == 0)
-		return -1;
-	size_t st = pp;
-	while (st > 0 && isdigit((unsigned char) body[st - 1]))
-		st--;
-	if (st == pp)
-		return -1;
-	const int v = atoi(body.substr(st, pp - st).c_str());
-	return (v >= 0 && v <= 100) ? v : -1;
-}
-
-// The bar shows the work furthest from done, which is the lower of two
-// percentages: the transfer's and the checks'. A run is both -- rclone
-// compares as it lists and moves what differs -- and a saves backup with
-// one changed save among hundreds moves its bytes in a second, then spends
-// the run comparing. Bytes alone pinned the bar at 100% over a live
-// CHECKING 120 OF 400 FILES for all of it (review, 2026-09-08); the lower
-// of the two reads 27 -> 0 -> 89 -> 100 block by block on that run, every
-// number rclone's.
-//
-// The transfer's percentage is bytes: they say how long this will take when
-// the files are a save game and a disc image. The count of files
-// transferred stands in only when the bytes have no number (nothing but
-// empty files queued), because it counts completed files -- four disc
-// images moving in parallel read 0 / 4 until the first lands, and a bar
-// that took the lowest of all three would sit at zero for most of such a
-// run. A run with nothing to move has neither, and then the count of files
-// checked is the only measure there is -- a true one, which is more than
-// the spinner it replaces could say. Never a number nobody printed: with
-// none, mPercent keeps its last real value. Called with mMutex held.
-void GuiCloudTransfer::refreshPercent()
-{
-	int p = mBytePercent >= 0 ? mBytePercent : mFilePercent;
-	if (mCheckPercent >= 0 && (p < 0 || mCheckPercent < p))
-		p = mCheckPercent;
-	if (p >= 0)
-		mPercent = p;
-}
-
-void GuiCloudTransfer::threadRun()
-{
-	int ret = -1;
-	// Braces around the whole command, not just " 2>&1" after it. The command
-	// is a sequence, and a trailing redirection binds to its last element only
-	// -- so everything the earlier tiers wrote to stderr went to the ES
-	// process's own stderr and never reached this page.
-	FILE* pipe = popen(("{ " + mCommand + " ; } 2>&1").c_str(), "r");
-	if (pipe != nullptr)
-	{
-		// Read a character at a time, and treat three things as ending a line:
-		// \n, \r, and the string "Transferred:" appearing mid-line.
-		//
-		// The third is not defensive programming, it is the observed format.
-		// Piped (there is no terminal here), rclone ends each redraw after the
-		// last " * file" line WITHOUT a newline, so the next block's
-		// "Transferred:" is glued onto it:
-		//
-		//   * f4.bin: 26% / 3.8 MiB, 507 KiB/sTransferred: 6.1 MiB / 22.8 MiB...
-		//
-		// Splitting on newlines alone yields one line that is neither a file
-		// line nor a totals line, and both halves are lost -- every block after
-		// the first. \r is handled because a terminal-attached run does use it.
-		std::string buf;
-		int c;
-		while ((c = fgetc(pipe)) != EOF)
-		{
-			if (c != '\n' && c != '\r')
-			{
-				if (buf.size() < 1024)
-					buf += (char) c;
-
-				static const std::string MARK = "Transferred:";
-				if (buf.size() > MARK.size()
-					&& buf.compare(buf.size() - MARK.size(), MARK.size(), MARK) == 0)
-				{
-					handleLine(cleanLine(buf.substr(0, buf.size() - MARK.size())));
-					buf = MARK;
-				}
-				continue;
-			}
-
-			handleLine(cleanLine(buf));
-			buf.clear();
-		}
-		if (!buf.empty())
-			handleLine(cleanLine(buf));
-
-		int status = pclose(pipe);
-		if (WIFEXITED(status))
-			ret = WEXITSTATUS(status);
-	}
-
-	std::unique_lock<std::mutex> lock(mMutex);
-	foldUnit();   // the last unit: no ">>> unit" follows it
-	mExit = ret;
-	// A command with no tier lines (the match; anything composed before
-	// them) that did not complete: what it said is its failed item -- the
-	// unit the why arrived under, or the why alone -- and with no why at
-	// all, the code's phrase for the unit that was running, if one was.
-	if (ret != 0 && ret != 9 && mFailed.empty())
-	{
-		for (auto& w : mPendingWhys)
-			mFailed.push_back(w);
-		if (mFailed.empty() && ret != CloudExit::LockHeld && ret != CloudExit::NoNetwork)
-			mFailed.push_back({ Utils::String::toUpper(mUnitLabel), ThreadedCloudSync::whyForCode(ret) });
-	}
-	mPendingWhys.clear();
-	mFinished = true;
-}
-
-// Drop ANSI escapes and anything unprintable, then trim. A terminal-attached
-// rclone moves the cursor to redraw in place; those sequences are instructions
-// to a terminal that is not here.
-std::string GuiCloudTransfer::cleanLine(const std::string& raw)
-{
-	std::string clean;
-	for (size_t i = 0; i < raw.size(); ++i)
-	{
-		if (raw[i] == 0x1B)
-		{
-			while (i < raw.size() && !isalpha((unsigned char) raw[i]))
-				i++;
-			continue;
-		}
-		// Printable ASCII and every UTF-8 byte: rclone shortens a long name
-		// with U+2026, and dropping it as "unprintable" turned "Ikari n...ge"
-		// into "Ikari nge" on the page. Only C0 controls and DEL are noise.
-		if (((unsigned char) raw[i] >= 32 && (unsigned char) raw[i] < 127) || (unsigned char) raw[i] >= 0x80)
-			clean += raw[i];
-	}
-	return Utils::String::trim(clean);
+	lock.unlock();
+	if (justFinished)
+		updateHelpPrompts();
 }

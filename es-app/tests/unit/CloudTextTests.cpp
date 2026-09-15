@@ -586,6 +586,39 @@ TEST_CASE("verbOf reads the direction out of the command")
 
 // ------------------------------------------------------------------ fitting
 
+TEST_CASE("transferKind reads which transfer a page's command runs")
+{
+	// The hub's compositions (GuiMenu::cloudOpenTransfer), in the part that
+	// matters: the scripts a command names.
+	CHECK(transferKind("rc=0 ; _t=0 ; { /usr/bin/cloud_backup --yes --saves-only ; } || _t=$? ; echo \">>> tier SAVES|$_t\" ; exit $rc") == TransferKind::Backup);
+	CHECK(transferKind("rc=0 ; _t=0 ; { /usr/bin/cloud_content_backup --selected --with-media ; } || _t=$? ; exit $rc") == TransferKind::Backup);
+	CHECK(transferKind("echo '>>> unit SETTINGS||' ; echo '>>> doing archive' ; /usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only") == TransferKind::Backup);
+	CHECK(transferKind("/usr/bin/cloud_restore --yes --saves-only") == TransferKind::Restore);
+	CHECK(transferKind("/usr/bin/cloud_content_restore --selected --media-only") == TransferKind::Restore);
+
+	// The settings restore names backuptool too; the cloud script beside it
+	// says which way the run goes.
+	CHECK(transferKind("echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only && { echo '>>> doing unpack' ; /usr/bin/backuptool restore --then-cloud --no-restart ; }") == TransferKind::Restore);
+
+	// The journey's first restore (main.cpp): two restore scripts, one kind.
+	CHECK(transferKind("rc=0 ; _t=0 ; { /usr/bin/cloud_content_restore --all ; } || _t=$? ; _t=0 ; { /usr/bin/cloud_restore --yes ; } || _t=$? ; exit $rc") == TransferKind::Restore);
+
+	// A match is the restore script with --match, and a kind of its own: it
+	// is the one transfer that deletes.
+	CHECK(transferKind("/usr/bin/cloud_content_restore --match --apply") == TransferKind::Match);
+
+	// Both directions is the card's sync, not a page's run; nothing named
+	// is nothing known.
+	CHECK(transferKind("/usr/bin/cloud_restore --yes --method=copy --update --saves-only; /usr/bin/cloud_backup --yes --method=copy --update --saves-only") == TransferKind::Other);
+	CHECK(transferKind("/usr/bin/cloud_migrate_layout --apply") == TransferKind::Other);
+	CHECK(transferKind("") == TransferKind::Other);
+
+	// verbOf, the card's reader, does not know the content scripts; that is
+	// why this exists.
+	CHECK(verbOf("/usr/bin/cloud_content_backup --selected") == Verb::Other);
+	CHECK(verbOf("/usr/bin/cloud_backup --yes --saves-only") == Verb::Backup);
+}
+
 TEST_CASE("chooseThatFits takes the first candidate that fits")
 {
 	// One character, one unit of width, so a case reads as its lengths.
