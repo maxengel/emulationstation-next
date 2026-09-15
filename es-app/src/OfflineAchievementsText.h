@@ -110,6 +110,25 @@ namespace OfflineAchievementsText
 	};
 	std::vector<PendingAward> parsePendingIds(const std::string& text);
 
+	// One line of raofflineproxy-ctl summary: a game the store holds for the
+	// account, with what the summary page shows of it, from one read of the
+	// store (fork #190). ok is false for anything but a JSON object with a
+	// positive id and a set of at least one achievement; the other counts read
+	// 0 when absent. The icon is a URL the proxy serves, as the ctl wrote it.
+	struct StoreGame
+	{
+		bool ok = false;
+		int id = 0;
+		std::string title;
+		std::string icon;
+		int achievements = 0;
+		int points = 0;
+		int unlocked = 0;
+		int unlockedPoints = 0;
+		int pending = 0;
+	};
+	StoreGame parseStoreGame(const std::string& line);
+
 	// The proxy's own online_state.json ({"online": false}): true when the
 	// text is one, with online set; false for anything else, and the caller
 	// treats a state it cannot read as unknown, never as offline.

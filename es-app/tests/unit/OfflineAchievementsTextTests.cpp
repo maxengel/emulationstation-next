@@ -297,3 +297,35 @@ TEST_CASE("the proxy's addresses are built in one place")
 	CHECK(badgeUrl("109361", false) == "http://127.0.0.1:8080/Badge/109361_lock.png");
 	CHECK(badgeUrl("", true) == "");
 }
+
+TEST_CASE("parseStoreGame reads one line of raofflineproxy-ctl summary")
+{
+	auto g = parseStoreGame(R"({"id":4902,"title":"Bobl","icon":"http://127.0.0.1:8080/Images/000001.png","achievements":12,"points":110,"unlocked":1,"unlockedPoints":5,"pending":1})");
+	CHECK(g.ok);
+	CHECK(g.id == 4902);
+	CHECK(g.title == "Bobl");
+	CHECK(g.icon == "http://127.0.0.1:8080/Images/000001.png");
+	CHECK(g.achievements == 12);
+	CHECK(g.points == 110);
+	CHECK(g.unlocked == 1);
+	CHECK(g.unlockedPoints == 5);
+	CHECK(g.pending == 1);
+
+	// The counts the ctl might leave out read as 0; the icon may be empty.
+	auto bare = parseStoreGame(R"({"id":7,"title":"T","achievements":3})");
+	CHECK(bare.ok);
+	CHECK(bare.icon.empty());
+	CHECK(bare.points == 0);
+	CHECK(bare.unlocked == 0);
+	CHECK(bare.pending == 0);
+}
+
+TEST_CASE("parseStoreGame refuses what is not a game")
+{
+	CHECK_FALSE(parseStoreGame("").ok);
+	CHECK_FALSE(parseStoreGame("not json").ok);
+	CHECK_FALSE(parseStoreGame("[1,2,3]").ok);
+	CHECK_FALSE(parseStoreGame(R"({"id":0,"title":"T","achievements":3})").ok);      // no id
+	CHECK_FALSE(parseStoreGame(R"({"id":9,"title":"Empty","achievements":0})").ok);  // an empty set is not a cached game (PL-26)
+	CHECK_FALSE(parseStoreGame(R"({"title":"no id at all","achievements":3})").ok);
+}
