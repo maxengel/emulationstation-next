@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#include <signal.h>
 #include <sys/wait.h>
 
 std::mutex CloudTransferJob::sMutex;
@@ -71,6 +72,19 @@ void CloudTransferJob::dismiss(const std::shared_ptr<CloudTransferJob>& job)
 	std::unique_lock<std::mutex> lock(sMutex);
 	if (job != nullptr && sCurrent == job && job->finished())
 		sCurrent = nullptr;
+}
+
+bool CloudTransferJob::stopForLaunch(bool hard)
+{
+	auto job = current();
+	if (job == nullptr || job->finished())
+		return false;
+	job->mStoppedForGame = true;
+	const pid_t pid = job->mPid;
+	if (pid > 0)
+		::kill(-pid, hard ? SIGKILL : SIGTERM);
+	LOG(LogInfo) << "CloudTransferJob: stopped for a game (" << (hard ? "SIGKILL" : "SIGTERM") << ", group " << pid << ")";
+	return true;
 }
 
 bool CloudTransferJob::finished() const
@@ -178,6 +192,10 @@ void CloudTransferJob::handleLine(const std::string& line)
 	{
 		switch (protocol.kind)
 		{
+		case CloudText::ProtocolKind::Pid:
+			// run()'s own first line: the group stopForLaunch signals.
+			mPid = protocol.number;
+			break;
 		case CloudText::ProtocolKind::Why:
 		{
 			// An empty why is a why line with nothing in it: the one this
@@ -519,7 +537,16 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 	// moves is renamed into place whole and the next run finishes what this
 	// one did not (D-CLOUD-077). While this process lives, this thread reads
 	// the pipe to the end whatever happens to the page.
-	FILE* pipe = popen(("{ trap '' PIPE; " + mCommand + " ; } 2>&1").c_str(), "r");
+	//
+	// In a session of its own, saying so on its first line: setsid makes
+	// the shell a process group leader and ">>> pid N" tells stopForLaunch
+	// which group to signal, so the shell, the scripts and their rclone go
+	// together -- the shape ThreadedCloudSync gives its commands, for the
+	// same cancel (D-CLOUD-114). shellQuote, so a command with a quote in it
+	// survives the trip.
+	const std::string wrapped = "setsid sh -c "
+		+ Utils::String::shellQuote("echo \">>> pid $$\"; { trap '' PIPE; " + mCommand + " ; }") + " 2>&1";
+	FILE* pipe = popen(wrapped.c_str(), "r");
 	if (pipe != nullptr)
 	{
 		// Read a character at a time, and treat three things as ending a line:
@@ -567,12 +594,18 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 
 	std::unique_lock<std::mutex> lock(mMutex);
 	foldUnit();   // the last unit: no ">>> unit" follows it
+	// Stopped for a game: SIGTERM shows up as a signal or as 143, and
+	// neither is what happened. CloudExit::Stopped is the scripts' own word
+	// for being stopped, whoever did the stopping (ThreadedCloudSync does
+	// the same for the card's cancel).
+	if (mStoppedForGame)
+		ret = CloudExit::Stopped;
 	mExit = ret;
 	// A command with no tier lines (the match; anything composed before
 	// them) that did not complete: what it said is its failed item -- the
 	// unit the why arrived under, or the why alone -- and with no why at
 	// all, the code's phrase for the unit that was running, if one was.
-	if (ret != 0 && ret != 9 && mFailed.empty())
+	if (ret != 0 && ret != 9 && mFailed.empty() && !mStoppedForGame)
 	{
 		for (auto& w : mPendingWhys)
 			mFailed.push_back(w);

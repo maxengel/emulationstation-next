@@ -80,7 +80,11 @@ public:
 		// it is not there to wait for; a moment later the launch works.
 		Stopping
 	};
-	static bool cancelForLaunch(CancelRefusal* refusal = nullptr);
+	// evenIfPlayerStarted: the player has answered STOP IT AND PLAY to the
+	// question over their own sync (D-CLOUD-114), so its origin no longer
+	// protects it; the card says SKIPPED - A GAME WAS STARTED as for an
+	// automatic one.
+	static bool cancelForLaunch(CancelRefusal* refusal = nullptr, bool evenIfPlayerStarted = false);
 
 	// The outcome vocabulary's why for an exit code the scripts did not
 	// explain with a ">>> why" line (D-UI-028): rclone 3/4 YOUR CLOUD FOLDER
