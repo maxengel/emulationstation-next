@@ -7,6 +7,7 @@
 #include "SystemConf.h"
 #include "Window.h"
 #include "utils/FileSystemUtil.h"
+#include "utils/Platform.h"
 #include "utils/StringUtil.h"
 #include <ctime>
 #include <string>
@@ -148,6 +149,15 @@ bool OfflineAchievements::proxyOffline()
 {
 	if (!available() || !toggleOn())
 		return false;
+	// The device's own link first (fork #190). The proxy's monitor rewrites
+	// its state only when its next probe fails, some time after the link
+	// drops, and a player who has just switched Wi-Fi off opens a page
+	// before that; asking the web then is a PLEASE WAIT with no route
+	// under it. No address on any wired or wireless interface (the same
+	// question the network watcher and the scan row ask; a VPN's tunnel
+	// does not count) is offline, whatever the file says.
+	if (Utils::Platform::queryIPAddress().empty())
+		return true;
 	if (!Utils::FileSystem::exists(ONLINE_STATE, false))
 		return false;
 	bool online = true;
