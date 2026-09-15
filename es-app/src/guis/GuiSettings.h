@@ -7,6 +7,7 @@
 #include "guis/GuiFileBrowser.h"
 
 class SwitchComponent;
+class MultiLineMenuEntry;
 
 // This is just a really simple template for a GUI that calls some save functions when closed.
 class GuiSettings : public GuiComponent
@@ -81,6 +82,14 @@ public:
 	}
 	
 	void addInputTextConfigRow(const std::string& title, const std::string& settingsID, bool password, bool storeInSettings = false, const std::function<void(Window*, std::string/*title*/, std::string /*value*/, const std::function<void(std::string)>& onsave)>& customEditor = nullptr);
+	// The same row with one line under its label (D-UI-023): the WI-FI SSID
+	// row carries the network the device is joined to now while its value
+	// stays the one it edits (fork #191). Returns the entry so the line can
+	// be set once an answer arrives -- that one is asked off the interface
+	// thread and lands through Window::postToUiThread. The line is clamped
+	// to one line and scrolls while the row is focused, as the line under
+	// an addWithDescription action row does.
+	std::shared_ptr<MultiLineMenuEntry> addInputTextConfigRowWithDescription(const std::string& title, const std::string& description, const std::string& settingsID, bool password, bool storeInSettings = false, const std::function<void(Window*, std::string/*title*/, std::string /*value*/, const std::function<void(std::string)>& onsave)>& customEditor = nullptr);
   	void addInputTextRow(const std::string& title, const std::string& value, bool password, const std::function<void(Window*, std::string/*title*/, std::string /*value*/, const std::function<void(std::string)>& onsave)>& customEditor = nullptr, const std::function<void(std::string)>& onsave = nullptr);
 	void addFileBrowser(const std::string& title, const std::string& settingsID, GuiFileBrowser::FileTypes type, bool storeInSettings = false);
 	
@@ -147,6 +156,8 @@ protected:
 	MenuComponent mMenu;
 
 private:
+	std::shared_ptr<MultiLineMenuEntry> buildInputTextConfigRow(const std::string& title, const std::string& description, const std::string& settingsID, bool password, bool storeInSettings, const std::function<void(Window*, std::string/*title*/, std::string /*value*/, const std::function<void(std::string)>& onsave)>& customEditor);
+
 	bool mDoSave = true;
 
 	std::vector< std::function<void()> > mSaveFuncs;
