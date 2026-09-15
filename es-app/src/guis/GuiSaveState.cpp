@@ -101,6 +101,11 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	std::shared_ptr<Font> labelFont = Font::get(requested, theme->TextSmall.font->getPath());
 	labelFont->sizeText(ascii);
 	{
+		// now()'s text is as long as any tile's: the locale's date is one
+		// width, and the time half writes the same number of characters at
+		// every hour on either clock, AM/PM included (fork #195; TimeText's
+		// test holds it to that), so the sample measures the row's shape
+		// whatever the switch says when the manager opens.
 		const std::string widest = Utils::Time::DateTime::now().toLocalTimeString();
 		const float widestPx = labelFont->sizeText(widest).x();
 		if (widestPx > tileWidth * 0.86f && widestPx > 0)
