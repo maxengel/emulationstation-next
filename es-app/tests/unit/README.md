@@ -16,8 +16,10 @@ parser, a label, a rule about a string, a schedule. Today `es-app/src/CloudText.
 `-DRAPIDJSON_INCLUDE_DIR=<dir>` on a host without it) and `es-app/src/CheevosIndex.cpp`
 (#186 PL-08, what the game index owes a game), and `Utils::String::maskSecrets`
 in `es-core/src/utils/StringUtil.cpp` (#177, the credential mask every logged
-command line goes through), tested with doctest (`external/doctest/doctest.h`);
-the binary compiles those four files, `StringUtil.cpp`, and the tests, and no more.
+command line goes through) and the log's rules in `es-core/src/LogPolicy.h`
+(#178, header-only: the level tags, the `LogLevel` setting, which lines also
+reach stderr), tested with doctest (`external/doctest/doctest.h`); the binary
+compiles those four files, `StringUtil.cpp`, and the tests, and no more.
 
 **Does not:** anything touching `Window`, `Settings`, `SystemConf`, a font, a
 file or a script. Extract the pure core, leave the shell where it is, and test
