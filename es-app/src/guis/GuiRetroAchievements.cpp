@@ -12,6 +12,7 @@
 #include "SystemData.h"
 #include "FileData.h"
 #include "views/ViewController.h"
+#include "utils/HtmlColor.h"
 
 #include <string>
 #include "LocaleES.h"
@@ -19,7 +20,15 @@
 #define WINDOW_WIDTH (float)Math::min(Renderer::getScreenHeight() * 1.125f, Renderer::getScreenWidth() * 0.90f)
 #define IMAGESIZE (Renderer::getScreenHeight() * (48.0 / 720.0))
 #define IMAGESPACER (Renderer::getScreenHeight() * (10.0 / 720.0))
+// The bar's thickness on any panel, and the gap between it and a label
+// beside it: fractions of the screen, as everything on these pages is.
 #define PROGRESSHEIGHT (Renderer::getScreenHeight() * 0.008f)
+#define PROGRESSGAP (Renderer::getScreenHeight() * (10.0f / 720.0f))
+// How much of the text colour the empty part of the bar shows. It was black
+// at alpha 0x32, which on the shipped theme's near-black panel is not there
+// at all: a 4% bar was a blue dash with nothing to say what it was 4% of
+// (fork #193).
+#define TRACK_OPACITY 0x40
 
 void GuiRetroAchievements::show(Window* window)
 {
@@ -40,30 +49,66 @@ void GuiRetroAchievements::show(Window* window)
 		}));
 }
 
-RetroAchievementProgress::RetroAchievementProgress(Window* window, int valueSoftcore, int valueHardcore, int max, const std::string& label) : GuiComponent(window), 
-	mValueSoftCore(valueSoftcore), mValueHardCore(valueHardcore), mMax(max)
-{ 
+RetroAchievementProgress::RetroAchievementProgress(Window* window, int valueSoftcore, int valueHardcore, int max, const std::string& label) : GuiComponent(window),
+	mValueSoftCore(valueSoftcore), mValueHardCore(valueHardcore), mMax(max), mLabelBeside(false),
+	mBarX(0.0f), mBarY(0.0f), mBarW(0.0f), mBarH(0.0f)
+{
 	auto theme = ThemeData::getMenuTheme();
+	mColor = theme->Text.color;
 
-	mText = std::make_shared<TextComponent>(mWindow, label, theme->TextSmall.font, theme->Text.color);		
+	mText = std::make_shared<TextComponent>(mWindow, label, theme->TextSmall.font, mColor);
 	mText->setVerticalAlignment(Alignment::ALIGN_CENTER);
 	mText->setHorizontalAlignment(Alignment::ALIGN_CENTER);
+}
+
+void RetroAchievementProgress::setLabelBeside(bool beside)
+{
+	mLabelBeside = beside;
+	mText->setHorizontalAlignment(beside ? Alignment::ALIGN_RIGHT : Alignment::ALIGN_CENTER);
+	onSizeChanged();
 }
 
 void RetroAchievementProgress::onSizeChanged()
 {
 	GuiComponent::onSizeChanged();
 
-	float padding = mSize.x() * 0.1f;
-		
-	float y = (mSize.y() + PROGRESSHEIGHT) / 2.0f;
-		
-	mText->setPosition(padding, y);
-	mText->setSize(mSize.x() - 2.0f * padding, mText->getFont()->getLetterHeight());
+	mBarH = PROGRESSHEIGHT;
+
+	if (mLabelBeside)
+	{
+		// One centre line for both. The label's box is its words plus the
+		// gap, at the right edge and as tall as the row, so the text sits on
+		// half the height by its alignment; the bar takes the rest of the
+		// width and sits on the same half by its position -- in whole
+		// pixels, so a line a few pixels thick is crisp rather than smeared
+		// over two.
+		const float labelBox = mText->getFont()->sizeText(mText->getText()).x() + PROGRESSGAP;
+
+		mBarH = Math::max(1.0f, Math::round(mBarH));
+		mBarX = 0.0f;
+		mBarW = Math::round(Math::max(0.0f, mSize.x() - labelBox));
+		mBarY = Math::round((mSize.y() - mBarH) / 2.0f);
+
+		mText->setPosition(mSize.x() - labelBox, 0.0f);
+		mText->setSize(labelBox, mSize.y());
+		return;
+	}
+
+	// The bar above the label, both centred in the width with a tenth of it
+	// clear either side: the summary page's column, as it has always been.
+	const float padding = mSize.x() * 0.1f;
+
+	mBarX = padding;
+	mBarW = mSize.x() - 2.0f * padding;
+	mBarY = mSize.y() / 2.0f - 1.5f * mBarH;
+
+	mText->setPosition(padding, (mSize.y() + mBarH) / 2.0f);
+	mText->setSize(mBarW, mText->getFont()->getLetterHeight());
 }
 
 void RetroAchievementProgress::setColor(unsigned int color)
 {
+	mColor = color;
 	mText->setColor(color);
 }
 
@@ -77,34 +122,30 @@ void RetroAchievementProgress::render(const Transform4x4f& parentTrans)
 	auto rect = Renderer::getScreenRect(trans, mSize);
 	if (!Renderer::isVisibleOnScreen(rect))
 		return;
-		
-	int padding = mSize.x() * 0.1f;
-	int w = mSize.x() - 2.0 * padding;
-
-	float height = PROGRESSHEIGHT;
-	float y = mSize.y() / 2.0f - 1.5f * height;
 
 	Renderer::setMatrix(trans);
 
-	Renderer::drawRect(padding, y, w, height, 0x00000032, 0x00000032);
+	// The track first, so the fill reads as a share of something.
+	const unsigned int track = Utils::HtmlColor::applyColorOpacity(mColor, TRACK_OPACITY);
+	Renderer::drawRect(mBarX, mBarY, mBarW, mBarH, track, track);
 
 	if (mMax > 0)
 	{
 		if (mValueSoftCore > 0 && mValueSoftCore > mValueHardCore)
 		{
-			int cur = (w * mValueSoftCore) / mMax;
-			Renderer::drawRect(padding, y, cur, height, 0x0B71C1FF);
+			const float cur = (mBarW * mValueSoftCore) / mMax;
+			Renderer::drawRect(mBarX, mBarY, cur, mBarH, 0x0B71C1FF);
 		}
 
 		if (mValueHardCore > 0)
 		{
-			int cur = (w * mValueHardCore) / mMax;
-			Renderer::drawRect(padding, y, cur, height, 0xCC9900FF);
+			const float cur = (mBarW * mValueHardCore) / mMax;
+			Renderer::drawRect(mBarX, mBarY, cur, mBarH, 0xCC9900FF);
 		}
 	}
 
 	mText->render(trans);
-}	
+}
 
 #include <iostream>
 #include <string>
@@ -303,7 +344,7 @@ GuiRetroAchievements::GuiRetroAchievements(Window* window, RetroAchievementInfo 
 			txt = _("Softcore points") + ":\t" + ra.softpoints;
 			txt += "\r\n" + _("Points (hardcore)") + ":\t" + ra.points + "\r\n";
 		}
-		txt += _("YOU'RE NOT ONLINE. SHOWING THE GAMES SAVED ON THIS DEVICE.");
+		txt += _("YOU'RE OFFLINE. SHOWING THE GAMES SAVED FOR OFFLINE PLAY.");
 	}
 	else
 	{

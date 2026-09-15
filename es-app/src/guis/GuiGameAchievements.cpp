@@ -173,7 +173,7 @@ GuiGameAchievements::GuiGameAchievements(Window* window, GameInfoAndUserProgress
 		// that line is not made up; its place says where this came from.
 		header = _("Achievements (softcore)") + ": \t" + std::to_string(ra.NumAwardedToUser) + "/" + std::to_string(ra.NumAchievements);
 		header += "\r\n" + _("Points") + ": \t" + std::to_string(userPoints) + "/" + std::to_string(totalPoints);
-		header += "\r\n" + _("YOU'RE NOT ONLINE. SHOWING WHAT'S SAVED ON THIS DEVICE.");
+		header += "\r\n" + _("YOU'RE OFFLINE. SHOWING YOUR MOST RECENT PROGRESS.");
 
 		setSubTitle(header);
 	}
@@ -197,6 +197,9 @@ GuiGameAchievements::GuiGameAchievements(Window* window, GameInfoAndUserProgress
 		char trstring[256];
 		snprintf(trstring, 256, _("%d%% complete").c_str(), percent);
 		mProgress = std::make_shared<RetroAchievementProgress>(mWindow, ra.NumAwardedToUser, ra.NumAwardedToUserHardcore, ra.Achievements.size(), Utils::String::trim(trstring));
+		// A row one header line tall: bar and percentage on its one centre
+		// line, not the summary column's bar-over-label stack (fork #193).
+		mProgress->setLabelBeside(true);
 	}
 
 	for (auto game : ra.Achievements)
@@ -276,10 +279,17 @@ void GuiGameAchievements::render(const Transform4x4f& parentTrans)
 	if (lines == nullptr)
 		return;
 
-	// One header line is the bar's height: the bar in its upper half, the
-	// percentage in its lower.
+	// The bar and its percentage share the header line they sit on: the row
+	// is one line tall and the component centres both on half of it (fork
+	// #193). It used to keep the summary page's shape -- the bar in the
+	// upper half of the line, the percentage centred in the lower half -- so
+	// the number sat below and to the right of a bar whose empty part was
+	// not drawn: at 640x480 a 4% bar was a blue dash at the left with "4%
+	// complete" floating under the middle of the row, and the two never
+	// shared a line. The row starts where the text does, its top padding
+	// included, so a line's centre and the row's are the same point.
 	const float lineHeight = lines->getFont()->getHeight(lines->getLineSpacing());
-	const float textTop = lines->getPosition().y();
+	const float textTop = lines->getPosition().y() + lines->getPadding().y();
 
 	if (mProgressBelow)
 	{
@@ -297,9 +307,10 @@ void GuiGameAchievements::render(const Transform4x4f& parentTrans)
 	}
 	else
 	{
+		// Beside the first line, on that line's centre.
 		const float column = headerTextColumn();
 
-		mProgress->setPosition(column * PROGRESS_LEFT, textTop + Renderer::getScreenHeight() * 0.005f);
+		mProgress->setPosition(column * PROGRESS_LEFT, textTop);
 		mProgress->setSize(column * PROGRESS_WIDTH, lineHeight);
 	}
 
