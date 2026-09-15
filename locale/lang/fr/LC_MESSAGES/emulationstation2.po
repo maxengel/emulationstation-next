@@ -233,6 +233,9 @@ msgstr "FAVORIS"
 msgid "SAVE STATES"
 msgstr "SAUVEGARDES D’ÉTAT"
 
+msgid "SAVE STATE MANAGER"
+msgstr "GESTIONNAIRE DES SAUVEGARDES D’ÉTAT"
+
 #, c-format
 msgid "Back to %s"
 msgstr "Retourner vers %s"
