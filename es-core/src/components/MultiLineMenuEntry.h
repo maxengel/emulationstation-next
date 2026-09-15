@@ -23,9 +23,19 @@ public:
 	void onFocusLost() override;
 	
 	std::string getDescription();
+	// A line set later re-lays the entry: an entry built with no line is
+	// one line high and grows when one arrives, and shrinks when it goes
+	// (the WI-FI SSID row, whose line is asked off the interface thread and
+	// is often nothing -- fork #191). The list holding the row still has to
+	// be re-laid by the caller (GuiSettings::updateSize).
 	void setDescription(const std::string& description);
 
 protected:
+	// The two rows' heights from the two texts: the label alone when the
+	// line under it is empty, both otherwise. The constructor, a later
+	// setDescription and the multi-line relayout all go through here.
+	void layoutRows();
+
 	bool mMultiLine;
 	bool mSizeChanging;
 	bool mDimmed;

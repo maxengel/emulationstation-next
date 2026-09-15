@@ -99,3 +99,23 @@ TEST_CASE("parseForget reads the word, not the absence of an error")
 	CHECK(cr.forgotten);
 	CHECK(cr.disconnected);
 }
+
+TEST_CASE("ssidLine says nothing while the device is on the configured network: the value on the right already names it")
+{
+	CHECK(ssidLine(true, "Home Wi-Fi", "Home Wi-Fi") == SsidLine::None);
+}
+
+TEST_CASE("ssidLine names the joined network only when it is another one than the row's value (fork #191)")
+{
+	CHECK(ssidLine(true, "Cafe: Guest", "Home Wi-Fi") == SsidLine::ConnectedTo);
+	CHECK(ssidLine(true, "home wi-fi", "Home Wi-Fi") == SsidLine::ConnectedTo);  // a name is case-sensitive
+	CHECK(ssidLine(true, "Home Wi-Fi", "") == SsidLine::ConnectedTo);           // nothing configured, yet joined
+}
+
+TEST_CASE("ssidLine keeps 'joined to none' and 'no answer' apart, whatever the setting says")
+{
+	CHECK(ssidLine(true, "", "Home Wi-Fi") == SsidLine::NotConnected);
+	CHECK(ssidLine(true, "", "") == SsidLine::NotConnected);
+	CHECK(ssidLine(false, "", "Home Wi-Fi") == SsidLine::CouldNotCheck);
+	CHECK(ssidLine(false, "Home Wi-Fi", "Home Wi-Fi") == SsidLine::CouldNotCheck);  // a name with no answer behind it is no answer
+}

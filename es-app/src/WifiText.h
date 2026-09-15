@@ -44,6 +44,19 @@ namespace WifiText
 	// begin or end with a space.
 	std::string parseCurrent(const std::vector<std::string>& lines);
 
+	// The line under WI-FI SSID, from the answer to `wifictl current` and the
+	// network the row's value already names (the setting wifi.ssid). It says
+	// only what the value does not -- maintainer, 2026-09-15, on seeing the
+	// name twice in one row: "It's redundant to have it in both places" --
+	// so: nothing while the device is on the configured network; the joined
+	// network when it is another one, the case the line exists for (the RG SP
+	// showed the setting as though it were the connection, fork #191); NOT
+	// CONNECTED when the device is joined to none; COULDN'T CHECK when
+	// NetworkManager did not answer, a silence not being "not connected".
+	// Names compare exactly: a network's name is case-sensitive.
+	enum class SsidLine { None, ConnectedTo, NotConnected, CouldNotCheck };
+	SsidLine ssidLine(bool answered, const std::string& joined, const std::string& configured);
+
 	// What `wifictl forget` printed: "forgotten" when the profile went, then
 	// "disconnected" on a second line when it was the one in use. A
 	// "disconnected" with no "forgotten" before it is not a forget that
