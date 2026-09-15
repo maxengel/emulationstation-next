@@ -19,10 +19,13 @@ parser, a label, a rule about a string, a schedule. Today `es-app/src/CloudText.
 with no AM/PM), `es-app/src/WifiText.cpp` (#191, the Wi-Fi rows' reading of what
 `wifictl` prints: the remembered networks, the joined one, a forget's outcome),
 `Utils::String::maskSecrets` in `es-core/src/utils/StringUtil.cpp` (#177, the
-credential mask every logged command line goes through) and the log's rules in
+credential mask every logged command line goes through),
+`es-core/src/utils/OfflineProxyUrl.cpp` (#199, the offline proxy's address and
+whether a URL is on it -- the one definition the pages' requests and
+`WebImageComponent`'s store-only header share) and the log's rules in
 `es-core/src/LogPolicy.h` (#178, header-only: the level tags, the `LogLevel`
 setting, which lines also reach stderr), tested with doctest
-(`external/doctest/doctest.h`); the binary compiles those six files,
+(`external/doctest/doctest.h`); the binary compiles those seven files,
 `StringUtil.cpp`, and the tests, and no more.
 
 **Does not:** anything touching `Window`, `Settings`, `SystemConf`, a font, a
