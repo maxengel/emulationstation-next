@@ -269,6 +269,12 @@ public:
 	// and sets disconnected when it was the one in use and the link
 	// dropped with it.
 	bool forgetWifiNetwork(const std::string& name, bool& disconnected);
+	// Join a network NetworkManager holds a profile for, with the key it
+	// holds (`wifictl join <name>`): the picker's press on a SAVED row (fork
+	// #191). True only when the script said "joined"; the settings wifi.ssid
+	// and wifi.key then follow the profile on disk, so a caller re-reads
+	// SystemConf before trusting either.
+	bool joinWifiNetwork(const std::string& name);
 
 	virtual std::string getIpAddress();
 	virtual bool isWifiAPModeSupported();

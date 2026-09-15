@@ -8814,11 +8814,6 @@ std::vector<std::pair<std::string, std::string>> getCountryCodes()
     };
 }
 
-void GuiMenu::openWifiSettings(Window* win, std::string title, std::string data, const std::function<void(std::string)>& onsave)
-{
-	win->pushGui(new GuiWifi(win, title, data, onsave));
-}
-
 // NETWORK SETTINGS' two facts, filled in from worker threads.
 //
 // The page used to compute them in its constructor: getifaddrs, then up to
@@ -8876,58 +8871,45 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 	}).detach();
 }
 
-// The line under WI-FI SSID: the network the device is joined to now, from
+// The WI-FI SSID row's value: the network the device is on now, from
 // NetworkManager, asked off the interface thread as the IP address and the
-// internet status are (fork #191) -- written only when it says something
-// the value on the right does not. wifi.ssid, the value, the one the row
-// edits, is the network configured last, and once autoconnect has joined a
-// remembered network the two differ: the RG SP showed the setting as though
-// it were the connection (maintainer, 2026-09-15). The same day, on seeing
-// the name twice in one row: "we don't need to list the Wi-Fi SSID under
-// the Wi-Fi SSID label ... It's redundant to have it in both places." So
-// the row is one line while the device is on the configured network and
-// grows a line for the answers worth one (WifiText::ssidLine): another
-// network, NOT CONNECTED when joined to none, COULDN'T CHECK when
-// NetworkManager did not answer -- a silence is not "not connected". The
-// page is re-laid when the row grows, as it is when an address arrives.
-static void networkSettingsFillInSsid(Window* window, GuiSettings* s, const std::shared_ptr<MultiLineMenuEntry>& ssidRow)
+// internet status are (fork #191). It used to be wifi.ssid, the network
+// configured last, because that is what the row edited -- and once
+// autoconnect had joined a saved network the two differed, so the RG SP
+// showed a setting as though it were the connection. Maintainer,
+// 2026-09-15: "Why won't the right-hand value always be the network you're
+// connected to? This matches the paradigm on other operating systems,
+// phones, etc., where it shows the currently connected network, and then
+// you can choose to connect to another network." So the value is the
+// connection: the network, NOT CONNECTED when there is none, COULDN'T CHECK
+// when NetworkManager did not answer (a silence is not "not connected"),
+// CHECKING... until the answer is in. A opens the picker (GuiWifi), whose
+// press connects or joins and has this page rebuilt to read the result
+// back. The setting still exists and still follows the player's choice; it
+// is just not what this row shows.
+static void networkSettingsFillInSsid(Window* window, GuiSettings* s, const std::shared_ptr<TextComponent>& valueRow)
 {
 	std::weak_ptr<ComponentList> list = s->getMenu().getList();
-	std::weak_ptr<MultiLineMenuEntry> entry = ssidRow;
-	const std::string configured = SystemConf::getInstance()->get("wifi.ssid");
-	const std::string connectedTo = _("CONNECTED TO");
+	std::weak_ptr<TextComponent> value = valueRow;
 	const std::string notConnected = _("NOT CONNECTED");
 	const std::string couldNotCheck = _("COULDN'T CHECK");
 
-	std::thread([window, s, list, entry, configured, connectedTo, notConnected, couldNotCheck]
+	std::thread([window, list, value, notConnected, couldNotCheck]
 	{
 		std::string joined;
 		const bool answered = ApiSystem::getInstance()->getCurrentWifiSsid(joined);
-		std::string text;
-		switch (WifiText::ssidLine(answered, joined, configured))
+		const std::string text = !answered ? couldNotCheck : (joined.empty() ? notConnected : joined);
+		window->postToUiThread([list, value, text]
 		{
-		case WifiText::SsidLine::None:
-			return;
-		case WifiText::SsidLine::ConnectedTo:
-			text = connectedTo + " " + joined;
-			break;
-		case WifiText::SsidLine::NotConnected:
-			text = notConnected;
-			break;
-		case WifiText::SsidLine::CouldNotCheck:
-			text = couldNotCheck;
-			break;
-		}
-		window->postToUiThread([s, list, entry, text]
-		{
-			// The list goes with the page and nothing else holds it, so a
-			// lock on it says the page -- and s -- is still there.
-			auto row = entry.lock();
+			// A value that changes width after its row was laid out has to
+			// be laid out again (networkSettingsFillIn). Both are held
+			// weakly: the page may be gone before the answer is.
+			auto component = value.lock();
 			auto rows = list.lock();
-			if (row == nullptr || rows == nullptr)
+			if (component == nullptr || rows == nullptr)
 				return;
-			row->setDescription(text);
-			s->updateSize();
+			component->setText(text);
+			rows->onSizeChanged();
 		});
 	}).detach();
 }
@@ -9034,13 +9016,40 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	{
 		if (!baseAdhocEnabled)
 		{
-			// The value on the right is wifi.ssid, the network configured
-			// last, and the row still edits it. The line under the label
-			// arrives only when the device is on another network, on none,
-			// or NetworkManager did not answer (fork #191); the row is one
-			// line until then, and stays one while the two names agree.
-			auto ssidRow = s->addInputTextConfigRowWithDescription(_("WI-FI SSID"), "", "wifi.ssid", false, false, &openWifiSettings);
-			networkSettingsFillInSsid(window, s, ssidRow);
+			// The value is the network the device is on now, filled in
+			// from NetworkManager (networkSettingsFillInSsid); the arrow
+			// says A leads somewhere -- the picker, whose press connects or
+			// joins and rebuilds this page (as the ENABLE WI-FI switch
+			// does) so every row reads the connection back. The value's
+			// width follows its text, as the IP ADDRESS row's does.
+			ComponentListRow ssidRow;
+			auto ssidLabel = std::make_shared<TextComponent>(mWindow, _("WI-FI SSID"), font, color);
+			if (EsLocale::isRTL())
+				ssidLabel->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
+			ssidRow.addElement(ssidLabel, true);
+			auto ssidValue = std::make_shared<TextComponent>(mWindow, _("CHECKING..."), font, color, ALIGN_RIGHT);
+			if (EsLocale::isRTL())
+				ssidValue->setHorizontalAlignment(Alignment::ALIGN_LEFT);
+			ssidRow.addElement(ssidValue, false);
+			auto ssidSpacer = std::make_shared<GuiComponent>(mWindow);
+			ssidSpacer->setSize(Renderer::getScreenWidth() * 0.005f, 0);
+			ssidRow.addElement(ssidSpacer, false);
+			auto ssidArrow = std::make_shared<ImageComponent>(mWindow);
+			ssidArrow->setImage(theme->Icons.arrow);
+			ssidArrow->setResize(Vector2f(0, font->getLetterHeight()));
+			if (EsLocale::isRTL())
+				ssidArrow->setFlipX(true);
+			ssidRow.addElement(ssidArrow, false);
+			ssidRow.makeAcceptInputHandler([this, s, window]
+			{
+				window->pushGui(new GuiWifi(window, _("WI-FI NETWORKS"), [this, s]
+				{
+					delete s;
+					openNetworkSettings();
+				}));
+			});
+			s->addRow(ssidRow);
+			networkSettingsFillInSsid(window, s, ssidValue);
 			s->addInputTextConfigRow(_("WI-FI KEY"), "wifi.key", true);
 
 #if !WIN32

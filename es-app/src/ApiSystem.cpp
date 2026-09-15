@@ -645,6 +645,18 @@ bool ApiSystem::getSavedWifiNetworks(std::vector<WifiText::SavedNetwork>& networ
 	return true;
 }
 
+// The picker's press on a saved network: its profile, with the key
+// NetworkManager holds, through wifictl join -- bounded past the 90 s
+// association wait the script allows itself, as enableWifi's connect is. The
+// name is the player's and carries anything: shellQuote.
+bool ApiSystem::joinWifiNetwork(const std::string& name)
+{
+	std::vector<std::string> lines;
+	auto result = executeScript("timeout 120 wifictl join " + Utils::String::shellQuote(name),
+		[&lines](const std::string line) { lines.push_back(line); });
+	return result.second == 0 && WifiText::parseJoin(lines);
+}
+
 bool ApiSystem::forgetWifiNetwork(const std::string& name, bool& disconnected)
 {
 	disconnected = false;
