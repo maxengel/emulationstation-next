@@ -2092,7 +2092,7 @@ std::vector<std::string> ApiSystem::getWifiNetworks(bool scan)
 
 std::vector<std::string> ApiSystem::executeEnumerationScript(const std::string command)
 {
-	LOG(LogDebug) << "ApiSystem::executeEnumerationScript -> " << command;
+	LOG(LogDebug) << "ApiSystem::executeEnumerationScript -> " << Utils::String::maskSecrets(command);
 
 	std::vector<std::string> res;
 
@@ -2122,14 +2122,15 @@ std::vector<std::string> ApiSystem::executeScriptLegacy(const std::string& comma
 
 std::pair<std::string, int> ApiSystem::executeScriptLegacy(const std::string& command, const std::function<void(const std::string)>& func)
 {
-	std::cout << "ApiSystem::executeScriptLegacy -> " << command << std::endl;
-	LOG(LogInfo) << "ApiSystem::executeScriptLegacy -> " << command;
+	const std::string shown = Utils::String::maskSecrets(command);
+	std::cout << "ApiSystem::executeScriptLegacy -> " << shown << std::endl;
+	LOG(LogInfo) << "ApiSystem::executeScriptLegacy -> " << shown;
 
 	FILE *pipe = popen(command.c_str(), "r");
 	if (pipe == NULL)
 	{
-		LOG(LogError) << "Error executing " << command;
-		return std::pair<std::string, int>("Error starting command : " + command, -1);
+		LOG(LogError) << "Error executing " << shown;
+		return std::pair<std::string, int>("Error starting command : " + shown, -1);
 	}
 
 	std::stringstream output_stream;
@@ -2153,13 +2154,14 @@ std::pair<std::string, int> ApiSystem::executeScriptLegacy(const std::string& co
 
 std::pair<std::string, int> ApiSystem::executeScript(const std::string command, const std::function<void(const std::string)>& func)
 {
-	LOG(LogInfo) << "ApiSystem::executeScript -> " << command;
+	const std::string shown = Utils::String::maskSecrets(command);
+	LOG(LogInfo) << "ApiSystem::executeScript -> " << shown;
 
 	FILE *pipe = popen(command.c_str(), "r");
 	if (pipe == NULL)
 	{
-		LOG(LogError) << "Error executing " << command;
-		return std::pair<std::string, int>("Error starting command : " + command, -1);
+		LOG(LogError) << "Error executing " << shown;
+		return std::pair<std::string, int>("Error starting command : " + shown, -1);
 	}
 
 	char line[1024];
@@ -2177,12 +2179,13 @@ std::pair<std::string, int> ApiSystem::executeScript(const std::string command, 
 
 bool ApiSystem::executeScript(const std::string command)
 {	
-	LOG(LogInfo) << "Running " << command;
+	const std::string shown = Utils::String::maskSecrets(command);
+	LOG(LogInfo) << "Running " << shown;
 
 	if (system(command.c_str()) == 0)
 		return true;
 	
-	LOG(LogError) << "Error executing " << command;
+	LOG(LogError) << "Error executing " << shown;
 	return false;
 }
 

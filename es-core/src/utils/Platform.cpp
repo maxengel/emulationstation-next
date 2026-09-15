@@ -827,7 +827,7 @@ namespace Utils
 
 		int runSystemCommand(const std::string& cmd_utf8, const std::string& name, Window* window)
 		{
-			LOG(LogInfo) << "runSystemCommand: " + cmd_utf8;
+			LOG(LogInfo) << "runSystemCommand: " + Utils::String::maskSecrets(cmd_utf8);
 
 			// Parent fork
 			pid_t ret = fork();

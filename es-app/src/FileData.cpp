@@ -773,7 +773,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 
 	time_t tstart = time(NULL);
 
-	LOG(LogInfo) << "	" << command;
+	LOG(LogInfo) << "	" << Utils::String::maskSecrets(command);
 
 	auto p2kConv = convertP2kFile();
 
