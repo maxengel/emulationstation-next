@@ -7,6 +7,7 @@
 #include "SystemConf.h"
 #include "Window.h"
 #include "utils/FileSystemUtil.h"
+#include "utils/OfflineProxyUrl.h"
 #include "utils/Platform.h"
 #include "utils/StringUtil.h"
 #include <ctime>
@@ -189,8 +190,9 @@ bool OfflineAchievements::askProxy(const std::string& query, std::string& body, 
 	// link. Without it, a proxy that still believes it is online -- up to its
 	// monitor's next probe after the link drops -- tries upstream first, with a
 	// fifteen-second timeout, for every one of these; the pages show the
-	// device's copy, which is exactly the store.
-	options.customHeaders.push_back("X-RA-Store-Only: 1");
+	// device's copy, which is exactly the store. The same line rides every
+	// image WebImageComponent asks of the proxy (fork #199).
+	options.customHeaders.push_back(Utils::OfflineProxy::StoreOnlyHeader);
 
 	HttpReq req(OfflineAchievementsText::requestUrl(query), &options);
 	if (req.wait())

@@ -4,6 +4,7 @@
 #include "utils/ZipFile.h"
 #include "resources/TextureResource.h"
 #include "Paths.h"
+#include "utils/OfflineProxyUrl.h"
 
 #include <algorithm>
 #include <cctype>
@@ -227,7 +228,19 @@ void WebImageComponent::render(const Transform4x4f& parentTrans)
 		if (!Utils::FileSystem::exists(localPath))
 			Utils::FileSystem::createDirectory(localPath);
 		
-		mRequest = new HttpReq(mUrlToLoad, mLocalFile);
+		// An image on the offline RetroAchievements proxy is asked for from
+		// its store and nothing else (fork #199): the icon or badge it has
+		// cached, or a 404 at once. Without the header, a proxy that still
+		// believes it is online -- up to fifteen seconds after a link drops,
+		// or on a link that is up and leads nowhere -- fetches an image it
+		// does not hold from the web with a ten-second timeout, one per
+		// visible row, while the page shows the device's copy. Every other
+		// host is asked exactly as before.
+		HttpReqOptions options(mLocalFile);
+		if (Utils::OfflineProxy::isProxyUrl(mUrlToLoad))
+			options.customHeaders.push_back(Utils::OfflineProxy::StoreOnlyHeader);
+
+		mRequest = new HttpReq(mUrlToLoad, &options);
 		mUrlToLoad = "";
 
 		if (mBusyAnim != nullptr)

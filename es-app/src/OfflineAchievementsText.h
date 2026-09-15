@@ -33,9 +33,11 @@
 
 namespace OfflineAchievementsText
 {
-	// The proxy's address on the device: RetroArch is pointed at it per
-	// launch by setsettings.sh, and the interface asks the same.
-	const char* const ProxyBase = "http://127.0.0.1:8080";
+	// The proxy's address on the device is Utils::OfflineProxy::Base
+	// (es-core/src/utils/OfflineProxyUrl.h): RetroArch is pointed at it per
+	// launch by setsettings.sh, the interface asks the same, and
+	// WebImageComponent recognises a request to it by that one definition
+	// (fork #199).
 
 	// A dorequest.php URL on the proxy for a query string ("r=patch&g=1").
 	std::string requestUrl(const std::string& query);

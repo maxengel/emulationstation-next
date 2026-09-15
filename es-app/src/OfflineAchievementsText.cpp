@@ -1,4 +1,5 @@
 #include "OfflineAchievementsText.h"
+#include "utils/OfflineProxyUrl.h"
 
 #include "utils/StringUtil.h"
 #include <rapidjson/document.h>
@@ -81,14 +82,14 @@ namespace
 
 std::string OfflineAchievementsText::requestUrl(const std::string& query)
 {
-	return std::string(ProxyBase) + "/dorequest.php?" + query;
+	return std::string(Utils::OfflineProxy::Base) + "/dorequest.php?" + query;
 }
 
 std::string OfflineAchievementsText::badgeUrl(const std::string& badgeName, bool unlocked)
 {
 	if (badgeName.empty())
 		return "";
-	return std::string(ProxyBase) + "/Badge/" + badgeName + (unlocked ? ".png" : "_lock.png");
+	return std::string(Utils::OfflineProxy::Base) + "/Badge/" + badgeName + (unlocked ? ".png" : "_lock.png");
 }
 
 OfflineAchievementsText::Game OfflineAchievementsText::parsePatch(const std::string& body)
