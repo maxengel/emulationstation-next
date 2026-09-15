@@ -184,6 +184,13 @@ bool OfflineAchievements::askProxy(const std::string& query, std::string& body, 
 	// its own requests (utils.py self_user_agent), so this changes nothing
 	// about how it speaks to RetroAchievements.
 	options.useCookieManager = false;
+	// The store and nothing else (fork #190): the fork's proxy answers a
+	// request carrying this from its store whatever it believes about the
+	// link. Without it, a proxy that still believes it is online -- up to its
+	// monitor's next probe after the link drops -- tries upstream first, with a
+	// fifteen-second timeout, for every one of these; the pages show the
+	// device's copy, which is exactly the store.
+	options.customHeaders.push_back("X-RA-Store-Only: 1");
 
 	HttpReq req(OfflineAchievementsText::requestUrl(query), &options);
 	if (req.wait())
@@ -195,6 +202,33 @@ bool OfflineAchievements::askProxy(const std::string& query, std::string& body, 
 	// miss reads as the proxy's own words and not as a status code.
 	error = req.getErrorMsg();
 	return false;
+}
+
+std::vector<OfflineAchievementsText::StoreGame> OfflineAchievements::storeSummary(bool& ok)
+{
+	std::vector<OfflineAchievementsText::StoreGame> games;
+	ok = false;
+	if (!available())
+		return games;
+	// One process over the store, one line a game -- in place of two
+	// requests a game to the proxy (fork #190). The ctl exits 1 with the
+	// toggle off, no account or no store, and says a store it could not
+	// read; either way the caller has no summary from the device.
+	std::vector<std::string> lines;
+	auto result = ApiSystem::executeScriptLegacy(std::string(CTL) + " summary 2>/dev/null",
+		[&lines](const std::string line) { lines.push_back(line); });
+	if (result.second != 0)
+		return games;
+	for (const auto& line : lines)
+	{
+		auto game = OfflineAchievementsText::parseStoreGame(line);
+		if (game.ok)
+			games.push_back(game);
+		else if (!line.empty())
+			LOG(LogWarning) << "OfflineAchievements: a line of the store's summary was not a game; skipped";
+	}
+	ok = true;
+	return games;
 }
 
 std::vector<OfflineAchievementsText::PendingAward> OfflineAchievements::pendingAwardIds()

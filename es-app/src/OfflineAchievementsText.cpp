@@ -148,6 +148,26 @@ OfflineAchievementsText::Game OfflineAchievementsText::parseAchievementSets(cons
 	return game;
 }
 
+OfflineAchievementsText::StoreGame OfflineAchievementsText::parseStoreGame(const std::string& line)
+{
+	StoreGame game;
+	rapidjson::Document doc;
+	if (!parseDocument(line, doc) || !doc.IsObject())
+		return game;
+	game.id = jsonInt(doc, "id");
+	game.achievements = jsonInt(doc, "achievements");
+	if (game.id <= 0 || game.achievements <= 0)
+		return game;
+	game.title = jsonString(doc, "title");
+	game.icon = jsonString(doc, "icon");
+	game.points = jsonInt(doc, "points");
+	game.unlocked = jsonInt(doc, "unlocked");
+	game.unlockedPoints = jsonInt(doc, "unlockedPoints");
+	game.pending = jsonInt(doc, "pending");
+	game.ok = true;
+	return game;
+}
+
 OfflineAchievementsText::Unlocks OfflineAchievementsText::parseUnlocks(const std::string& body)
 {
 	Unlocks unlocks;

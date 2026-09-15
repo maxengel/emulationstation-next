@@ -95,6 +95,12 @@ namespace OfflineAchievements
 	// as offline: the web is asked then, as it always was. A file read, no
 	// process.
 	bool proxyOffline();
+	// The store's games for the signed-in account in one read (raofflineproxy-ctl
+	// summary, fork #190): the page's whole offline summary without a request
+	// per game. ok is false when the ctl could not answer (the toggle off, no
+	// account, a store that cannot be read); an empty list with ok is a device
+	// with nothing cached yet.
+	std::vector<OfflineAchievementsText::StoreGame> storeSummary(bool& ok);
 
 	// The RetroAchievements account the proxy cached under: the username
 	// EmulationStation signed in with. The proxy keys its cache by it and

@@ -408,80 +408,54 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 	if (user.empty())
 		return ret;
 
-	const auto ids = OfflineAchievements::readyIds();
-	const auto pending = OfflineAchievements::pendingAwardIds();
-	const auto totals = OfflineAchievements::accountTotals();
-
-	// One game at a time, because the proxy answers one game at a time --
-	// it has no bulk read, and the ctl opens no store for the interface --
-	// and the first game it does not answer for ends the walk (audit #186
-	// PL-09): a proxy that has stopped is not asked a thousand times at a
-	// timeout each, and a summary that would list a fraction of the library
-	// as the whole is not shown. The caller reads the empty name as "the
-	// proxy gave no summary" and asks the web, which says in its own words
-	// that there is no connection.
-	std::vector<std::pair<std::string, RecentGame>> games;
-	for (int id : ids)
+	// One read of the store for the whole page (fork #190): raofflineproxy-ctl
+	// summary prints a line a game -- title, icon, the set's size and points,
+	// what is unlocked and what is still waiting. Before, the page asked the
+	// proxy two requests a game (audit #186 PL-09's walk); on the RG SP with
+	// 247 saved games and Wi-Fi just switched off, each of those first tried
+	// upstream while the proxy still believed it was online -- hours of
+	// PLEASE WAIT. A ctl that cannot answer leaves ret as it stands: no name,
+	// no games -- the caller's "no summary" -- and the caller asks the web,
+	// whose own request is bounded.
+	bool ok = false;
+	const auto stored = OfflineAchievements::storeSummary(ok);
+	if (!ok)
 	{
-		FileData* file = GuiRetroAchievements::getFileData(std::to_string(id));
-		const std::string hash = file != nullptr ? file->getMetadata(MetaDataId::CheevosHash) : "";
+		LOG(LogWarning) << "RetroAchievements: the store gave no summary (raofflineproxy-ctl summary did not answer); no summary from the device";
+		return ret;
+	}
 
-		auto game = getGameInfoFromDevice(id, hash, &pending);
-		if (game.ProxyDidNotAnswer)
-		{
-			LOG(LogWarning) << "RetroAchievements: the offline proxy stopped answering after " << games.size() << " of " << ids.size() << " cached games; no summary from the device";
-			// ret as it stands: no name, no games -- the caller's "no
-			// summary" -- with RecentlyPlayedCount already 0.
-			return ret;
-		}
-		if (game.ID == 0)
-		{
-			// The export names a game the proxy will not give a page for: a
-			// miss, or a body that was not the shape. Passed over, logged.
-			LOG(LogWarning) << "RetroAchievements: cached game " << id << " gave no page from the device (" << (game.NotOnDevice ? "not cached" : "not the shape expected") << ")";
-			continue;
-		}
+	std::vector<std::pair<std::string, RecentGame>> games;
+	for (const auto& game : stored)
+	{
+		FileData* file = GuiRetroAchievements::getFileData(std::to_string(game.id));
 
 		RecentGame recent;
-		recent.GameID = std::to_string(game.ID);
-		recent.Title = game.Title;
-		recent.ImageIcon = game.ImageIcon;
+		recent.GameID = std::to_string(game.id);
+		recent.Title = game.title;
+		recent.ImageIcon = game.icon;
 		if (file != nullptr && file->getSourceFileData() != nullptr && file->getSourceFileData()->getSystem() != nullptr)
 			recent.ConsoleName = file->getSourceFileData()->getSystem()->getFullName();
 
 		Award award;
-		award.NumPossibleAchievements = game.NumAchievements;
-		award.PossibleScore = 0;
-		award.NumAchieved = game.NumAwardedToUser;
+		award.NumPossibleAchievements = game.achievements;
+		award.PossibleScore = game.points;
+		award.NumAchieved = game.unlocked;
 		award.NumAchievedHardcore = 0;
-		award.ScoreAchieved = 0;
+		award.ScoreAchieved = game.unlockedPoints;
 		award.ScoreAchievedHardcore = 0;
-		for (const auto& a : game.Achievements)
-		{
-			const int points = Utils::String::toInteger(a.Points);
-			award.PossibleScore += points;
-			if (a.isUnlocked())
-				award.ScoreAchieved += points;
-		}
 		ret.Awarded[recent.GameID] = award;
-		games.push_back(std::make_pair(Utils::String::toUpper(game.Title), recent));
+		games.push_back(std::make_pair(Utils::String::toUpper(game.title), recent));
 	}
 
-	// The export named games and not one of them gave a page: the proxy
-	// and its own export disagree, and a list of nothing shown as the
-	// library would be a page that lies (audit #186 PL-26). No summary; the
-	// caller asks the web. An empty export is a device with nothing cached
-	// yet, and its empty list is the truth.
-	if (!ids.empty() && games.empty())
-	{
-		LOG(LogWarning) << "RetroAchievements: none of the " << ids.size() << " cached games gave a page from the device; no summary";
-		return ret;
-	}
-
+	// An empty list with the ctl answering is a device with nothing cached
+	// yet, and its empty list is the truth: the ctl lists what the store
+	// holds, so there is no export for it to disagree with (audit #186 PL-26).
 	std::sort(games.begin(), games.end(), [](const std::pair<std::string, RecentGame>& a, const std::pair<std::string, RecentGame>& b) { return a.first < b.first; });
 	for (const auto& game : games)
 		ret.RecentlyPlayed.push_back(game.second);
 
+	const auto totals = OfflineAchievements::accountTotals();
 	ret.Username = user;
 	ret.FromDevice = true;
 	ret.RecentlyPlayedCount = (int)ret.RecentlyPlayed.size();
