@@ -93,6 +93,10 @@ public:
 	// is the same table as one word for the stamps; whyForToken reads it
 	// back. Shared with the transfer page and the rows under the toggles so
 	// every surface says the same thing about the same code.
+	// One stamp file in the last-sync shape (recordOutcome's comment), at any
+	// path: recordOutcome's own, and a script's last-backup / last-restore
+	// when this process knows an outcome the script's trap could not name.
+	static void writeStamp(const std::string& path, int rc, const std::string& token, const std::string& why);
 	static std::string whyForCode(int rc);
 	static std::string tokenForCode(int rc);
 	static std::string whyForToken(const std::string& token);
