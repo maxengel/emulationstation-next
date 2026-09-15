@@ -443,6 +443,227 @@ namespace Utils
 
 		} // shellQuote
 
+		// ------------------------------------------------------------ maskSecrets
+		//
+		// A credential's value never reaches a log (D-INFRA-011): every command
+		// line, URL or query EmulationStation logs goes through here first, at
+		// every level (fork #177). The key or flag stays and the value reads
+		// <redacted>, so the line still says what ran; an empty value stays
+		// empty, since whether a credential is set may be shown and only what it
+		// is may not. A value already written as a placeholder in angle brackets
+		// (<password>, <redacted>) is left alone, which also makes a second pass
+		// a no-op.
+		//
+		// What counts as a credential's value, in the shapes this tree builds:
+		//
+		//   setrootpass hunter2                the rest of the line -- GuiMenu passes
+		//                                      the password unquoted, so a space in
+		//                                      it would otherwise leave a tail visible
+		//   wifictl connect 'ssid' 'psk' 'CC'  the second word after connect or
+		//   wifictl enable 'ssid' 'psk'        enable: the passphrase, not the SSID
+		//   --password x, -p x, -pin x,        a flag ending in a credential word,
+		//   -netplaypass x, --token x          then one word; --key is batocera-
+		//                                      hotkeys' key NAME and mkdir -p takes
+		//                                      no value, so neither masks
+		//   password=x, pass=x, token=x,       a name ending in a credential word,
+		//   key=x, secret=x, psk=x, pin=x      then =: devpassword, cheevos_token,
+		//                                      wifi.key, ScreenScraperPass, api-key
+		//   ?y=x, &t=x, &p=x                   RetroAchievements' one-letter query
+		//                                      keys: the web API key, the token,
+		//                                      the login password
+		//
+		// A value is one shell word: a single-quoted run as shellQuote writes it
+		// (with the '\'' escape), a double-quoted run with backslash escapes, or
+		// an unquoted run to the next space, &, ;, | or quote. The quotes go with
+		// the value, so a passphrase with spaces is masked whole. An unterminated
+		// quote takes the rest of the line: where the shape is unclear, more is
+		// masked rather than less.
+
+		static bool maskIsWordChar(char c)
+		{
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+				|| c == '_' || c == '.' || c == '-';
+		}
+
+		static bool maskIsSpace(char c)
+		{
+			return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+		}
+
+		static bool maskEndsValue(char c)
+		{
+			return maskIsSpace(c) || c == '&' || c == ';' || c == '|' || c == '\'' || c == '"';
+		}
+
+		static std::string maskLower(const std::string& word)
+		{
+			std::string lower = word;
+			for (auto& c : lower)
+				if (c >= 'A' && c <= 'Z')
+					c = (char)(c - 'A' + 'a');
+			return lower;
+		}
+
+		// Does a lower-cased name end in a word that means "credential"?
+		static bool maskIsSecretName(const std::string& lower)
+		{
+			static const char* const words[] = { "password", "pass", "token", "key", "secret", "psk", "pin" };
+			for (const char* word : words)
+			{
+				const size_t len = strlen(word);
+				if (lower.size() >= len && lower.compare(lower.size() - len, len, word) == 0)
+					return true;
+			}
+			return false;
+		}
+
+		// The end of the one shell word starting at pos.
+		static size_t maskValueEnd(const std::string& s, size_t pos)
+		{
+			if (pos >= s.size())
+				return pos;
+
+			const char quote = s[pos];
+			if (quote == '\'' || quote == '"')
+			{
+				for (size_t i = pos + 1; i < s.size(); ++i)
+				{
+					if (quote == '"' && s[i] == '\\')
+					{
+						++i; // an escaped character, whatever it is
+						continue;
+					}
+					if (s[i] != quote)
+						continue;
+					if (quote == '\'' && s.compare(i, 4, "'\\''") == 0)
+					{
+						i += 3; // shellQuote's embedded quote: close, \', reopen
+						continue;
+					}
+					return i + 1;
+				}
+				return s.size(); // unterminated: the value is the rest of the line
+			}
+
+			size_t i = pos;
+			while (i < s.size() && !maskEndsValue(s[i]))
+				++i;
+			return i;
+		}
+
+		static bool maskIsPlaceholder(const std::string& s, size_t pos, size_t end)
+		{
+			return end > pos + 1 && s[pos] == '<' && s[end - 1] == '>';
+		}
+
+		// Append the value at [pos, end) masked -- or as it is when it is empty
+		// or already a placeholder -- and return end.
+		static size_t maskAppendValue(const std::string& s, size_t pos, size_t end, std::string& out)
+		{
+			if (end == pos || maskIsPlaceholder(s, pos, end))
+				out.append(s, pos, end - pos);
+			else
+				out += "<redacted>";
+			return end;
+		}
+
+		static size_t maskCopySpaces(const std::string& s, size_t pos, std::string& out)
+		{
+			while (pos < s.size() && maskIsSpace(s[pos]))
+				out += s[pos++];
+			return pos;
+		}
+
+		std::string maskSecrets(const std::string& _string)
+		{
+			const std::string& s = _string;
+			std::string out;
+			out.reserve(s.size());
+
+			std::string previous; // the word before this one, lower-cased
+			size_t i = 0;
+			while (i < s.size())
+			{
+				if (!maskIsWordChar(s[i]))
+				{
+					out += s[i++];
+					continue;
+				}
+
+				const size_t start = i;
+				while (i < s.size() && maskIsWordChar(s[i]))
+					++i;
+
+				const std::string word = maskLower(s.substr(start, i - start));
+				out.append(s, start, i - start);
+
+				// name=value, or a one-letter RetroAchievements key after ? or &
+				const bool queryKey = (word == "y" || word == "t" || word == "p")
+					&& start > 0 && (s[start - 1] == '?' || s[start - 1] == '&');
+
+				if (i < s.size() && s[i] == '=' && (queryKey || maskIsSecretName(word)))
+				{
+					out += '=';
+					++i;
+					i = maskAppendValue(s, i, maskValueEnd(s, i), out);
+					previous = word;
+					continue;
+				}
+
+				if (i < s.size() && maskIsSpace(s[i]))
+				{
+					if (word == "setrootpass")
+					{
+						i = maskCopySpaces(s, i, out);
+						size_t end = s.size();
+						while (end > i && maskIsSpace(s[end - 1]))
+							--end;
+						i = maskAppendValue(s, i, end, out);
+						previous = word;
+						continue;
+					}
+
+					if (word == "wifictl")
+					{
+						size_t j = i;
+						while (j < s.size() && maskIsSpace(s[j]))
+							++j;
+						size_t k = j;
+						while (k < s.size() && maskIsWordChar(s[k]))
+							++k;
+
+						const std::string sub = maskLower(s.substr(j, k - j));
+						if (sub == "connect" || sub == "enable")
+						{
+							out.append(s, i, k - i);
+							i = maskCopySpaces(s, k, out);
+							const size_t ssidEnd = maskValueEnd(s, i); // the SSID is no secret
+							out.append(s, i, ssidEnd - i);
+							i = maskCopySpaces(s, ssidEnd, out);
+							i = maskAppendValue(s, i, maskValueEnd(s, i), out);
+							previous = sub;
+							continue;
+						}
+					}
+
+					const bool flag = word.size() > 1 && word[0] == '-'
+						&& ((word == "-p" && previous != "mkdir") || (word != "--key" && maskIsSecretName(word)));
+					if (flag)
+					{
+						i = maskCopySpaces(s, i, out);
+						i = maskAppendValue(s, i, maskValueEnd(s, i), out);
+						previous = word;
+						continue;
+					}
+				}
+
+				previous = word;
+			}
+
+			return out;
+
+		} // maskSecrets
+
 		std::string replace(const std::string& _string, const std::string& _replace, const std::string& _with)
 		{
 			if (_replace.empty())

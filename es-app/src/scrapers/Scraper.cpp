@@ -521,7 +521,7 @@ void MDResolveHandle::update()
 
 std::unique_ptr<ImageDownloadHandle> MDResolveHandle::downloadImageAsync(const std::string& url, const std::string& saveAs, bool resize)
 {
-	LOG(LogDebug) << "downloadImageAsync : " << url << " -> " << saveAs;
+	LOG(LogDebug) << "downloadImageAsync : " << Utils::String::maskSecrets(url) << " -> " << saveAs;
 
 	return std::unique_ptr<ImageDownloadHandle>(new ImageDownloadHandle(url, saveAs, 
 		resize ? Settings::getInstance()->getInt("ScraperResizeWidth") : 0,

@@ -125,7 +125,7 @@ void OfflineScanJob::run(std::shared_ptr<OfflineScanJob> self)
 		mState.exit = ret;
 		mState.elapsedMs = (int) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - mStarted).count();
 		mState.finished = true;
-		LOG(LogInfo) << "OfflineScanJob: " << mCommand << " exited " << ret
+		LOG(LogInfo) << "OfflineScanJob: " << Utils::String::maskSecrets(mCommand) << " exited " << ret
 			<< " (cached " << mState.cached << ", skipped " << mState.skipped << ", ready " << mState.ready << ")";
 	}
 	changed();
