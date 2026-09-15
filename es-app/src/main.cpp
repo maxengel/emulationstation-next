@@ -505,7 +505,9 @@ void launchStartupGame()
 //   gets through -- which on an SDIO Wi-Fi module is seconds after
 //   association and the least stable moment there is (#102). It prints
 //   ">>> doing network" once when it starts waiting, so the card can say
-//   WAITING FOR THE NETWORK... rather than Working... for that time, and
+//   what that time is -- CHECKING THE CONNECTION... when the interface
+//   already has a link, WAITING FOR A NETWORK, UP TO 60 SECONDS... when
+//   it has none (fork #192) -- rather than Working..., and
 //   gives up at 60 s with the no-network code. An image without it falls
 //   back to the route check and probe loop, which prints the same line at
 //   the first failed probe and keeps the same 60 s of wall clock, checked
@@ -540,7 +542,9 @@ static void startStartupSavesSync(Window* window)
 	// #103). It exits 0 once NetworkManager has reported connected and held
 	// it for a short grace, and prints ">>> doing network" once if it has to
 	// wait -- the line the probe loop printed, so the card and the launch
-	// gate read it unchanged. The loop it replaces started the sync on the
+	// gate read it unchanged; the card's words for it follow the link the
+	// interface sees (fork #192), and the bound it says is read back out of
+	// the --wait below, so the two cannot drift. The loop it replaces started the sync on the
 	// first ping that got through, which on an SDIO Wi-Fi module is seconds
 	// after association and the least stable moment there is (#102); one
 	// ping is not a settled connection either, only a packet that once made

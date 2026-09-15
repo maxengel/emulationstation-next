@@ -606,6 +606,39 @@ int forwardOnly(int shown, int proposed)
 	return proposed > shown ? proposed : shown;
 }
 
+NetworkStepChoice networkStep(bool linkUp, const std::string& command)
+{
+	NetworkStepChoice choice;
+	choice.step = linkUp ? NetworkStep::Checking : NetworkStep::Waiting;
+	choice.waitSeconds = NETWORK_WAIT_DEFAULT_S;
+
+	// The first --wait is the script's: the startup command names it once,
+	// on the cloud_net_ready line, and nothing after it is ours.
+	static const std::string FLAG = "--wait";
+	const size_t at = command.find(FLAG);
+	if (at == std::string::npos)
+		return choice;
+	size_t i = at + FLAG.size();
+	if (i < command.size() && command[i] == '=')
+		i++;
+	else
+		while (i < command.size() && command[i] == ' ')
+			i++;
+	size_t end = i;
+	while (end < command.size() && command[end] >= '0' && command[end] <= '9')
+		end++;
+	// A number of the size a wait can be, and nothing glued to it -- the
+	// script's own parser refuses anything else (exit 64), so the default
+	// stands rather than a bound nobody set.
+	const size_t digits = end - i;
+	if (digits == 0 || digits > 6)
+		return choice;
+	if (end < command.size() && (isalnum((unsigned char) command[end]) || command[end] == '_' || command[end] == '-'))
+		return choice;
+	choice.waitSeconds = atoi(command.substr(i, digits).c_str());
+	return choice;
+}
+
 } // namespace CloudText
 
 // ---------------------------------------------------------------- offline achievements

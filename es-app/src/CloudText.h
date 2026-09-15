@@ -294,6 +294,31 @@ namespace CloudText
 	// drawn and what is proposed, with -1 on either side meaning nothing.
 	int forwardOnly(int shown, int proposed);
 
+	// The startup card's network step (fork #192). cloud_net_ready prints
+	// ">>> doing network" whenever it has to wait at all -- the three
+	// seconds it holds a connection that is already up included -- so the
+	// card read WAITING FOR THE NETWORK on a device whose Wi-Fi had been up
+	// since fifteen seconds after boot. Maintainer, on the RG SP: "doesn't
+	// the device know if it's online by the time it starts up and shows
+	// EmulationStation?" It does, and the words follow the link, not the
+	// script: with a link the step is the check it is -- whether the
+	// connection has settled, a different question from whether the link
+	// is up -- and reads CHECKING; without one it is a wait, and the line
+	// says how long, from the bound the command hands cloud_net_ready
+	// (--wait N, or --wait=N; the script's own default when the command
+	// names none, which is also the fallback loop's minute). A zero is
+	// handed back as one -- the caller then names no number rather than
+	// "up to 0 seconds". The words themselves stay with the caller
+	// (D-UI-055: a sentence must be true of what happens).
+	enum class NetworkStep { Checking, Waiting };
+	struct NetworkStepChoice
+	{
+		NetworkStep step = NetworkStep::Checking;
+		int waitSeconds = 60;
+	};
+	constexpr int NETWORK_WAIT_DEFAULT_S = 60;
+	NetworkStepChoice networkStep(bool linkUp, const std::string& command);
+
 	// The offline RetroAchievements proxy's answers, read as text (fork
 	// #173, D-RA-004). raofflineproxy-ctl prints them; OfflineAchievements
 	// runs it; what the lines mean is settled here, where it has a test.

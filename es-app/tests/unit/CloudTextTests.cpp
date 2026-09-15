@@ -827,6 +827,66 @@ TEST_CASE("forwardOnly never moves the bar back")
 	bar = forwardOnly(bar, phaseBar(Phase::Sending, 100));   CHECK(bar == 100);
 }
 
+// ---------------------------------------------------------------- the network step (#192)
+
+TEST_CASE("networkStep reads the link, not the script")
+{
+	// The startup command as main.cpp composes it, in the part that matters.
+	const std::string startup = "if [ -x /usr/bin/cloud_net_ready ]; then /usr/bin/cloud_net_ready --wait 60; _w=$?; [ \"$_w\" = 0 ] || exit \"$_w\"; else ip -4 route show default; fi; echo \">>> doing receive\"";
+
+	// cloud_net_ready announces its wait whenever it waits at all, the grace
+	// it gives a connection that is already up included. The card's words
+	// come from the link the interface sees, not from the announcement: a
+	// link makes the step a check (the maintainer's device had been online
+	// for fifteen seconds and read WAITING FOR THE NETWORK), no link makes
+	// it a wait.
+	CHECK(networkStep(true, startup).step == NetworkStep::Checking);
+	CHECK(networkStep(false, startup).step == NetworkStep::Waiting);
+
+	// Whatever the command says, or does not say.
+	CHECK(networkStep(true, "").step == NetworkStep::Checking);
+	CHECK(networkStep(false, "").step == NetworkStep::Waiting);
+	CHECK(networkStep(true, "cloud_net_ready --wait 5").step == NetworkStep::Checking);
+}
+
+TEST_CASE("networkStep reads the wait's bound out of the command")
+{
+	// The number the shell runs is the number the card says, so the two
+	// cannot drift: --wait N as main.cpp spells it, and --wait=N as the
+	// script also takes it.
+	CHECK(networkStep(false, "/usr/bin/cloud_net_ready --wait 60; _w=$?").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait 45").waitSeconds == 45);
+	CHECK(networkStep(false, "cloud_net_ready --wait=45").waitSeconds == 45);
+	CHECK(networkStep(false, "cloud_net_ready --wait   7 ; echo x").waitSeconds == 7);
+	CHECK(networkStep(false, "cloud_net_ready --wait 120\"").waitSeconds == 120);
+
+	// No bound named: the script's own default, which is also the fallback
+	// loop's minute on an image without the script.
+	CHECK(NETWORK_WAIT_DEFAULT_S == 60);
+	CHECK(networkStep(false, "cloud_net_ready").waitSeconds == 60);
+	CHECK(networkStep(false, "").waitSeconds == 60);
+	CHECK(networkStep(false, "while :; do timeout 4 ping -q -c1 -W2 google.com && break; [ $(( $(date +%s) - _t0 )) -lt 60 ] || break; sleep 2; done").waitSeconds == 60);
+
+	// Junk after the flag is not a bound, as the script's own parser would
+	// refuse it: the default stands rather than a number nobody set.
+	CHECK(networkStep(false, "cloud_net_ready --wait abc").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait=").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait 60abc").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait 12345678").waitSeconds == 60);
+	CHECK(networkStep(false, "cloud_net_ready --wait -5").waitSeconds == 60);
+
+	// A zero is handed back as one: the caller then names no number rather
+	// than promising "up to 0 seconds".
+	CHECK(networkStep(false, "cloud_net_ready --wait 0").waitSeconds == 0);
+
+	// The first --wait is the script's; a later one is somebody else's.
+	CHECK(networkStep(false, "cloud_net_ready --wait 30; other --wait 99").waitSeconds == 30);
+
+	// The bound is read whether or not the caller needs it.
+	CHECK(networkStep(true, "cloud_net_ready --wait 45").waitSeconds == 45);
+}
+
 // ---------------------------------------------------------------- offline achievements (#173)
 
 TEST_CASE("parsePendingCount reads one whole number and nothing else")

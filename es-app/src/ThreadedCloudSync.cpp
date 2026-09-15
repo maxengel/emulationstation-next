@@ -148,6 +148,23 @@ void ThreadedCloudSync::run()
 			half = _("SENDING");
 		mWndNotification->updateText(half.empty() ? line : half + std::string(" \xC2\xB7 ") + line);
 	};
+	// The same line offered in more than one length: the card measures the
+	// candidates in its own font on the interface thread and shows the first
+	// that fits (AsyncNotificationComponent), as the outcome line does.
+	auto sayAny = [this](const std::vector<std::string>& candidates)
+	{
+		if (mWndNotification == nullptr)
+			return;
+		std::string half;
+		if (mPhase == CloudText::Phase::Receiving)
+			half = _("RECEIVING");
+		else if (mPhase == CloudText::Phase::Sending)
+			half = _("SENDING");
+		std::vector<std::string> lines;
+		for (auto& line : candidates)
+			lines.push_back(half.empty() ? line : half + std::string(" \xC2\xB7 ") + line);
+		mWndNotification->updateText(lines, std::vector<std::string>());
+	};
 	auto bar = [this](int percentInPhase)
 	{
 		int next = CloudText::phaseBar(mPhase, percentInPhase);
@@ -189,10 +206,16 @@ void ThreadedCloudSync::run()
 			// ">>> " lines are the scripts talking to the UI, not to the
 			// player. ">>> pid N" is the wrapper above saying which process
 			// group the command is (for cancelForLaunch); ">>> doing network"
-			// says it is waiting for the network, the one wait this card
-			// shows -- the startup sync (fork #94) gives the network up to a
-			// minute to come up after boot, and a card reading "Working..."
-			// for that minute says nothing about why; ">>> doing receive" and
+			// says cloud_net_ready is waiting for a settled connection, the
+			// one wait this card shows -- the startup sync (fork #94) gives
+			// the network up to a minute to come up after boot, and a card
+			// reading "Working..." for that minute says nothing about why.
+			// Its words follow the link (fork #192): CHECKING THE
+			// CONNECTION... when the interface has an address, since the
+			// script holds a connection that is up for a short grace and
+			// that is a check, not a wait; WAITING FOR A NETWORK with the
+			// bound otherwise, then the run goes on or ends SKIPPED as it
+			// always did; ">>> doing receive" and
 			// ">>> doing send" are a composed sync announcing each of its
 			// halves before it starts, which is what gives the bar its two
 			// halves (D-UI-052). ">>> why <sentence>" is
@@ -227,7 +250,29 @@ void ThreadedCloudSync::run()
 					const bool network = (protocol.text == "network");
 					mWaitingForNetwork = network;
 					if (network)
-						say(_("WAITING FOR THE NETWORK..."));
+					{
+						// Which words is CloudText::networkStep's call (fork
+						// #192): the link as the interface sees it now -- the
+						// same test NetworkStateWatcher makes, an address on
+						// an interface -- and the bound as the command spelt
+						// it, so the number on the card cannot drift from the
+						// number the shell runs. With a link the step is a
+						// check and reads so; without one it is a wait, said
+						// with its bound where the panel has room and without
+						// it where it has not (D-UI-055: true of what happens).
+						const CloudText::NetworkStepChoice choice = CloudText::networkStep(
+							!Utils::Platform::queryIPAddress().empty(), mCommand);
+						if (choice.step == CloudText::NetworkStep::Checking)
+							say(_("CHECKING THE CONNECTION..."));
+						else
+						{
+							std::vector<std::string> lines;
+							if (choice.waitSeconds > 0)
+								lines.push_back(Utils::String::format(_("WAITING FOR A NETWORK, UP TO %d SECONDS...").c_str(), choice.waitSeconds));
+							lines.push_back(_("WAITING FOR A NETWORK..."));
+							sayAny(lines);
+						}
+					}
 
 					// A half of a composed sync starting (">>> doing receive",
 					// ">>> doing send"; D-UI-052): the words carry its name from
