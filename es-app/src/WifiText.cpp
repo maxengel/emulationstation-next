@@ -54,15 +54,44 @@ std::string WifiText::parseCurrent(const std::vector<std::string>& lines)
 	return "";
 }
 
-WifiText::SsidLine WifiText::ssidLine(bool answered, const std::string& joined, const std::string& configured)
+std::vector<WifiText::PickerRow> WifiText::pickerRows(const std::vector<std::string>& inRange, const std::vector<SavedNetwork>& saved, const std::string& current)
 {
-	if (!answered)
-		return SsidLine::CouldNotCheck;
-	if (joined.empty())
-		return SsidLine::NotConnected;
-	if (joined == configured)
-		return SsidLine::None;
-	return SsidLine::ConnectedTo;
+	auto isSaved = [&saved](const std::string& name)
+	{
+		for (const auto& network : saved)
+			if (network.name == name)
+				return true;
+		return false;
+	};
+
+	std::vector<PickerRow> rows;
+	auto listed = [&rows](const std::string& name)
+	{
+		for (const auto& row : rows)
+			if (row.name == name)
+				return true;
+		return false;
+	};
+
+	if (!current.empty())
+		rows.push_back({ current, isSaved(current), true });
+
+	for (const auto& rawName : inRange)
+	{
+		const std::string name = withoutCR(rawName);
+		if (name.empty() || listed(name))
+			continue;
+		rows.push_back({ name, isSaved(name), false });
+	}
+	return rows;
+}
+
+bool WifiText::parseJoin(const std::vector<std::string>& lines)
+{
+	for (const auto& rawLine : lines)
+		if (withoutCR(rawLine) == "joined")
+			return true;
+	return false;
 }
 
 WifiText::ForgetOutcome WifiText::parseForget(const std::vector<std::string>& lines)

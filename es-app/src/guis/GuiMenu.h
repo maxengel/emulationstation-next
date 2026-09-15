@@ -91,7 +91,6 @@ private:
         void openEmulatorSettings();
         void openSystemEmulatorSettings(SystemData* system);
 
-        static void openWifiSettings(Window* win, std::string title, std::string data, const std::function<void(std::string)>& onsave);
 
         MenuComponent mMenu;
         std::shared_ptr<TextComponent> mVersion;

@@ -100,22 +100,46 @@ TEST_CASE("parseForget reads the word, not the absence of an error")
 	CHECK(cr.disconnected);
 }
 
-TEST_CASE("ssidLine says nothing while the device is on the configured network: the value on the right already names it")
+TEST_CASE("pickerRows: the joined network first, the rest in the scan's order, the saved ones marked")
 {
-	CHECK(ssidLine(true, "Home Wi-Fi", "Home Wi-Fi") == SsidLine::None);
+	auto rows = pickerRows({ "Cafe: Guest", "Home Wi-Fi", "Library" }, { { "Home Wi-Fi", true }, { "Cafe: Guest", false } }, "Home Wi-Fi");
+	REQUIRE(rows.size() == 3);
+	CHECK(rows[0].name == "Home Wi-Fi");
+	CHECK(rows[0].connected);
+	CHECK(rows[0].saved);
+	CHECK(rows[1].name == "Cafe: Guest");
+	CHECK_FALSE(rows[1].connected);
+	CHECK(rows[1].saved);
+	CHECK(rows[2].name == "Library");
+	CHECK_FALSE(rows[2].connected);
+	CHECK_FALSE(rows[2].saved);
 }
 
-TEST_CASE("ssidLine names the joined network only when it is another one than the row's value (fork #191)")
+TEST_CASE("pickerRows: a saved network out of range is not a row; the joined one is, even when the scan missed it")
 {
-	CHECK(ssidLine(true, "Cafe: Guest", "Home Wi-Fi") == SsidLine::ConnectedTo);
-	CHECK(ssidLine(true, "home wi-fi", "Home Wi-Fi") == SsidLine::ConnectedTo);  // a name is case-sensitive
-	CHECK(ssidLine(true, "Home Wi-Fi", "") == SsidLine::ConnectedTo);           // nothing configured, yet joined
+	auto rows = pickerRows({ "Library" }, { { "Home Wi-Fi", true }, { "Office", false } }, "Home Wi-Fi");
+	REQUIRE(rows.size() == 2);
+	CHECK(rows[0].name == "Home Wi-Fi");
+	CHECK(rows[0].connected);
+	CHECK(rows[1].name == "Library");
+	CHECK_FALSE(rows[1].saved);
 }
 
-TEST_CASE("ssidLine keeps 'joined to none' and 'no answer' apart, whatever the setting says")
+TEST_CASE("pickerRows drops empty names and repeats, keeps a name's case, and has no connected row when the device is on none")
 {
-	CHECK(ssidLine(true, "", "Home Wi-Fi") == SsidLine::NotConnected);
-	CHECK(ssidLine(true, "", "") == SsidLine::NotConnected);
-	CHECK(ssidLine(false, "", "Home Wi-Fi") == SsidLine::CouldNotCheck);
-	CHECK(ssidLine(false, "Home Wi-Fi", "Home Wi-Fi") == SsidLine::CouldNotCheck);  // a name with no answer behind it is no answer
+	auto rows = pickerRows({ "", "Cafe: Guest\r", "Cafe: Guest", "cafe: guest" }, {}, "");
+	REQUIRE(rows.size() == 2);
+	CHECK(rows[0].name == "Cafe: Guest");
+	CHECK_FALSE(rows[0].connected);
+	CHECK_FALSE(rows[0].saved);
+	CHECK(rows[1].name == "cafe: guest");
+}
+
+TEST_CASE("parseJoin reads the word, not the absence of an error")
+{
+	CHECK(parseJoin({ "joined" }));
+	CHECK(parseJoin({ "joined\r" }));
+	CHECK_FALSE(parseJoin({}));
+	CHECK_FALSE(parseJoin({ "" }));
+	CHECK_FALSE(parseJoin({ "Error: Connection activation failed." }));
 }
