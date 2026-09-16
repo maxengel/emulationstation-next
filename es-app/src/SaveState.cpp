@@ -224,8 +224,13 @@ void SaveState::onGameEnded(FileData* game)
 		}
 	}
 
-	if (this->config != nullptr && this->config->incremental)
-		SaveStateRepository::renumberSlots(game, this->config);
+	// No renumbering after a session (D-UI-069, maintainer 2026-09-16): a
+	// slot's number never changes once written. Upstream closes the gaps a
+	// deletion leaves by renaming every slot above it, which the save sync
+	// reads as a deletion plus a new file -- a re-upload, a delete the
+	// player never made, and on a second device a conflict out of nothing.
+	// Gaps stay; the tiles show dates, and RetroArch's auto-increment saves
+	// to the highest slot plus one whatever lies below.
 }
 
 void SaveState::remove() const

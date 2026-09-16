@@ -400,14 +400,15 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 
 					toDelete.saveState->remove();
 
-					SaveStateRepository::renumberSlots(mGame, conf);
+					// The other slots keep their numbers (D-UI-069): the deletion is
+					// the only change, already recorded by --retire above.
 
 					if (recordDeletion)
 					{
-						// The renumber moved every slot above the deleted one; re-key now
-						// rather than at the next exit. --rescan carries no provenance, which
-						// is the point: no game ran, so there is no frozen emulator or core to
-						// pass and getEmulator()/getCore() must not be used in its place.
+						// Re-key the set as it now is, now rather than at the next exit.
+						// --rescan carries no provenance, which is the point: no game
+						// ran, so there is no frozen emulator or core to pass and
+						// getEmulator()/getCore() must not be used in its place.
 						FileData* game = mGame->getSourceFileData();
 						int rescanCode = ApiSystem::executeScriptLegacy(std::string("/usr/bin/cloud_capture --rescan --system ")
 							+ Utils::String::shellQuote(game->getSystem()->getName())

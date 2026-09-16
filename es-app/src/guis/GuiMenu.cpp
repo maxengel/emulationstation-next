@@ -9023,7 +9023,9 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 			// does) so every row reads the connection back. The value's
 			// width follows its text, as the IP ADDRESS row's does.
 			ComponentListRow ssidRow;
-			auto ssidLabel = std::make_shared<TextComponent>(mWindow, _("WI-FI SSID"), font, color);
+			// WI-FI NETWORK, since the value is the network the device is on
+			// (D-UI-071; the row was WI-FI SSID while its value was the setting).
+			auto ssidLabel = std::make_shared<TextComponent>(mWindow, _("WI-FI NETWORK"), font, color);
 			if (EsLocale::isRTL())
 				ssidLabel->setHorizontalAlignment(Alignment::ALIGN_RIGHT);
 			ssidRow.addElement(ssidLabel, true);
