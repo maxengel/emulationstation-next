@@ -768,16 +768,18 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// while it runs: starting a game in the middle of that can upload a
 	// half-written save or restore over one the game has already loaded.
 	//
-	// The startup sync and the after-a-game backup run without a press, and
-	// a player who picks a game has made a choice over them (#101,
-	// maintainer's decision, 2026-09-09): the launch cancels the sync in
-	// whatever phase it is in, waits for it to be gone, and goes ahead; the
-	// card says SKIPPED - A GAME WAS STARTED. Safe because the scripts are
-	// rclone copy -- each file written under a temporary name and renamed
-	// when complete, nothing deleted -- so a copy cut short leaves no
-	// partial file and the next run finishes it; the wait is what keeps a
-	// rename from landing after the emulator has the save open. Before
-	// #101 only the network wait could be cancelled (fork #94), and a
+	// The startup sync and the after-a-game sync run without a press. From
+	// #101 (maintainer, 2026-09-09) a launch cancelled them on its own --
+	// picking a game was the choice -- and since 2026-09-16 (D-CLOUD-130)
+	// it asks first, like every other sync: the maintainer met the exit
+	// sync's stop as "it told me it was stopping so I couldn't play" and
+	// wants one behaviour for every sync or transfer a launch would
+	// interrupt. Stopping is safe because the scripts are rclone copy --
+	// each file written under a temporary name and renamed when complete,
+	// nothing deleted -- so a copy cut short leaves no partial file and the
+	// next run finishes it; the wait for the process to be gone is what
+	// keeps a rename from landing after the emulator has the save open.
+	// Before #101 only the network wait could be cancelled (fork #94), and a
 	// transfer that had lost its link was refused for as long as rclone's
 	// own timeouts let it run (#103).
 	//
@@ -790,7 +792,11 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// when the sync is in progress and someone tries to start the new game,
 	// we might as well give them the option as to whether they'd like to
 	// cancel or keep waiting." So each is a question with two answers
-	// (D-CLOUD-129). STOP IT AND PLAY sends the run's process group SIGTERM,
+	// (D-CLOUD-129), and since D-CLOUD-130 the automatic syncs ask the same
+	// question: "If we want consistent behavior on how user-started syncs or
+	// transfers deal with a potential interruption by a game launch, we
+	// should have a consistent behavior."
+ STOP IT AND PLAY sends the run's process group SIGTERM,
 	// waits behind a spinner for it to be gone -- the automatic sync's wait,
 	// for the same reason: a rename must not land under a game that has the
 	// save open -- and then launches through ViewController, launch effect
@@ -800,32 +806,24 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// one did not, and a match's deletions stop where they are. The run's
 	// outcome reads SKIPPED - YOU STARTED A GAME, as the card's does.
 	//
-	// An automatic sync that was signalled for this launch and had not gone
-	// within cancelForLaunch's two-second budget used to be a modal too --
-	// IT'S STOPPING SO YOU CAN PLAY, TRY AGAIN IN A MOMENT -- which the
-	// maintainer met as "it told me it was stopping so I couldn't play". It
-	// is on its way out, so the launch now waits for it behind the same
-	// spinner and goes.
-	ThreadedCloudSync::CancelRefusal refusal = ThreadedCloudSync::CancelRefusal::Stopping;
-	if (ThreadedCloudSync::isRunning() && !ThreadedCloudSync::cancelForLaunch(&refusal))
+	// One question for any sync on the card, whoever started it. STOP IT AND
+	// PLAY cancels it (cancelForLaunch with the player's answer, which sends
+	// the group SIGTERM and waits its two seconds) and launches; a sync slow
+	// to die is waited for behind the spinner rather than refused.
+	if (ThreadedCloudSync::isRunning())
 	{
-		if (refusal == ThreadedCloudSync::CancelRefusal::PlayerStarted)
-		{
-			window->pushGui(new GuiMsgBox(window,
-				_("YOUR SAVES ARE SYNCING WITH THE CLOUD.") + "\n\n" + _("IF YOU STOP IT, THE NEXT SYNC FINISHES WHAT THIS ONE DID NOT."),
-				_("STOP IT AND PLAY"), [this, window, options]
-				{
-					LOG(LogInfo) << "launch: the player chose to stop their sync for a game";
-					ThreadedCloudSync::CancelRefusal again = ThreadedCloudSync::CancelRefusal::Stopping;
-					if (ThreadedCloudSync::cancelForLaunch(&again, true) || !ThreadedCloudSync::isRunning())
-						launchNow(window, this, options);
-					else
-						launchWhenGone(window, this, options, [] { return ThreadedCloudSync::isRunning(); }, nullptr);
-				},
-				_("KEEP WAITING"), nullptr));
-			return false;
-		}
-		launchWhenGone(window, this, options, [] { return ThreadedCloudSync::isRunning(); }, nullptr);
+		window->pushGui(new GuiMsgBox(window,
+			_("YOUR SAVES ARE SYNCING WITH THE CLOUD.") + "\n\n" + _("IF YOU STOP IT, THE NEXT SYNC FINISHES WHAT THIS ONE DID NOT."),
+			_("STOP IT AND PLAY"), [this, window, options]
+			{
+				LOG(LogInfo) << "launch: the player chose to stop the sync for a game";
+				ThreadedCloudSync::CancelRefusal again = ThreadedCloudSync::CancelRefusal::Stopping;
+				if (ThreadedCloudSync::cancelForLaunch(&again, true) || !ThreadedCloudSync::isRunning())
+					launchNow(window, this, options);
+				else
+					launchWhenGone(window, this, options, [] { return ThreadedCloudSync::isRunning(); }, nullptr);
+			},
+			_("KEEP WAITING"), nullptr));
 		return false;
 	}
 

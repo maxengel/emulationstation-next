@@ -81,9 +81,9 @@ public:
 		Stopping
 	};
 	// evenIfPlayerStarted: the player has answered STOP IT AND PLAY to the
-	// question over their own sync (D-CLOUD-129), so its origin no longer
-	// protects it; the card says SKIPPED - A GAME WAS STARTED as for an
-	// automatic one.
+	// launch question (D-CLOUD-129; since D-CLOUD-130 it is asked over every
+	// sync, automatic ones included), so the origin no longer protects a
+	// sync they pressed; the card says SKIPPED - YOU STARTED A GAME.
 	static bool cancelForLaunch(CancelRefusal* refusal = nullptr, bool evenIfPlayerStarted = false);
 
 	// The outcome vocabulary's why for an exit code the scripts did not
