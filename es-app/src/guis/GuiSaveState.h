@@ -28,6 +28,7 @@ public:
 	GuiSaveState(Window* window, FileData* game, const std::function<void(SaveState* state)>& callback);
 
 	bool input(InputConfig* config, Input input) override;
+	void update(int deltaTime) override;
 	void onSizeChanged() override;
 	void render(const Transform4x4f& parentTrans) override;
 	float helpRowPerc(float sheetHeight, const HelpStyle& help);
@@ -52,4 +53,9 @@ protected:
 
 	FileData* mGame;
 	SaveStateRepository* mRepository;
+
+	// SaveStateDeleter::completed() as last read: when it moves, a deletion
+	// this page (or another) queued has landed on disk and the grid is read
+	// back (D-UI-073). A number, never a pointer -- the worker outlives pages.
+	unsigned mDeletionsSeen;
 };
