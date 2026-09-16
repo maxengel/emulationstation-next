@@ -796,7 +796,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// question: "If we want consistent behavior on how user-started syncs or
 	// transfers deal with a potential interruption by a game launch, we
 	// should have a consistent behavior."
- STOP IT AND PLAY sends the run's process group SIGTERM,
+	// STOP IT AND PLAY sends the run's process group SIGTERM,
 	// waits behind a spinner for it to be gone -- the automatic sync's wait,
 	// for the same reason: a rename must not land under a game that has the
 	// save open -- and then launches through ViewController, launch effect
