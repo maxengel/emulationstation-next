@@ -21,12 +21,15 @@ with no AM/PM), `es-app/src/WifiText.cpp` (#191, the Wi-Fi rows' reading of what
 outcome, and the picker's rows from what is in range),
 `Utils::String::maskSecrets` in `es-core/src/utils/StringUtil.cpp` (#177, the
 credential mask every logged command line goes through),
+`es-app/src/SaveStateDeleteQueue.cpp` (#205, the save state manager's deletion
+queue: one job at a time, a pending file's tile hidden, nothing queued twice,
+the finished count a page watches),
 `es-core/src/utils/OfflineProxyUrl.cpp` (#199, the offline proxy's address and
 whether a URL is on it -- the one definition the pages' requests and
 `WebImageComponent`'s store-only header share) and the log's rules in
 `es-core/src/LogPolicy.h` (#178, header-only: the level tags, the `LogLevel`
 setting, which lines also reach stderr), tested with doctest
-(`external/doctest/doctest.h`); the binary compiles those seven files,
+(`external/doctest/doctest.h`); the binary compiles those eight files,
 `StringUtil.cpp`, and the tests, and no more.
 
 **Does not:** anything touching `Window`, `Settings`, `SystemConf`, a font, a

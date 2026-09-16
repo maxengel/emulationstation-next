@@ -10,6 +10,8 @@
 #include "guis/GuiMsgBox.h"
 #include "SaveStateRepository.h"
 #include "ThreadedCloudSync.h"
+#include "SaveStateDeleter.h"
+#include <algorithm>
 
 // 0.55 of the screen: the sheet has to hold a tile whose label is two
 // lines of the small font over a thumbnail still worth looking at. At 0.40
@@ -187,6 +189,7 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	mGrid->applyTheme(mTheme, "grid", "gamegrid", 0);
 	mGrid->setCursorChangedCallback([&](const CursorState& /*state*/) { updateHelpPrompts(); });
 
+	mDeletionsSeen = SaveStateDeleter::completed();
 	loadGrid();
 	centerWindow();
 }
@@ -200,6 +203,13 @@ void GuiSaveState::loadGrid()
 	bool incrementalSaveStates = supportsIncrementalSaveStates && mRepository->supportsIncrementalSaveStates();
 
 	auto states = mRepository->getSaveStates(mGame);
+
+	// A slot the player has just deleted is gone from the grid the same frame;
+	// its file follows on the worker, retire first (D-UI-073). Until then the
+	// repository still lists it, so it is dropped here rather than shown as a
+	// tile that would come back for a second and vanish again.
+	states.erase(std::remove_if(states.begin(), states.end(),
+		[](const SaveState* x) { return SaveStateDeleter::isPending(x->fileName); }), states.end());
 	
 	std::sort(states.begin(), states.end(), [&, supportsIncrementalSaveStates, incrementalSaveStates](const SaveState* file1, const SaveState* file2)
 		{ 
@@ -353,8 +363,8 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 	if (input.value != 0 && config->isMappedTo("y", input))
 	{
 		// Every writer of the saves tree is gated by the transfer lock
-		// (D-CLOUD-053): a deletion and the renumber it triggers, landing
-		// while a sync is reading that tree, is the race the maintainer
+		// (D-CLOUD-053): a deletion landing while a sync is reading that
+		// tree is the race the maintainer
 		// named -- exit a game, the backup starts, delete a save under it.
 		// Refused, never waited for (nobody waits, #22 R6), in the words the
 		// launch gate uses for the same state.
@@ -372,53 +382,28 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 				{
 					
 					const SaveStateItem& toDelete = mGrid->getSelected();
-					auto conf = toDelete.saveState->config;
 
 					// The grid also holds the START NEW GAME / START NEW AUTO SAVE
-					// placeholders, for which remove() below is a no-op; only a real
-					// file is recorded and rescanned.
-					bool recordDeletion = Utils::FileSystem::exists("/usr/bin/cloud_capture")
-						&& toDelete.saveState->isSlotValid()
-						&& !toDelete.saveState->fileName.empty();
+					// placeholders, which have no file: nothing to delete.
+					if (toDelete.saveState == nullptr || !toDelete.saveState->isSlotValid() || toDelete.saveState->fileName.empty())
+						return;
 
-					if (recordDeletion)
-					{
-						// Record the deletion before the file goes (#21 R3, D-CLOUD-053): the
-						// next pass then propagates a decided deletion instead of asking about
-						// an absence it cannot explain (D-CLOUD-037).
-						std::string retire = std::string("/usr/bin/cloud_capture --retire ")
-							+ Utils::String::shellQuote(toDelete.saveState->fileName);
-						if (!toDelete.saveState->getScreenShot().empty())
-							retire += " " + Utils::String::shellQuote(toDelete.saveState->getScreenShot());
-						// The deletion proceeds either way (the player asked for it); a
-						// retire that could not record is logged, as launchGame logs a
-						// capture that could not, so the absence has a trace somewhere.
-						int retireCode = ApiSystem::executeScriptLegacy(retire, nullptr).second;
-						if (retireCode != 0)
-							LOG(LogWarning) << "cloud_capture --retire exited " << retireCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
-					}
+					// The tile goes now; the disk follows on the worker, in the order
+					// D-CLOUD-053 asks for -- the deletion recorded by --retire, then
+					// the files unlinked -- one deletion at a time (D-UI-073). This
+					// used to run both scripts here, on the interface thread, and the
+					// dialog hung after YES for as long as they took: a third of a
+					// second on x86_64, a second on the RG SP (#205). The worker is
+					// handed two strings and nothing else: not this page, which B or
+					// LAUNCH may delete before the retire returns, and not the
+					// repository's SaveState, which the next refresh() frees. The
+					// other slots keep their numbers (D-UI-069), so there is no
+					// rescan to run (D-CLOUD-132).
+					SaveStateDeleter::enqueue(toDelete.saveState->fileName, toDelete.saveState->getScreenShot());
 
-					toDelete.saveState->remove();
-
-					// The other slots keep their numbers (D-UI-069): the deletion is
-					// the only change, already recorded by --retire above.
-
-					if (recordDeletion)
-					{
-						// Re-key the set as it now is, now rather than at the next exit.
-						// --rescan carries no provenance, which is the point: no game
-						// ran, so there is no frozen emulator or core to pass and
-						// getEmulator()/getCore() must not be used in its place.
-						FileData* game = mGame->getSourceFileData();
-						int rescanCode = ApiSystem::executeScriptLegacy(std::string("/usr/bin/cloud_capture --rescan --system ")
-							+ Utils::String::shellQuote(game->getSystem()->getName())
-							+ " --rom " + Utils::String::shellQuote(game->getPath()), nullptr).second;
-						if (rescanCode != 0)
-							LOG(LogWarning) << "cloud_capture --rescan exited " << rescanCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
-					}
-
-					mRepository->refresh();
-
+					// No refresh(): the file is still on disk for the moment, and
+					// loadGrid() hides what is pending. update() reads the disk back
+					// when the worker reports the deletion done.
 					loadGrid();
 				}, 
 				_("NO"), nullptr));
@@ -448,6 +433,28 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 	}
 	
 	return GuiComponent::input(config, input);
+}
+
+void GuiSaveState::update(int deltaTime)
+{
+	GuiComponent::update(deltaTime);
+
+	// A deletion has landed on disk (D-UI-073): the repository still holds
+	// the SaveState of a file that is gone, so read the directory back. The
+	// grid already hid the tile the frame the player pressed YES, so this
+	// rebuild changes nothing visible -- and keeps the cursor where it is,
+	// because a page that jumps to its first tile a second after a press is
+	// a page that looks broken.
+	const unsigned done = SaveStateDeleter::completed();
+	if (done != mDeletionsSeen)
+	{
+		mDeletionsSeen = done;
+		const int cursor = mGrid->getCursorIndex();
+		mRepository->refresh();
+		loadGrid();
+		if (cursor > 0 && cursor < mGrid->size())
+			mGrid->setCursorIndex(cursor);
+	}
 }
 
 std::vector<HelpPrompt> GuiSaveState::getHelpPrompts()

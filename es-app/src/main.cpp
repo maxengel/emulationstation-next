@@ -33,6 +33,7 @@
 #include "NetworkThread.h"
 #include "scrapers/ThreadedScraper.h"
 #include "ThreadedHasher.h"
+#include "SaveStateDeleter.h"
 #include <FreeImage.h>
 #include "ImageIO.h"
 #include "components/VideoVlcComponent.h"
@@ -318,6 +319,9 @@ bool loadSystemConfigFile(Window* window, const char** errorString)
 //called on exit, assuming we get far enough to have the log initialized
 void onExit()
 {
+	// A deletion still on the worker is finished, then the log closes
+	// (D-UI-073, third rule). Idempotent: main's tail has usually done it.
+	SaveStateDeleter::shutdown();
 	Log::close();
 }
 
@@ -1125,6 +1129,7 @@ int main(int argc, char* argv[])
 	WatchersManager::stop();
 	ThreadedHasher::stop();
 	ThreadedScraper::stop();
+	SaveStateDeleter::shutdown();
 
 	ApiSystem::getInstance()->deinit();
 
