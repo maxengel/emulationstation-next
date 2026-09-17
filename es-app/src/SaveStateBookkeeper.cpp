@@ -55,7 +55,13 @@ namespace
 		if (!job.screenshot.empty() && Utils::FileSystem::exists(job.screenshot, false))
 			Utils::FileSystem::removeFile(job.screenshot);
 
-		LOG(LogInfo) << "save state deleted: " << job.stateFile;
+		// The line says what is on disk, not what was asked: a file the
+		// unlink was refused (immutable, a card gone read-only) is still
+		// there, and the manager's compare (#207) puts its tile back.
+		if (Utils::FileSystem::exists(job.stateFile, false))
+			LOG(LogWarning) << "save state deletion did not take: " << job.stateFile << " is still present; the manager shows it again";
+		else
+			LOG(LogInfo) << "save state deleted: " << job.stateFile;
 	}
 
 	void runCopy(const SaveStateJob& job)
