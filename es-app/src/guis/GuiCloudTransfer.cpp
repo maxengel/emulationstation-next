@@ -824,12 +824,14 @@ void GuiCloudTransfer::update(int deltaTime)
 			// rclone has listed, and that counts both sides -- 40 saves list
 			// as 80 -- so it is not shown as a number the player would try
 			// to reconcile with their files; the spinner on row 5 is the sign
-			// of life until the first check is queued.
+			// of life until the first check is queued. The word is the card's
+			// (COMPARING SAVES, D-UI-075): one compare, one name, on both
+			// surfaces (#157).
 			if (job.mChecksTotal > 0)
-				doing = std::string(_("CHECKING")) + " " + std::to_string(job.mChecksDone) + " " + std::string(_("OF")) + " "
+				doing = std::string(_("COMPARING")) + " " + std::to_string(job.mChecksDone) + " " + std::string(_("OF")) + " "
 					+ std::to_string(job.mChecksTotal) + " " + std::string(_("FILES"));
 			else
-				doing = _("CHECKING FILES...");
+				doing = _("COMPARING FILES...");
 			// the name is the line's one optional segment, and the first to go
 			if (!job.mChecking.empty())
 			{
