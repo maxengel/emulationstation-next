@@ -10,7 +10,7 @@
 #include "guis/GuiMsgBox.h"
 #include "SaveStateRepository.h"
 #include "ThreadedCloudSync.h"
-#include "SaveStateDeleter.h"
+#include "SaveStateBookkeeper.h"
 #include <algorithm>
 
 // 0.55 of the screen: the sheet has to hold a tile whose label is two
@@ -189,7 +189,7 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	mGrid->applyTheme(mTheme, "grid", "gamegrid", 0);
 	mGrid->setCursorChangedCallback([&](const CursorState& /*state*/) { updateHelpPrompts(); });
 
-	mDeletionsSeen = SaveStateDeleter::completed();
+	mDeletionsSeen = SaveStateBookkeeper::completed();
 	loadGrid();
 	centerWindow();
 }
@@ -209,7 +209,7 @@ void GuiSaveState::loadGrid()
 	// repository still lists it, so it is dropped here rather than shown as a
 	// tile that would come back for a second and vanish again.
 	states.erase(std::remove_if(states.begin(), states.end(),
-		[](const SaveState* x) { return SaveStateDeleter::isPending(x->fileName); }), states.end());
+		[](const SaveState* x) { return SaveStateBookkeeper::isPending(x->fileName); }), states.end());
 	
 	std::sort(states.begin(), states.end(), [&, supportsIncrementalSaveStates, incrementalSaveStates](const SaveState* file1, const SaveState* file2)
 		{ 
@@ -390,7 +390,8 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 
 					// The tile goes now; the disk follows on the worker, in the order
 					// D-CLOUD-053 asks for -- the deletion recorded by --retire, then
-					// the files unlinked -- one deletion at a time (D-UI-073). This
+					// the files unlinked, both inside the script (D-CLOUD-133) -- one
+					// deletion at a time (D-UI-073). This
 					// used to run both scripts here, on the interface thread, and the
 					// dialog hung after YES for as long as they took: a third of a
 					// second on x86_64, a second on the RG SP (#205). The worker is
@@ -399,7 +400,7 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 					// repository's SaveState, which the next refresh() frees. The
 					// other slots keep their numbers (D-UI-069), so there is no
 					// rescan to run (D-CLOUD-132).
-					SaveStateDeleter::enqueue(toDelete.saveState->fileName, toDelete.saveState->getScreenShot());
+					SaveStateBookkeeper::deleteLater(toDelete.saveState->fileName, toDelete.saveState->getScreenShot());
 
 					// No refresh(): the file is still on disk for the moment, and
 					// loadGrid() hides what is pending. update() reads the disk back
@@ -414,15 +415,35 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 	
 	if (input.value != 0 && config->isMappedTo("x", input))
 	{
+		// The same gate DELETE carries (D-CLOUD-053): a copy is a writer of
+		// the saves tree, and a sync reading that tree must not meet it. It
+		// had none until #206.
+		if (ThreadedCloudSync::isRunning())
+		{
+			mWindow->pushGui(new GuiMsgBox(mWindow,
+				_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE COPYING A SAVE STATE - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));
+			return true;
+		}
+
 		if (mGrid->size())
 		{
 			const SaveStateItem& toCopy = mGrid->getSelected();
-			
+			if (toCopy.saveState == nullptr || !toCopy.saveState->isSlotValid() || toCopy.saveState->fileName.empty())
+				return true;
+
 			int slot = mRepository->getNextFreeSlot(mGame, toCopy.saveState->config);
 			if (slot >= 0)
-			{				
+			{
 				if (toCopy.saveState->copyToSlot(slot))
 				{
+					// The copy is a file no capture mode would ever record
+					// (#206): exit mode takes only what a launch wrote, the
+					// verify passes adopt nothing new. The manager made it, so
+					// the manager records it -- on the worker, as the source's
+					// version at the new path; the tile is real already.
+					FileData* game = mGame->getSourceFileData();
+					SaveStateBookkeeper::recordCopy(toCopy.saveState->makeStateFilename(slot),
+						toCopy.saveState->fileName, game->getSystem()->getName(), game->getPath());
 					mRepository->refresh();
 					loadGrid();
 				}
@@ -445,7 +466,7 @@ void GuiSaveState::update(int deltaTime)
 	// rebuild changes nothing visible -- and keeps the cursor where it is,
 	// because a page that jumps to its first tile a second after a press is
 	// a page that looks broken.
-	const unsigned done = SaveStateDeleter::completed();
+	const unsigned done = SaveStateBookkeeper::completed();
 	if (done != mDeletionsSeen)
 	{
 		mDeletionsSeen = done;

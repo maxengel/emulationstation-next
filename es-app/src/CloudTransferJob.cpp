@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <thread>
 #include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 std::mutex CloudTransferJob::sMutex;
@@ -35,6 +36,7 @@ CloudTransferJob::CloudTransferJob(const std::string& command, const std::string
 	mBytePercent = -1; mFilePercent = -1; mCheckPercent = -1; mPercent = -1;
 	mFinished = false; mExit = -1;
 	mElapsedMs = 0; mFinishedAt = 0;
+	mStartedAt = time(nullptr);
 }
 
 std::shared_ptr<CloudTransferJob> CloudTransferJob::current()
@@ -599,7 +601,14 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 	// for being stopped, whoever did the stopping (ThreadedCloudSync does
 	// the same for the card's cancel).
 	if (mStoppedForGame)
+	{
 		ret = CloudExit::Stopped;
+		// The scripts' INT/TERM trap stamped each part it was inside with 130
+		// and no token, and the rows under MANAGE CLOUD STORAGE read that as
+		// COULDN'T FINISH once this run was dismissed (#203). Say what
+		// happened in their place, with the token the card's cancel writes.
+		restampStoppedParts();
+	}
 	mExit = ret;
 	// A command with no tier lines (the match; anything composed before
 	// them) that did not complete: what it said is its failed item -- the
@@ -619,6 +628,35 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 	LOG(LogInfo) << "CloudTransferJob: " << mTitle << " exited " << ret
 		<< " (" << mRunFiles << " files, " << mRunBytes << " bytes, " << mTiers.size() << " tiers reported)";
 	(void) self;
+}
+
+// Only over a stamp this run wrote: a part the command names that never
+// started keeps the stamp of its last real run, which is the truth about
+// it. The scripts each own one stamp under /storage/.cache/cloud_sync; the
+// content restore's depends on the verb it ran with.
+void CloudTransferJob::restampStoppedParts()
+{
+	struct Part { const char* script; const char* stamp; };
+	static const Part PARTS[] = {
+		{ "cloud_content_backup",  "last-content-backup" },
+		{ "cloud_content_restore", "last-content-restore" },
+		{ "cloud_restore",         "last-restore" },
+		{ "cloud_backup",          "last-backup" },
+	};
+	for (const Part& part : PARTS)
+	{
+		if (mCommand.find(part.script) == std::string::npos)
+			continue;
+		std::string stamp = part.stamp;
+		if (stamp == "last-content-restore" && mCommand.find("--match") != std::string::npos)
+			stamp = "last-content-match";
+		const std::string path = std::string("/storage/.cache/cloud_sync/") + stamp;
+		struct stat st;
+		if (stat(path.c_str(), &st) != 0 || st.st_mtime < mStartedAt - 1)
+			continue;   // not this run's: the part never got as far as its trap
+		ThreadedCloudSync::writeStamp(path, CloudExit::Stopped, "cancelled", "");
+		LOG(LogInfo) << "CloudTransferJob: " << stamp << " restamped as stopped for a game";
+	}
 }
 
 // Drop ANSI escapes and anything unprintable, then trim. A terminal-attached

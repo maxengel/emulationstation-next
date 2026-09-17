@@ -24,8 +24,8 @@ get_filename_component(ES_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUTE)
 # retry schedule, the index's rule for what a game is owed, the time of day
 # a save's date carries (fork #195), the Wi-Fi rows' reading of wifictl
 # (fork #191), and the offline proxy's address with the test for a URL on it
-# (fork #199), the save state manager's deletion queue (fork #205: one job
-# at a time, a pending file's tile hidden, nothing queued twice) -- plus the
+# (fork #199), the save state manager's job queue (fork #205 / #206: one job
+# at a time, a file pending deletion hides its tile, a copy hides nothing) -- plus the
 # log's header-only rules (es-core/src/LogPolicy.h,
 # fork #178). Anything that needs a window, a font or a file does not belong
 # in this binary -- see README.md.
@@ -39,13 +39,13 @@ add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/LogPolicyTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/WifiTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/OfflineProxyUrlTests.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/SaveStateDeleteQueueTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/SaveStateJobQueueTests.cpp
 	${ES_ROOT}/es-app/src/CloudText.cpp
 	${ES_ROOT}/es-app/src/CheevosRetry.cpp
 	${ES_ROOT}/es-app/src/OfflineAchievementsText.cpp
 	${ES_ROOT}/es-app/src/CheevosIndex.cpp
 	${ES_ROOT}/es-app/src/WifiText.cpp
-	${ES_ROOT}/es-app/src/SaveStateDeleteQueue.cpp
+	${ES_ROOT}/es-app/src/SaveStateJobQueue.cpp
 	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
 	${ES_ROOT}/es-core/src/utils/TimeText.cpp
 	${ES_ROOT}/es-core/src/utils/OfflineProxyUrl.cpp

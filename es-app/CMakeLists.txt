@@ -48,8 +48,8 @@ set(ES_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedHasher.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedBluetooth.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedCloudSync.h
-	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateDeleteQueue.h
-	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateDeleter.h
+	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateJobQueue.h
+	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateBookkeeper.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudExit.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudOffer.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudText.h
@@ -175,8 +175,8 @@ set(ES_SOURCES
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedHasher.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedBluetooth.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/ThreadedCloudSync.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateDeleteQueue.cpp
-	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateDeleter.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateJobQueue.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/src/SaveStateBookkeeper.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudOffer.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudText.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CheevosRetry.cpp
