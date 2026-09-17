@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include <string>
+#include <vector>
 
 #include "GuiComponent.h"
 #include "Window.h"
@@ -42,6 +44,11 @@ protected:
 	void centerWindow();
 	void loadGrid();
 
+	// The files of the states the page would show now -- what the repository
+	// lists minus what is queued for deletion -- sorted, so it compares as a
+	// set with mShown.
+	std::vector<std::string> filesOnDisk();
+
 	std::shared_ptr<ImageGridComponent<SaveStateItem>> mGrid;
 	std::shared_ptr<ThemeData> mTheme;
 	std::shared_ptr<TextComponent>	mTitle;
@@ -54,8 +61,16 @@ protected:
 	FileData* mGame;
 	SaveStateRepository* mRepository;
 
-	// SaveStateBookkeeper::completed() as last read: when it moves, a deletion
-	// this page (or another) queued has landed on disk and the grid is read
-	// back (D-UI-073). A number, never a pointer -- the worker outlives pages.
+	// SaveStateBookkeeper::completed() as last read: when it moves, a job this
+	// page (or another) queued has landed -- a deletion's files gone, a copy's
+	// record written (D-UI-073). A number, never a pointer -- the worker
+	// outlives pages.
 	unsigned mDeletionsSeen;
+
+	// The files of the tiles the grid was last built from, sorted. When a job
+	// lands the page is rebuilt only if filesOnDisk() differs from this: in
+	// the normal case the tile already went (or came) the frame the player
+	// pressed, and a rebuild would only tear every tile down and replay the
+	// selection animation a second later -- the flash of #207 (D-UI-074).
+	std::vector<std::string> mShown;
 };

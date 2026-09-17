@@ -40,7 +40,8 @@ class SaveStateBookkeeper
 {
 public:
 	// Record and unlink on the worker; returns at once. The manager hides
-	// the tile the same frame (isPending) and reloads when completed() moves.
+	// the tile the same frame (isPending) and, when completed() moves, rebuilds
+	// only if the disk disagrees with the page (#207).
 	static void deleteLater(const std::string& stateFile, const std::string& screenshot);
 
 	// Record a copy the manager just made: `stateFile` now holds `source`'s
