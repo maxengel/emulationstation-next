@@ -54,7 +54,7 @@ protected:
 	FileData* mGame;
 	SaveStateRepository* mRepository;
 
-	// SaveStateDeleter::completed() as last read: when it moves, a deletion
+	// SaveStateBookkeeper::completed() as last read: when it moves, a deletion
 	// this page (or another) queued has landed on disk and the grid is read
 	// back (D-UI-073). A number, never a pointer -- the worker outlives pages.
 	unsigned mDeletionsSeen;

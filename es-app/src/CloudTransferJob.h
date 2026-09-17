@@ -162,6 +162,11 @@ private:
 	// again while the run goes on, and a counter that ticked only while a
 	// page was up read 0:05 after ten minutes in the background.
 	std::chrono::steady_clock::time_point mStarted;
+	time_t mStartedAt;   // wall clock, to tell a stamp this run wrote from an older one
+
+	// Stopped for a game: the scripts' trap stamped each part it was inside
+	// with 130 and no token; say what happened in their place (#203).
+	void restampStoppedParts();
 	int mElapsedMs;             // frozen when the run ends
 	time_t mFinishedAt;
 	// The command's process group (run() starts it under setsid and reads

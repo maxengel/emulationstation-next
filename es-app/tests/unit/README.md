@@ -21,9 +21,9 @@ with no AM/PM), `es-app/src/WifiText.cpp` (#191, the Wi-Fi rows' reading of what
 outcome, and the picker's rows from what is in range),
 `Utils::String::maskSecrets` in `es-core/src/utils/StringUtil.cpp` (#177, the
 credential mask every logged command line goes through),
-`es-app/src/SaveStateDeleteQueue.cpp` (#205, the save state manager's deletion
-queue: one job at a time, a pending file's tile hidden, nothing queued twice,
-the finished count a page watches),
+`es-app/src/SaveStateJobQueue.cpp` (#205, the save state manager's job queue:
+one job at a time, a file pending deletion hides its tile while a copy hides
+nothing, nothing queued for deletion twice, the finished count a page watches),
 `es-core/src/utils/OfflineProxyUrl.cpp` (#199, the offline proxy's address and
 whether a URL is on it -- the one definition the pages' requests and
 `WebImageComponent`'s store-only header share) and the log's rules in

@@ -33,7 +33,7 @@
 #include "NetworkThread.h"
 #include "scrapers/ThreadedScraper.h"
 #include "ThreadedHasher.h"
-#include "SaveStateDeleter.h"
+#include "SaveStateBookkeeper.h"
 #include <FreeImage.h>
 #include "ImageIO.h"
 #include "components/VideoVlcComponent.h"
@@ -321,7 +321,7 @@ void onExit()
 {
 	// A deletion still on the worker is finished, then the log closes
 	// (D-UI-073, third rule). Idempotent: main's tail has usually done it.
-	SaveStateDeleter::shutdown();
+	SaveStateBookkeeper::shutdown();
 	Log::close();
 }
 
@@ -1129,7 +1129,7 @@ int main(int argc, char* argv[])
 	WatchersManager::stop();
 	ThreadedHasher::stop();
 	ThreadedScraper::stop();
-	SaveStateDeleter::shutdown();
+	SaveStateBookkeeper::shutdown();
 
 	ApiSystem::getInstance()->deinit();
 
