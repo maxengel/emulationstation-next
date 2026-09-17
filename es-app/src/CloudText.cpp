@@ -591,6 +591,34 @@ LiveLine liveLine(const std::string& clean)
 	return out;
 }
 
+LiveWords liveWords(const LiveLine& live, bool bytesMoving, bool countShown)
+{
+	switch (live.kind)
+	{
+	case LiveLine::Kind::Bytes:
+		// A total means rclone has queued something to move; bytes sent mean
+		// it is moving. Either way the byte line is the fact. "0 B / 0 B" is
+		// the listing and the compare: progress, said as such -- unless the
+		// count already says it with a number.
+		if (live.sent > 0 || live.total > 0)
+			return LiveWords::Bytes;
+		return countShown ? LiveWords::Keep : LiveWords::Comparing;
+	case LiveLine::Kind::Checks:
+		// Not once this half's bytes are moving: the count follows the bytes
+		// in every block, so it used to hold the words for the whole second
+		// until the next block while the bar moved underneath. And not before
+		// rclone has a total to count against: "0 / 0, -, Listed 40" is a
+		// listing still under way (#157).
+		return (!bytesMoving && live.total > 0) ? LiveWords::ComparingCount : LiveWords::Keep;
+	case LiveLine::Kind::Other:
+		return LiveWords::Other;
+	case LiveLine::Kind::Files:
+	case LiveLine::Kind::None:
+	default:
+		return LiveWords::Keep;
+	}
+}
+
 Phase phaseOf(const std::string& doingWord)
 {
 	const std::string word = Utils::String::toLower(Utils::String::trim(doingWord));

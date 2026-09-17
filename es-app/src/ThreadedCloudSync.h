@@ -151,11 +151,15 @@ private:
 	// doing receive" / ">>> doing send"; None for a command that announces
 	// no halves, whose bar is the run's own percentage as it always was),
 	// the bar as last drawn, so it never moves back once a half is known,
-	// and whether this half's byte totals have left zero -- from then on
-	// the byte line is the fact and the compare count stays off the words.
+	// whether this half's byte totals have left zero -- from then on the
+	// byte line is the fact and the compare count stays off the words --
+	// and whether the compare count has been said for this half, so a
+	// still byte line leaves it on the words instead of flickering the
+	// number on and off (#208; CloudText::liveWords).
 	CloudText::Phase			mPhase{CloudText::Phase::None};
 	int							mBar{-1};
 	bool						mBytesMoving{false};
+	bool						mCountShown{false};
 
 	Window*						mWindow;
 	AsyncNotificationComponent* mWndNotification;

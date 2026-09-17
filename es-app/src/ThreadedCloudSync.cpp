@@ -288,6 +288,7 @@ void ThreadedCloudSync::run()
 					{
 						mPhase = phase;
 						mBytesMoving = false;
+						mCountShown = false;
 						say(_("STARTING..."));
 						bar(-1);
 					}
@@ -338,71 +339,49 @@ void ThreadedCloudSync::run()
 			// arrives on the protocol line above, in the scripts' own words,
 			// and is said once at the end.
 			//
-			// The byte line is the one shown once a transfer is under way: it
-			// moves as the saves do, and its percentage is the bar's. The
-			// count line ("0 / 3, 0%") is the same progress counted another
-			// way, and alternating the two each second flickered both the
-			// words and the bar. The check counter is a comparison, not a
-			// transfer: it is named as one and never moves the bar by its
-			// own percentage, or seventy checks read as seventy uploads.
-			// rclone prints the two in a fixed order in every block -- the
-			// bytes, then the checks -- so whichever is not the fact of the
-			// moment has to stay off the words rather than overwrite them.
+			// Which words a stats line gets is CloudText::liveWords (#208), so
+			// the rule is checked without a pipe: a byte line with a total or
+			// bytes sent is the fact of the moment and reads X OF Y; a still one
+			// ("0 B / 0 B") is the listing and the compare and reads COMPARING
+			// SAVES -- it used to read NOTHING SENT YET / NOTHING RECEIVED YET,
+			// an outcome so far said where the player watches for progress, once
+			// per half of every startup and exit sync; the count line holds the
+			// words with its number until the bytes move, and the still byte
+			// line leaves it there rather than flicker the number. The check
+			// counter is a comparison, not a transfer: it never moves the bar by
+			// its own percentage, or seventy checks read as seventy uploads.
 			const CloudText::LiveLine live = CloudText::liveLine(clean);
-			std::string shown;
-			switch (live.kind)
-			{
-			case CloudText::LiveLine::Kind::Bytes:
+			if (live.kind == CloudText::LiveLine::Kind::Bytes)
 			{
 				// The byte line leaving "0 B" is the one fact the in-place
-				// clause turns on: something reached the other side.
+				// clause turns on: something reached the other side. A total
+				// means rclone has queued something to move: from here the byte
+				// line is this half's fact.
 				if (live.sent > 0)
 					mMoved = true;
-				// A total means rclone has queued something to move: from
-				// here the byte line is this half's fact, and the compare
-				// count below stays off the words.
 				if (live.total > 0)
 					mBytesMoving = true;
-				if (live.sent <= 0 && live.total <= 0)
-				{
-					// "0 B / 0 B, -, 0 B/s": nothing listed yet, or nothing
-					// to move. Said in the direction the title promised --
-					// or, inside a half of a composed sync, that half's.
-					CloudText::Verb verb = CloudText::verbOf(mCommand);
-					if (mPhase == CloudText::Phase::Receiving)
-						verb = CloudText::Verb::Restore;
-					else if (mPhase == CloudText::Phase::Sending)
-						verb = CloudText::Verb::Backup;
-					switch (verb)
-					{
-					case CloudText::Verb::Backup:  shown = _("NOTHING SENT YET"); break;
-					case CloudText::Verb::Restore: shown = _("NOTHING RECEIVED YET"); break;
-					default:                       shown = _("NOTHING SYNCED YET"); break;
-					}
-				}
-				else
-					shown = Utils::String::format(_("%s OF %s").c_str(),
-						CloudText::sizeLabel((unsigned long) live.sent).c_str(),
-						CloudText::sizeLabel((unsigned long) live.total).c_str());
-				break;
 			}
-			case CloudText::LiveLine::Kind::Checks:
-				// Not once this half's bytes are moving: the count follows
-				// the bytes in every block, so it used to hold the words for
-				// the whole second until the next block while the bar moved
-				// underneath COMPARING SAVES. And not before rclone has a
-				// total to count against -- "0 / 0, -, Listed 40" is a
-				// listing still under way, and 0 OF 0 is the shape of the
-				// count that went by between the two compares (#157).
-				if (!mBytesMoving && live.total > 0)
-					shown = _("COMPARING SAVES") + std::string(" \xC2\xB7 ")
-						+ Utils::String::format(_("%d OF %d").c_str(), (int) live.sent, (int) live.total);
+			std::string shown;
+			switch (CloudText::liveWords(live, mBytesMoving, mCountShown))
+			{
+			case CloudText::LiveWords::Comparing:
+				shown = _("COMPARING SAVES");
 				break;
-			case CloudText::LiveLine::Kind::Other:
+			case CloudText::LiveWords::ComparingCount:
+				shown = _("COMPARING SAVES") + std::string(" \xC2\xB7 ")
+					+ Utils::String::format(_("%d OF %d").c_str(), (int) live.sent, (int) live.total);
+				mCountShown = true;
+				break;
+			case CloudText::LiveWords::Bytes:
+				shown = Utils::String::format(_("%s OF %s").c_str(),
+					CloudText::sizeLabel((unsigned long) live.sent).c_str(),
+					CloudText::sizeLabel((unsigned long) live.total).c_str());
+				break;
+			case CloudText::LiveWords::Other:
 				shown = live.text;
 				break;
-			case CloudText::LiveLine::Kind::Files:
-			case CloudText::LiveLine::Kind::None:
+			case CloudText::LiveWords::Keep:
 				break;
 			}
 
