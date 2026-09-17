@@ -745,6 +745,42 @@ TEST_CASE("liveLine tells the count line and the check counter apart")
 	CHECK(l.percent == 50);
 }
 
+TEST_CASE("liveWords says progress, never the outcome so far (#208)")
+{
+	// The line the maintainer saw between the stages of every sync: rclone
+	// listing and comparing, its byte line still at zero. It read NOTHING
+	// SENT YET; it is a compare, and reads so.
+	LiveLine still = liveLine("Transferred:            0 B / 0 B, -, 0 B/s, ETA -");
+	CHECK(still.kind == LiveLine::Kind::Bytes);
+	CHECK(liveWords(still, false, false) == LiveWords::Comparing);
+	// once the count has said it with a number, the still byte line leaves
+	// the number on the words rather than flicker it off and on
+	CHECK(liveWords(still, false, true) == LiveWords::Keep);
+
+	// the listing before there is anything to count: nothing to say yet
+	LiveLine listing = liveLine("Checks:                 0 / 0, -, Listed 40");
+	CHECK(listing.kind == LiveLine::Kind::Checks);
+	CHECK(liveWords(listing, false, false) == LiveWords::Keep);
+
+	// the compare with a total: the count holds the words while the bytes
+	// stand still, and stays off them once they move
+	LiveLine count = liveLine("Checks:                12 / 70, 17%, Listed 313");
+	CHECK(liveWords(count, false, false) == LiveWords::ComparingCount);
+	CHECK(liveWords(count, false, true) == LiveWords::ComparingCount);
+	CHECK(liveWords(count, true, true) == LiveWords::Keep);
+
+	// a total queued, nothing sent yet: the byte line is already the fact
+	LiveLine queued = liveLine("Transferred:            0 B / 878.906 KiB, 0%, 0 B/s, ETA -");
+	CHECK(liveWords(queued, false, true) == LiveWords::Bytes);
+	// and moving
+	LiveLine moving = liveLine("Transferred:        288 KiB / 878.906 KiB, 33%, 287.998 KiB/s, ETA 2s");
+	CHECK(liveWords(moving, true, true) == LiveWords::Bytes);
+
+	// the file count and rclone's own lines never touch the words
+	CHECK(liveWords(liveLine("Transferred:            0 / 3, 0%"), false, false) == LiveWords::Keep);
+	CHECK(liveWords(liveLine("Elapsed time:         2.0s"), false, false) == LiveWords::Keep);
+}
+
 TEST_CASE("liveLine keeps rclone's own lines off the card")
 {
 	CHECK(liveLine("* f2.srm: 32% /292.969Ki, 95.996Ki/s, 2s").kind == LiveLine::Kind::None);

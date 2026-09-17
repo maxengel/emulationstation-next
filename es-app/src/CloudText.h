@@ -278,6 +278,28 @@ namespace CloudText
 	};
 	LiveLine liveLine(const std::string& clean);
 
+	// What the card's words do for one stats line of a half (#208).
+	//
+	// rclone prints a byte line and a check count in every block. While it
+	// lists both sides and compares them the byte line reads "0 B / 0 B",
+	// and the card used to turn that into NOTHING SENT YET or NOTHING
+	// RECEIVED YET -- the outcome so far, said where the player is watching
+	// for progress, once per half, at boot and after every game. The line
+	// reports progress: a still byte line is a compare and reads COMPARING
+	// SAVES; once the count has a total, the count holds the words
+	// (COMPARING SAVES - N OF M) and the byte line leaves them alone rather
+	// than flicker the count on and off; once this half's bytes move, the
+	// byte line is the fact and the count stays off the words. The outcome
+	// is said once, at the end, from the scripts' own line.
+	//
+	//   Keep            leave the words as they are
+	//   Comparing       COMPARING SAVES
+	//   ComparingCount  COMPARING SAVES - N OF M, from the count line
+	//   Bytes           X OF Y, from the byte line
+	//   Other           the line as it came
+	enum class LiveWords { Keep, Comparing, ComparingCount, Bytes, Other };
+	LiveWords liveWords(const LiveLine& live, bool bytesMoving, bool countShown);
+
 	// The halves of a composed sync, for the card's bar (D-UI-052, #157).
 	//
 	// A startup sync is two rclone runs back to back -- a restore, then a
