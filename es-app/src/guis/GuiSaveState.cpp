@@ -10,6 +10,7 @@
 #include "guis/GuiMsgBox.h"
 #include "SaveStateRepository.h"
 #include "ThreadedCloudSync.h"
+#include "Log.h"
 #include "SaveStateBookkeeper.h"
 #include <algorithm>
 
@@ -210,6 +211,12 @@ void GuiSaveState::loadGrid()
 	// tile that would come back for a second and vanish again.
 	states.erase(std::remove_if(states.begin(), states.end(),
 		[](const SaveState* x) { return SaveStateBookkeeper::isPending(x->fileName); }), states.end());
+
+	// What this build shows, for update() to compare the disk against.
+	mShown.clear();
+	for (auto state : states)
+		mShown.push_back(state->fileName);
+	std::sort(mShown.begin(), mShown.end());
 	
 	std::sort(states.begin(), states.end(), [&, supportsIncrementalSaveStates, incrementalSaveStates](const SaveState* file1, const SaveState* file2)
 		{ 
@@ -260,6 +267,19 @@ void GuiSaveState::loadGrid()
 	// page is on screen (updateHelpPrompts acts only on the top page), so
 	// the constructor's call costs nothing.
 	updateHelpPrompts();
+}
+
+std::vector<std::string> GuiSaveState::filesOnDisk()
+{
+	// The same list loadGrid() builds from: the repository hands out nothing
+	// whose file is gone (a8e274598), and what is queued for deletion is
+	// hidden until it is.
+	std::vector<std::string> files;
+	for (auto state : mRepository->getSaveStates(mGame))
+		if (!SaveStateBookkeeper::isPending(state->fileName))
+			files.push_back(state->fileName);
+	std::sort(files.begin(), files.end());
+	return files;
 }
 
 // The help row's share of a sheet of the given height -- shared by the
@@ -403,8 +423,9 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 					SaveStateBookkeeper::deleteLater(toDelete.saveState->fileName, toDelete.saveState->getScreenShot());
 
 					// No refresh(): the file is still on disk for the moment, and
-					// loadGrid() hides what is pending. update() reads the disk back
-					// when the worker reports the deletion done.
+					// loadGrid() hides what is pending. update() compares the disk
+					// with the page when the worker reports the deletion done, and
+					// rebuilds only if they differ (#207).
 					loadGrid();
 				}, 
 				_("NO"), nullptr));
@@ -460,21 +481,36 @@ void GuiSaveState::update(int deltaTime)
 {
 	GuiComponent::update(deltaTime);
 
-	// A deletion has landed on disk (D-UI-073): the repository still holds
-	// the SaveState of a file that is gone, so read the directory back. The
-	// grid already hid the tile the frame the player pressed YES, so this
-	// rebuild changes nothing visible -- and keeps the cursor where it is,
-	// because a page that jumps to its first tile a second after a press is
-	// a page that looks broken.
+	// A job has landed (D-UI-073): a deletion's files are gone, or a copy's
+	// record is written. The page already showed the outcome the frame the
+	// player pressed -- the tile hidden, the copy's tile added -- so in the
+	// normal case the disk now agrees with the page and there is nothing to
+	// draw. Rebuilding anyway tore every tile down and replayed the selection
+	// animation a second after YES: the flash of #207. So the page is rebuilt
+	// only when the disk disagrees with it (D-UI-074) -- a deletion whose
+	// unlink failed brings its tile back, which is the one sign the player
+	// gets -- and then keeps the cursor where it is, because a page that
+	// jumps to its first tile a second after a press is a page that looks
+	// broken. The repository keeps the SaveState of a gone file until its
+	// next refresh() (a copy, the next open of the page); onDisk() hands it
+	// to nobody in the meantime.
 	const unsigned done = SaveStateBookkeeper::completed();
 	if (done != mDeletionsSeen)
 	{
 		mDeletionsSeen = done;
-		const int cursor = mGrid->getCursorIndex();
-		mRepository->refresh();
-		loadGrid();
-		if (cursor > 0 && cursor < mGrid->size())
-			mGrid->setCursorIndex(cursor);
+		const std::vector<std::string> files = filesOnDisk();
+		if (files != mShown)
+		{
+			// The exception path, so it is logged: a deletion that did not
+			// take, or a file that arrived while the page was open.
+			LOG(LogInfo) << "save state manager: a landed job left the disk differing from the page ("
+				<< mShown.size() << " shown, " << files.size() << " on disk); rebuilt";
+			const int cursor = mGrid->getCursorIndex();
+			mRepository->refresh();
+			loadGrid();
+			if (cursor > 0 && cursor < mGrid->size())
+				mGrid->setCursorIndex(cursor);
+		}
 	}
 }
 

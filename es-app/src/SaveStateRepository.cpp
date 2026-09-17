@@ -135,7 +135,10 @@ void SaveStateRepository::refresh()
 // a file manager is the same case from here. Refresh() is still what frees
 // the stale objects -- the live manager calls it when a deletion lands --
 // but nobody is handed one in the meantime. The stat is uncached: another
-// thread wrote the change (fork #205).
+// thread wrote the change (fork #205). The manager calls refresh() only
+// when a landed job left the disk disagreeing with its page (#207), so the
+// stale object of a deleted file may live until the next copy or the next
+// open of the page; that is a few bytes, not a tile.
 bool SaveStateRepository::onDisk(const SaveState* state)
 {
 	return state != nullptr && !state->fileName.empty() && Utils::FileSystem::exists(state->fileName, false);
