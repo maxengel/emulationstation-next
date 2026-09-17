@@ -456,7 +456,7 @@ void GuiMenu::openResetOptions()
 	});
 
         s->addEntry(_("FULLY RESET PORTMASTER"), true, [window] {
-        window->pushGui(new GuiMsgBox(window, _("WARNING: PORTMASTER WILL RESET TO DEFAULT\n\nNO BACKUP WILL BE CREATED!\n\nRESET RESET PORTMASTER TO DEFAULT?"), _("YES"),
+        window->pushGui(new GuiMsgBox(window, _("WARNING: PORTMASTER WILL RESET TO DEFAULT\n\nNO BACKUP WILL BE CREATED!\n\nRESET PORTMASTER TO DEFAULT?"), _("YES"),
                 [window] {
                 runMaintenanceCommand(window, "/usr/bin/factoryreset portmaster", _("RESETTING PORTMASTER..."),
                         _("PORTMASTER RESET TO DEFAULT."),
@@ -476,7 +476,7 @@ void GuiMenu::openResetOptions()
 	});
 
 	s->addEntry(_("FACTORY RESET"), true, [window] {
-	window->pushGui(new GuiMsgBox(window, _("WARNING: YOUR DATA AND ALL OTHER CONFIGURATIONS WILL BE RESET TO DEFAULTS!\n\nIF YOU WANT TO KEEP YOUR SETTINGS MAKE A BACKUP AND SAVE IT ON AN EXTERNAL DRIVE BEFORE RUNING THIS OPTION!\n\nEJECT YOUR GAME CARD BEFORE PROCEEDING!\n\nRESET SYSTEM AND RESTART?"), _("YES"),
+	window->pushGui(new GuiMsgBox(window, _("WARNING: YOUR DATA AND ALL OTHER CONFIGURATIONS WILL BE RESET TO DEFAULTS!\n\nIF YOU WANT TO KEEP YOUR SETTINGS MAKE A BACKUP AND SAVE IT ON AN EXTERNAL DRIVE BEFORE RUNNING THIS OPTION!\n\nEJECT YOUR GAME CARD BEFORE PROCEEDING!\n\nRESET SYSTEM AND RESTART?"), _("YES"),
 		[window] {
 		// No "nothing else was changed" anywhere on this row: by the time it
 		// can fail, most of /storage is gone, and saying otherwise would be a
