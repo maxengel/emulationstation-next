@@ -637,9 +637,11 @@ void GuiCloudTransfer::update(int deltaTime)
 		{
 			std::vector<std::string> names;
 			for (auto& f : job.mFailed)
+			{
 				const std::string name = unitName(f.label);
 				if (std::find(names.begin(), names.end(), name) == names.end())
 					names.push_back(name);
+			}
 			const int n = (int) names.size();
 			const int m = std::max(std::max(job.mItemCount, job.mItemIndex), n);
 			counter = std::to_string(n) + " " + std::string(_("OF")) + " " + std::to_string(m) + " "
