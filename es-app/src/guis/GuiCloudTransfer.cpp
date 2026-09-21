@@ -637,8 +637,9 @@ void GuiCloudTransfer::update(int deltaTime)
 		{
 			std::vector<std::string> names;
 			for (auto& f : job.mFailed)
-				if (std::find(names.begin(), names.end(), f.label) == names.end())
-					names.push_back(f.label);
+				const std::string name = unitName(f.label);
+				if (std::find(names.begin(), names.end(), name) == names.end())
+					names.push_back(name);
 			const int n = (int) names.size();
 			const int m = std::max(std::max(job.mItemCount, job.mItemIndex), n);
 			counter = std::to_string(n) + " " + std::string(_("OF")) + " " + std::to_string(m) + " "
@@ -728,8 +729,9 @@ void GuiCloudTransfer::update(int deltaTime)
 						break;
 				if (g == groups.end())
 					g = groups.insert(groups.end(), std::make_pair(f.why, std::vector<std::string>()));
-				if (!f.label.empty() && std::find(g->second.begin(), g->second.end(), f.label) == g->second.end())
-					g->second.push_back(f.label);
+				const std::string name = unitName(f.label);
+				if (!name.empty() && std::find(g->second.begin(), g->second.end(), name) == g->second.end())
+					g->second.push_back(name);
 			}
 			std::string detail;
 			for (auto& g : groups)
