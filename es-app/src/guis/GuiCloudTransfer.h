@@ -144,6 +144,8 @@ private:
 	// on a panel too narrow for both, rather than ending mid-word in an
 	// ellipsis. The last sentence standing is clipped if even it does not fit.
 	static std::string fitSentences(const std::shared_ptr<Font>& font, std::string text, float width);
+	// A unit's name as the scripts spell it, in the player's language.
+	static std::string unitName(const std::string& label);
 	static std::string prettyRclone(std::string fragment);
 	static std::string roundSizes(const std::string& fragment);
 
