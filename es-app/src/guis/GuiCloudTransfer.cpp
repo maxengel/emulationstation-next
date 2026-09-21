@@ -330,6 +330,13 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 // else; the why goes on line 4 with the items it stopped. A run with no
 // tier lines -- the match, or a command composed before they existed -- is
 // read from its exit code alone, as it always was.
+//
+// Skipped means nothing was touched. A run that had moved bytes or finished
+// a file before the network went was cut, not skipped, and its exit 69 reads
+// COULDN'T FINISH like any other cut (#153, 2026-09-21: a settings archive
+// cut at 75 % on S3 read SKIPPED - YOU'RE NOT ONLINE over WHAT MADE IT IS IN
+// YOUR CLOUD, two words wrong in the same direction the vocabulary keeps
+// apart).
 GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 {
 	Outcome o;
@@ -363,14 +370,15 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 	const bool match = job.mCommand.find("--match") != std::string::npos;
 	o.partial = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && job.mRemovedFiles > 0));
 	const int code = job.mTiers.empty() ? job.mExit : onlyCode;
-	o.skipped = !o.completed && !o.partial && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
+	const bool progressed = job.mAnyTransferred || job.mRunFiles > 0 || job.mUnitFiles > 0;
+	o.skipped = !o.completed && !o.partial && !progressed && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
 	if (o.completed)
 		o.word = _("COMPLETED");
 	else if (o.partial)
 		o.word = _("COULDN'T FINISH");
-	else if (code == CloudExit::LockHeld)
+	else if (o.skipped && code == CloudExit::LockHeld)
 		o.word = _("SKIPPED - A SYNC IS ALREADY RUNNING");
-	else if (code == CloudExit::NoNetwork)
+	else if (o.skipped)
 		o.word = _("SKIPPED - YOU'RE NOT ONLINE");
 	else
 		o.word = _("COULDN'T FINISH");
@@ -408,7 +416,7 @@ GuiCloudTransfer::RowWords GuiCloudTransfer::rowWords(const std::shared_ptr<Clou
 		w.counted += " - " + std::string(_("ITEM")) + " " + std::to_string(job->mItemIndex);
 		if (job->mItemCount > 0)
 			w.counted += " " + std::string(_("OF")) + " " + std::to_string(job->mItemCount);
-		w.item = Utils::String::toUpper(job->mUnitLabel);
+		w.item = unitName(job->mUnitLabel);
 	}
 	return w;
 }
@@ -481,6 +489,20 @@ std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std:
 	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
 		text.pop_back();
 	return text + "...";
+}
+
+// The scripts name their two fixed units in English (">>> unit SETTINGS||",
+// ">>> unit SAVES||"), and the page used to show that word as it came, so
+// the French page read SETTINGS over ELEMENT 1 SUR 1 (#153, 2026-09-21). A
+// system's name from the content scripts is a directory and stays as it is.
+std::string GuiCloudTransfer::unitName(const std::string& label)
+{
+	const std::string upper = Utils::String::toUpper(label);
+	if (upper == "SETTINGS")
+		return _("SETTINGS");
+	if (upper == "SAVES")
+		return _("SAVES");
+	return upper;
 }
 
 std::string GuiCloudTransfer::fitSentences(const std::shared_ptr<Font>& font, std::string text, float width)
@@ -731,7 +753,11 @@ void GuiCloudTransfer::update(int deltaTime)
 		std::string note;
 		if (!o.completed)
 		{
-			const bool moved = job.mAnyTransferred || job.mRunFiles > 0;
+			// Files, not bytes: rclone renames a file into place only once it
+			// is whole and a cut S3 PUT lands nothing, so a run that moved nine
+			// megabytes of one archive has put nothing anywhere (#153).
+			// mUnitFiles is the last unit's count where foldUnit has not run.
+			const bool moved = job.mRunFiles > 0 || job.mUnitFiles > 0;
 			if (match)
 				note = job.mRemovedFiles == 0 ? _("NOTHING WAS REMOVED FROM THIS DEVICE.")
 					: job.mRemovedFiles == 1 ? _("1 FILE WAS REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS IT.")
@@ -777,7 +803,7 @@ void GuiCloudTransfer::update(int deltaTime)
 		}
 		else
 		{
-			const std::string item = Utils::String::toUpper(job.mUnitLabel);
+			const std::string item = unitName(job.mUnitLabel);
 			mStatus->setText(item.empty() ? _("WORKING...") : fitOneLine(mTextFont, item, mLineWidth));
 			std::string counter = std::string(_("ITEM")) + " " + std::to_string(job.mItemIndex);
 			if (job.mItemCount > 0)
