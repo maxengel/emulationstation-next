@@ -36,9 +36,28 @@ MultiLineMenuEntry::MultiLineMenuEntry(Window* window, const std::string& text, 
 	layoutRows();
 }
 
+// The two rows from the texts' natural heights, which for a single-line
+// text is its font's height plus its padding. Not from the components'
+// current sizes: the grid hands each text its cell -- 0.9 and 1.1 of the
+// natural heights, below -- and TextComponent stops sizing itself once it
+// has been given a height, so reading the cells back here made every
+// setDescription shrink the label and grow the line by ten percent. A row
+// refreshed once looked a little tight; one refreshed per game of a
+// 37-game scan was a screen tall with the two texts drawn on top of each
+// other (fork #241, 2026-09-22). The multi-line substring keeps its own
+// measured height: onSizeChanged gives it a zero height first, so the
+// value read is fresh.
+static float naturalHeight(const std::shared_ptr<TextComponent>& text)
+{
+	if (text->getFont() == nullptr)
+		return text->getSize().y();
+	const Vector4f padding = text->getPadding();
+	return text->getFont()->getHeight() + padding.y() + padding.w();
+}
+
 void MultiLineMenuEntry::layoutRows()
 {
-	float th = mText->getSize().y();
+	float th = naturalHeight(mText);
 
 	if (mSubstring->getText().empty())
 	{
@@ -49,7 +68,7 @@ void MultiLineMenuEntry::layoutRows()
 	}
 	else
 	{
-		float sh = mSubstring->getSize().y();
+		float sh = mMultiLine ? mSubstring->getSize().y() : naturalHeight(mSubstring);
 		float h = th + sh;
 
 		setRowHeightPerc(0, (th * 0.9) / h);
