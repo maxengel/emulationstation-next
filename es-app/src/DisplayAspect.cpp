@@ -4,6 +4,7 @@
 #include "FileData.h"
 #include "SystemData.h"
 #include "PlatformId.h"
+#include "Log.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
 
@@ -41,6 +42,8 @@ namespace DisplayAspect
 		}
 		const std::string content = DisplayAspectText::screenshotContent(Utils::FileSystem::getFileName(path));
 		float aspect = 0.0f;
+		std::string matched;
+		int considered = 0, gamesSeen = 0;
 		if (!content.empty())
 		{
 			for (SystemData* system : SystemData::sSystemVector)
@@ -49,11 +52,14 @@ namespace DisplayAspect
 					continue;
 				if (system->hasPlatformId(PlatformIds::IMAGEVIEWER) || DisplayAspectText::forSystem(system->getThemeFolder()) == 0.0f)
 					continue;
+				considered++;
 				for (FileData* game : system->getRootFolder()->getFilesRecursive(GAME))
 				{
+					gamesSeen++;
 					if (Utils::FileSystem::getStem(game->getPath()) == content)
 					{
 						aspect = DisplayAspectText::forSystem(system->getThemeFolder());
+						matched = system->getName() + "/" + system->getThemeFolder();
 						break;
 					}
 				}
@@ -61,6 +67,8 @@ namespace DisplayAspect
 					break;
 			}
 		}
+		LOG(LogInfo) << "DisplayAspect: screenshot " << Utils::FileSystem::getFileName(path) << " content '" << content
+			<< "' systems considered " << considered << " games seen " << gamesSeen << " matched '" << matched << "' aspect " << aspect;
 		std::unique_lock<std::mutex> lock(mutex);
 		known[path] = aspect;
 		return aspect;

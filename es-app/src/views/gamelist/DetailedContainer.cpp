@@ -6,6 +6,7 @@
 #include "FileData.h"
 #include "SystemData.h"
 #include "PlatformId.h"
+#include "Log.h"
 #include "LocaleES.h"
 #include "LangParser.h"
 #include "SaveStateRepository.h"
@@ -1076,6 +1077,10 @@ void DetailedContainer::updateControls(FileData* file, bool isClearing, int move
 		const bool screenshots = file->getSystem() != nullptr && file->getSystem()->hasPlatformId(PlatformIds::IMAGEVIEWER);
 		const float aspect = screenshots ? DisplayAspect::forScreenshot(file) : 0.0f;
 		const std::string imageBound = file->getImagePath();
+		if (screenshots)
+			LOG(LogInfo) << "DisplayAspect: detailed view for " << file->getName() << " system " << (file->getSystem() ? file->getSystem()->getName() : "-")
+				<< " image '" << imageBound << "' aspect " << aspect << " md_image " << (mImage != nullptr ? "present" : "absent")
+				<< " extras " << mThemeExtras.size();
 		for (auto extra : mThemeExtras)
 			applyDisplayAspect(extra, imageBound, aspect);
 		if (mImage != nullptr)
