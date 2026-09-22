@@ -2,28 +2,32 @@
 #ifndef ES_APP_OFFLINE_SCAN_JOB_H
 #define ES_APP_OFFLINE_SCAN_JOB_H
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <sys/types.h>
 
 class Window;
 
 // One run of raofflineproxy-ctl scan (fork #179, D-RA-010), apart from the
-// page that shows it (GuiOfflineScan), so the page can be left and the run
-// goes on (audit #186 PL-07). A first scan of a thousand games is an hour;
-// the fourth surface tier (es-native-ui.md) is a page that outlives the
-// job, not one that holds the player for the job's length.
+// page that shows it (GuiOfflineScan). The run is a thread of its own
+// reading the ctl's stdout -- ">>> " lines, the header of raofflineproxy-ctl
+// is the contract -- into the state below, and it keeps itself alive (the
+// thread holds the shared_ptr) until the ctl exits. One run at a time:
+// start() hands back the run in flight when there is one, as the ctl itself
+// would refuse a second (exit 75).
 //
-// The run is a thread of its own reading the ctl's stdout -- ">>> " lines,
-// the header of raofflineproxy-ctl is the contract -- into the state below,
-// and it keeps itself alive (the thread holds the shared_ptr) until the ctl
-// exits, whether or not a page is watching. One run at a time: start()
-// hands back the run in flight when there is one, as the ctl itself would
-// refuse a second (exit 75). The row under SCAN GAMES reads the run through
-// current() while it is in flight and the stamp the ctl writes once it is
-// done; a page opened while a run is in flight attaches to it.
+// The page sits on the run for its length (D-UI-078, #241): the one way out
+// while it runs is CANCEL, which is cancel() here -- the ctl gets SIGINT,
+// traps it as the player's cancel, stamps the run and exits 130; what it
+// saved stays saved, and the next scan passes over those games. For a week
+// (audit #186 PL-07) the page could be left and the run went on in the
+// background, reported only on the row that launched it; the maintainer met
+// that prompt on the device and asked what would happen, and the honest
+// answer was "nothing tells you".
 class OfflineScanJob : public std::enable_shared_from_this<OfflineScanJob>
 {
 public:
@@ -38,6 +42,7 @@ public:
 		bool limit = false, nothingNew = false;
 		bool truncated = false;   // ">>> note TRUNCATED": the walk stopped at the client's cap of files
 		std::string why;          // the ctl's token
+		bool cancelled = false;   // cancel(): the player's word for the outcome, whatever the exit
 		bool finished = false;
 		int exit = -1;
 		int elapsedMs = 0;        // since the run began; frozen once finished
@@ -52,6 +57,13 @@ public:
 
 	State state() const;
 	const std::string& command() const { return mCommand; }
+
+	// The player's CANCEL (D-UI-078): SIGINT to the run's process group --
+	// the shell, the ctl and its helper together -- and the state marked
+	// cancelled, so the page words the outcome as the player's choice and
+	// not as a failure. The ctl's INT trap writes the stamp. Nothing to do
+	// once the run has ended.
+	void cancel();
 
 	// Run on the interface thread whenever the run's state changes and once
 	// when it ends -- at most one waiting at a time -- so the row that
@@ -70,6 +82,11 @@ private:
 	std::string mCommand;
 	mutable std::mutex mMutex;
 	State mState;
+	// The command's process group (run() starts it under setsid and reads
+	// its ">>> pid N" first line), for cancel(). A cancel that arrives before
+	// the line has (mCancelWanted) is delivered when it does.
+	std::atomic<pid_t> mPid{0};
+	bool mCancelWanted = false;
 	std::chrono::steady_clock::time_point mStarted;
 	std::function<void()> mOnChanged;
 	bool mPostPending = false;   // a changed() already waits on the interface thread

@@ -4310,6 +4310,9 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 	case CloudText::Outcome::SkippedGameStarted:
 		r.outcome = _("SKIPPED, A GAME WAS STARTED");
 		break;
+	case CloudText::Outcome::SkippedCancelled:
+		r.outcome = _("SKIPPED, YOU CANCELLED IT");
+		break;
 	case CloudText::Outcome::Failed:
 	{
 		// The token's phrase for one of ours, the code's for anything else.

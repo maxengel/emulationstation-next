@@ -6,6 +6,7 @@
 #include "FileData.h"
 #include "SystemData.h"
 #include "scrapers/ThreadedScraper.h"
+#include "guis/GuiScraperRun.h"
 #include "scrapers/ScreenScraper.h"
 #include "LocaleES.h"
 #include "GuiLoading.h"
@@ -482,7 +483,12 @@ void GuiScraperStart::start()
 				mWindow->pushGui(new GuiMsgBox(mWindow, _("NO GAMES FIT THAT CRITERIA.")));
 			else
 			{
+				// The run's page over this one, then this one goes: the
+				// scrape is watched to its end (D-UI-078), and the outcome
+				// is dismissed back onto the game lists.
 				ThreadedScraper::start(mWindow, searches);
+				if (ThreadedScraper::isRunning())
+					mWindow->pushGui(new GuiScraperRun(mWindow));
 				close();
 			}
 		}));

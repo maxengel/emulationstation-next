@@ -1,6 +1,7 @@
 #include "guis/GuiOfflineScan.h"
 
 #include "CloudExit.h"
+#include "guis/GuiMsgBox.h"
 #include "CloudText.h"
 #include "OfflineAchievements.h"
 #include "Window.h"
@@ -83,9 +84,8 @@ GuiOfflineScan::GuiOfflineScan(Window* window, const std::string& command, const
 	mPanelPos  = Vector2f(cx - mPanelSize.x() / 2.0f, top);
 	mBackground.fitTo(mPanelSize, Vector3f(mPanelPos.x(), mPanelPos.y(), 0), Vector2f(-32, -32));
 
-	// The run in flight, when there is one (the row was pressed while a scan
-	// left in the background was still going), else a new one. Either way
-	// the row follows it from here.
+	// The run in flight, when there is one, else a new one. Either way the
+	// row follows it from here.
 	mJob = OfflineScanJob::start(window, mCommand);
 	mJob->setOnChanged(mOnChanged);
 }
@@ -95,13 +95,12 @@ GuiOfflineScan::~GuiOfflineScan()
 {
 }
 
-// While the scan runs, B closes the page and the scan carries on in the
-// background (audit #186 PL-07; the row's line follows it); every other
-// press is refused, since there is nothing to choose and a stray press
-// should not dismiss a page somebody is waiting on. Once it has finished,
-// any button dismisses it, and when the run did not complete, A runs it
-// again from here: the surface that reported the failure carries the retry
-// (D-UI-028).
+// While the scan runs, B asks whether to cancel it (D-UI-078: the page is
+// sat in, and CANCEL is the one way out); every other press is refused,
+// since there is nothing to choose and a stray press should not dismiss a
+// page somebody is waiting on. Once it has finished, any button dismisses
+// it, and when the run did not complete, A runs it again from here: the
+// surface that reported the failure carries the retry (D-UI-028).
 bool GuiOfflineScan::input(InputConfig* config, Input input)
 {
 	if (!input.value)
@@ -110,10 +109,10 @@ bool GuiOfflineScan::input(InputConfig* config, Input input)
 	if (!s.finished)
 	{
 		if (config->isMappedTo(BUTTON_BACK, input))
-			close();
+			askCancel();
 		return true;
 	}
-	const Outcome o = outcome(s.exit);
+	const Outcome o = outcome(s);
 	if (!o.completed && config->isMappedTo("a", input))
 	{
 		// A new run; the finished one is let go. The page shows the run
@@ -131,6 +130,21 @@ bool GuiOfflineScan::input(InputConfig* config, Input input)
 	return true;
 }
 
+// What cancelling means, read at the moment of deciding (D-UI-023): the
+// games already saved stay saved, and a scan passes over games already
+// cached, so the next one carries on from here. YES first, NO last so B
+// answers NO. The run is captured, not the page: the page outlives the
+// dialog either way, but nothing here needs it.
+void GuiOfflineScan::askCancel()
+{
+	std::shared_ptr<OfflineScanJob> job = mJob;
+	mWindow->pushGui(new GuiMsgBox(mWindow,
+		_("CANCEL THE SCAN?") + std::string("\n\n")
+			+ _("GAMES ALREADY SAVED STAY SAVED. THE NEXT SCAN CARRIES ON FROM THERE."),
+		_("YES"), [job] { job->cancel(); },
+		_("NO"), nullptr));
+}
+
 void GuiOfflineScan::close()
 {
 	// Copied out first: the page is gone by the time it runs.
@@ -146,10 +160,10 @@ std::vector<HelpPrompt> GuiOfflineScan::getHelpPrompts()
 	const OfflineScanJob::State s = mJob->state();
 	if (!s.finished)
 	{
-		prompts.push_back(HelpPrompt(BUTTON_BACK, _("KEEP SCANNING IN THE BACKGROUND")));
+		prompts.push_back(HelpPrompt(BUTTON_BACK, _("CANCEL")));
 		return prompts;
 	}
-	const Outcome o = outcome(s.exit);
+	const Outcome o = outcome(s);
 	if (!o.completed)
 		prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
 	prompts.push_back(HelpPrompt(BUTTON_BACK, _("CLOSE")));
@@ -158,18 +172,22 @@ std::vector<HelpPrompt> GuiOfflineScan::getHelpPrompts()
 
 // The word for the run (D-UI-028): COMPLETED, SKIPPED for the two sentinels
 // the ctl exits with before touching anything -- not online, another scan
-// or top-up holding the lock -- and COULDN'T FINISH for everything else,
-// the refusals included: the why on line 4 says which.
-GuiOfflineScan::Outcome GuiOfflineScan::outcome(int exit)
+// or top-up holding the lock -- and for the player's own cancel (the word
+// the transfer page gives a run stopped for a game, D-CLOUD-129: nothing
+// went wrong, and the next run carries on), and COULDN'T FINISH for
+// everything else, the refusals included: the why on line 4 says which.
+GuiOfflineScan::Outcome GuiOfflineScan::outcome(const OfflineScanJob::State& s)
 {
 	Outcome o;
-	o.completed = exit == 0;
-	o.skipped = exit == CloudExit::NoNetwork || exit == CloudExit::LockHeld;
-	if (o.completed)
+	o.completed = !s.cancelled && s.exit == 0;
+	o.skipped = s.cancelled || s.exit == CloudExit::NoNetwork || s.exit == CloudExit::LockHeld;
+	if (s.cancelled)
+		o.word = _("SKIPPED - YOU CANCELLED IT");
+	else if (o.completed)
 		o.word = _("COMPLETED");
-	else if (exit == CloudExit::NoNetwork)
+	else if (s.exit == CloudExit::NoNetwork)
 		o.word = _("SKIPPED - YOU'RE NOT ONLINE");
-	else if (exit == CloudExit::LockHeld)
+	else if (s.exit == CloudExit::LockHeld)
 		o.word = _("SKIPPED - A SCAN IS ALREADY RUNNING");
 	else
 		o.word = _("COULDN'T FINISH");
@@ -218,27 +236,6 @@ std::string GuiOfflineScan::readyPhrase(int ready)
 	return std::to_string(ready) + " " + std::string(_("GAMES READY FOR OFFLINE PLAY"));
 }
 
-// "SCANNING... - GAME 12 OF 40" for the row's line while the run is in the
-// background, in the words this page's lines 1 and 2 use, so the row and
-// the page say the same thing about the same run.
-std::string GuiOfflineScan::runningPhrase(const OfflineScanJob::State& state)
-{
-	std::string head;
-	if (state.index > 0)
-		head = _("SCANNING...");
-	else if (state.listing)
-		head = _("LOOKING THROUGH YOUR GAMES...");
-	else
-		head = _("PREPARING...");
-	if (state.index > 0)
-	{
-		head += " - " + std::string(_("GAME")) + " " + std::to_string(state.index);
-		if (state.total > 0)
-			head += " " + std::string(_("OF")) + " " + std::to_string(state.total);
-	}
-	return head;
-}
-
 // "GAMES WITH ACHIEVEMENTS ADDED: 3" -- what this run did, and "NOT SAVED: 1"
 // beside it when a fetch failed for any game (the ctl's errors count, audit
 // #186 PL-24: such a run is COULDN'T FINISH, and the next scan tries those
@@ -278,7 +275,7 @@ void GuiOfflineScan::update(int deltaTime)
 		// word; 2 what this run added and passed over; 3 how many games
 		// earn offline now -- the answer the page exists to give; 4 why it
 		// stopped, when it did; 5 what to do next; 6 elapsed; 7 the buttons.
-		const Outcome o = outcome(s.exit);
+		const Outcome o = outcome(s);
 		mStatus->setText(fitOneLine(mTextFont, o.word, mLineWidth));
 
 		const bool ran = s.total > 0 || s.cached > 0 || s.skipped > 0 || s.nothingNew;
@@ -310,6 +307,8 @@ void GuiOfflineScan::update(int deltaTime)
 			note = _("NOT EVERY FOLDER WAS LOOKED AT. SCAN AGAIN TO CONTINUE.");
 		else if (s.nothingNew)
 			note = _("NOTHING NEW - EVERY GAME WAS ALREADY READY.");
+		else if (s.cancelled)
+			note = _("THE NEXT SCAN CARRIES ON FROM HERE.");
 		else if (s.exit == CloudExit::NoNetwork)
 			note = _("TRY AGAIN WHEN YOU'RE ONLINE.");
 		mNote->setText(fitOneLine(mSmallFont, note, mLineWidth));
@@ -341,11 +340,11 @@ void GuiOfflineScan::update(int deltaTime)
 		mDetail  ->setText(s.index > 0 ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped, s.errors), mLineWidth) : "");
 		mNote    ->setText("");
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		// 7. That the page can be left: the longest form that fits the line
-		// (D-UI-035), so a 640x480 panel keeps the sentence to one row.
+		// 7. That the page can be cancelled: the longest form that fits the
+		// line (D-UI-035), so a 640x480 panel keeps the sentence to one row.
 		std::shared_ptr<Font> font = mSmallFont;
 		mFooter  ->setText(CloudText::chooseThatFits(
-			{ _("THIS CAN TAKE A WHILE. PRESS B TO KEEP SCANNING IN THE BACKGROUND."), _("PRESS B TO KEEP SCANNING IN THE BACKGROUND.") },
+			{ _("THIS CAN TAKE A WHILE. PRESS B TO CANCEL."), _("PRESS B TO CANCEL.") },
 			mLineWidth, [font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; }));
 	}
 }

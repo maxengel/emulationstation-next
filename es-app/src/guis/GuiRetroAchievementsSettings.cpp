@@ -133,32 +133,25 @@ static bool offlineScanOnline()
 	return !Utils::Platform::queryIPAddress().empty();
 }
 
-// Whether the row is showing a run in flight -- a scan from this page left
-// in the background (PL-07), or one the ctl runs on its own (fork #189) --
-// which keeps the row undimmed whatever the gates say now.
+// Whether the row is showing a run the ctl runs on its own (fork #189),
+// which keeps the row undimmed whatever the gates say now. A scan from this
+// page has its page over it for its whole length (D-UI-078), so the row
+// never reports one.
 static bool offlineScanShowsRun()
 {
-	return OfflineScanJob::running() || OfflineAchievements::runningProgress().running;
+	return OfflineAchievements::runningProgress().running;
 }
 
-// The line under the row. A scan left running in the background first
-// (audit #186 PL-07: SCANNING... - GAME i OF n, refreshed as the run
-// reports, and the ready count the client's export already carries); then
-// a run the ctl started on its own (fork #189, below); else why it cannot
-// run now, else how the last run went and the count that is the point of
-// the row -- longest form first, and the row's own small font decides
-// which fits (D-UI-035). An automatic top-up says so in place of the date
-// (D-UI-032).
+// The line under the row. A run the ctl started on its own first (fork
+// #189, below); else why it cannot run now, else how the last run went and
+// the count that is the point of the row -- longest form first, and the
+// row's own small font decides which fits (D-UI-035). An automatic top-up
+// says so in place of the date (D-UI-032).
 static std::string offlineScanDetail(bool on, bool online)
 {
 	const std::string ready = GuiOfflineScan::readyPhrase(OfflineAchievements::readyCount());
 	std::vector<std::string> candidates;
-	if (OfflineScanJob::running())
-	{
-		const std::string head = GuiOfflineScan::runningPhrase(OfflineScanJob::current()->state());
-		candidates = { head + "  ·  " + ready, head, _("SCANNING...") };
-	}
-	else if (const CloudText::RunningProgress run = OfflineAchievements::runningProgress(); run.running)
+	if (const CloudText::RunningProgress run = OfflineAchievements::runningProgress(); run.running)
 	{
 		// The top-up the ctl runs on its own -- at link-up (D-RA-010) or
 		// after the startup index (D-RA-013) -- reports to no job of this
@@ -168,8 +161,8 @@ static std::string offlineScanDetail(bool on, bool online)
 		// words: the head alone while the ctl is still listing, GAME i OF n
 		// once a game is known, the ready count where it fits, and the head
 		// as the form that fits any panel (D-UI-035). Ahead of the gates
-		// below, as a scan in the background is: the run is in flight
-		// whatever the switch or the link says now.
+		// below: the run is in flight whatever the switch or the link says
+		// now.
 		const std::string head = _("SAVING GAMES FOR OFFLINE PLAY...");
 		std::string counted = head;
 		if (run.index > 0)
@@ -191,7 +184,10 @@ static std::string offlineScanDetail(bool on, bool online)
 		candidates = { _("NOT SCANNED YET") + std::string("  ·  ") + ready, ready };
 	else
 	{
-		const std::string outcome = last.code == 0 ? _("COMPLETED") : _("COULDN'T FINISH");
+		// The player's cancel is the page's word for it (D-UI-078), not a
+		// failure: the row says SKIPPED as the page did.
+		const std::string outcome = last.code == 0 ? _("COMPLETED")
+			: last.why == "CANCELLED" ? _("SKIPPED") : _("COULDN'T FINISH");
 		std::string head;
 		if (last.topup)
 			head = _("WHEN YOU CAME ONLINE");
@@ -236,8 +232,7 @@ static void offlineScanRefresh(const std::weak_ptr<MultiLineMenuEntry>& weak)
 // The row's line follows a run the ctl started on its own -- the top-up at
 // link-up (D-RA-010) or after the startup index (D-RA-013) -- through the
 // progress file the ctl keeps while it runs (fork #189), and nothing in
-// this process says when that file changes: a scan from the page reports
-// through its job (PL-07), a top-up through nothing. So the page carries
+// this process says when that file changes. So the page carries
 // one component that is never drawn and never focused, asks once a second
 // while the page is open, and refreshes the row -- which changes its words
 // only when they differ, and keeps its height, since only the words change
@@ -263,10 +258,6 @@ public:
 		if (mElapsedMs < 1000)
 			return;
 		mElapsedMs = 0;
-		// A scan from this page reports through its job, which refreshes
-		// the row as it reports; asking again would only repeat it.
-		if (OfflineScanJob::running())
-			return;
 		offlineScanRefresh(mRow);
 	}
 
@@ -282,7 +273,7 @@ private:
 // The scan page itself, from the row's confirmation and from the prompt
 // that follows turning the switch on (D-RA-012). The refresh it is handed
 // runs as the scan reports, when it ends and when the page closes, so the
-// row's line follows a scan left running in the background (PL-07).
+// row's line is right the moment the page is gone.
 static void offlineScanStart(Window* window, std::weak_ptr<MultiLineMenuEntry> weak)
 {
 	window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
@@ -291,14 +282,6 @@ static void offlineScanStart(Window* window, std::weak_ptr<MultiLineMenuEntry> w
 
 static void offlineScanPressed(Window* window, std::weak_ptr<MultiLineMenuEntry> weak)
 {
-	// A scan left running in the background: the page opens on it again, no
-	// question asked -- there is nothing to decide, and the ctl would refuse
-	// a second run anyway (PL-07).
-	if (OfflineScanJob::running())
-	{
-		offlineScanStart(window, weak);
-		return;
-	}
 	if (!offlineScanOn())
 	{
 		window->pushGui(new GuiMsgBox(window, _("TURN ON OFFLINE ACHIEVEMENTS FIRST."), _("OK")));
@@ -313,7 +296,9 @@ static void offlineScanPressed(Window* window, std::weak_ptr<MultiLineMenuEntry>
 	std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS?") + std::string("\n\n")
 		+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");
 	const CloudText::ScanStamp last = OfflineAchievements::lastScan();
-	if (last.ran && last.code != 0 && !last.why.empty())
+	// A cancelled run is not one that could not finish (D-UI-078): nothing
+	// to explain, the next scan carries on.
+	if (last.ran && last.code != 0 && !last.why.empty() && last.why != "CANCELLED")
 	{
 		// The why as a clause, then a full stop -- unless the why is a
 		// sentence already (SOME GAMES COULDN'T BE SAVED. TRY THE SCAN

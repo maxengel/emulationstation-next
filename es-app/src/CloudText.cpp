@@ -147,7 +147,7 @@ std::string cleanHostname(const std::string& in)
 bool isOutcomeToken(const std::string& token)
 {
 	static const std::set<std::string> ourTokens = {
-		"completed", "gaps", "no-network", "lock-held", "cancelled", "stopped",
+		"completed", "gaps", "no-network", "lock-held", "cancelled", "player-cancelled", "stopped",
 		"folder-missing", "cloud-stopped", "cloud-refused", "unknown" };
 	return ourTokens.find(token) != ourTokens.cend();
 }
@@ -220,6 +220,8 @@ LastRun parseLastRun(const std::string& text)
 		r.outcome = Outcome::SkippedNoNetwork;
 	else if (token == "cancelled")
 		r.outcome = Outcome::SkippedGameStarted;
+	else if (token == "player-cancelled")
+		r.outcome = Outcome::SkippedCancelled;
 	else
 	{
 		r.outcome = Outcome::Failed;

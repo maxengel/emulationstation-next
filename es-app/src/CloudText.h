@@ -86,6 +86,7 @@ namespace CloudText
 		SkippedLockHeld,
 		SkippedNoNetwork,
 		SkippedGameStarted,
+		SkippedCancelled,     // the player's CANCEL on the transfer page (D-UI-078)
 		Failed
 	};
 
