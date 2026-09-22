@@ -5457,8 +5457,34 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	auto s = new GuiSettings(mWindow, _("NETWORK SETTINGS").c_str());
 	s->addGroup(_("INFORMATION"));
 
-	auto ip = std::make_shared<TextComponent>(mWindow, ApiSystem::getInstance()->getIpAddress(), font, color);
-	s->addWithLabel(_("IP ADDRESS"), ip);
+	auto ips = ApiSystem::getInstance()->getIpAddresses();
+	if (ips.empty()) {
+		s->addWithLabel(_("IP ADDRESS"), std::make_shared<TextComponent>(mWindow, _("NOT CONNECTED"), font, color));
+	}
+	else if (ips.size() == 1) {
+		s->addWithLabel(_("IP ADDRESS"), std::make_shared<TextComponent>(mWindow, ips[0], font, color));
+	}
+	else {
+		ComponentListRow row;
+
+		auto ipLabel = std::make_shared<TextComponent>(mWindow, _("IP ADDRESS"), font, color);
+		row.addElement(ipLabel, true);
+
+		auto ipValue = std::make_shared<TextComponent>(mWindow, ips[0] + " (+)", font, color);
+		row.addElement(ipValue, false);
+
+		row.makeAcceptInputHandler([this, ips] {
+			std::string ipList = _("AVAILABLE IP ADDRESSES:\n\n");
+			for (const auto& ip : ips) {
+				ipList += ip + "\n";
+			}
+			ipList.pop_back();
+
+			mWindow->pushGui(new GuiMsgBox(mWindow, ipList, _("OK"), nullptr));
+		});
+
+		s->addRow(row);
+	}
 
 	auto status = std::make_shared<TextComponent>(mWindow, ApiSystem::getInstance()->ping() ? _("CONNECTED") : _("NOT CONNECTED"), font, color);
 	s->addWithLabel(_("INTERNET STATUS"), status);

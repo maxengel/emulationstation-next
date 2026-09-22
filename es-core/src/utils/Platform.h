@@ -3,6 +3,7 @@
 #define ES_CORE_PLATFORM_H
 
 #include <string>
+#include <vector>
 
 #ifdef WIN32
 #include <Windows.h>
@@ -65,6 +66,7 @@ namespace Utils
 
 		BatteryInformation queryBatteryInformation();
 
+		std::vector<std::string> queryIPAddresses();
 		std::string queryIPAddress();
 		std::string getArchString();
 		unsigned long long getTotalSystemMemory();

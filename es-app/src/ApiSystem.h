@@ -250,6 +250,7 @@ public:
 #endif
     bool disableWifi();
 
+	virtual std::vector<std::string> getIpAddresses();
 	virtual std::string getIpAddress();
 	virtual bool isWifiAPModeSupported();
 

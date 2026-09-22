@@ -587,6 +587,13 @@ bool ApiSystem::disableWifi()
 	return executeScript("wifictl disable");
 }
 
+std::vector<std::string> ApiSystem::getIpAddresses()
+{
+	LOG(LogDebug) << "ApiSystem::getIpAddresses";
+
+	return Utils::Platform::queryIPAddresses();
+}
+
 std::string ApiSystem::getIpAddress()
 {
 	LOG(LogDebug) << "ApiSystem::getIpAddress";

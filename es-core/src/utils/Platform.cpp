@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <ifaddrs.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
@@ -281,39 +282,31 @@ namespace Utils
 			return quitMode == QuitMode::FAST_REBOOT || quitMode == QuitMode::FAST_SHUTDOWN;
 		}
 
-		std::string queryIPAddress()
+		std::vector<std::string> queryIPAddresses()
 		{
-#ifdef DEVTEST
-			return "127.0.0.1";
-#endif
+			std::vector<std::string> result;
 
-			std::string result;
+#ifdef DEVTEST
+			result.push_back("127.0.0.1");
+			return result;
+#endif
 
 #if WIN32
 			// Init WinSock
 			WSADATA wsa_Data;
 			int wsa_ReturnCode = WSAStartup(0x101, &wsa_Data);
 			if (wsa_ReturnCode != 0)
-				return "";
-
-			char* szLocalIP = nullptr;
+				return result;
 
 			// Get the local hostname
 			char szHostName[255];
 			if (gethostname(szHostName, 255) == 0)
 			{
-				struct hostent* host_entry;
-				host_entry = gethostbyname(szHostName);
+				struct hostent* host_entry = gethostbyname(szHostName);
 				if (host_entry != nullptr)
-					szLocalIP = inet_ntoa(*(struct in_addr*)*host_entry->h_addr_list);
+					result.push_back(inet_ntoa(*(struct in_addr*)*host_entry->h_addr_list));
 			}
-
 			WSACleanup();
-
-			if (szLocalIP == nullptr)
-				return "";
-
-			return std::string(szLocalIP); // "127.0.0.1"
 #else
 			struct ifaddrs* ifAddrStruct = NULL;
 			struct ifaddrs* ifa = NULL;
@@ -334,13 +327,13 @@ namespace Utils
 					inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
 
 					std::string ifName = ifa->ifa_name;
-					if (ifName.find("eth") != std::string::npos || ifName.find("wlan") != std::string::npos || ifName.find("mlan") != std::string::npos || ifName.find("en") != std::string::npos || ifName.find("wl") != std::string::npos || ifName.find("p2p") != std::string::npos || ifName.find("usb") != std::string::npos)
+					if ((ifa->ifa_flags & IFF_LOOPBACK) == 0)
 					{
-						result = std::string(addressBuffer);
-						break;
+						result.push_back(std::string(addressBuffer));
 					}
 				}
 			}
+
 			// Seeking for ipv6 if no IPV4
 			if (result.empty())
 			{
@@ -361,10 +354,9 @@ namespace Utils
 							continue;
 
 						std::string ifName = ifa->ifa_name;
-						if (ifName.find("eth") != std::string::npos || ifName.find("wlan") != std::string::npos || ifName.find("mlan") != std::string::npos || ifName.find("en") != std::string::npos || ifName.find("wl") != std::string::npos || ifName.find("p2p") != std::string::npos || ifName.find("usb") != std::string::npos)
+						if ((ifa->ifa_flags & IFF_LOOPBACK) == 0)
 						{
-							result = std::string(addressBuffer);
-							break;
+							result.push_back(std::string(addressBuffer));
 						}
 					}
 				}
@@ -375,7 +367,12 @@ namespace Utils
 #endif
 
 			return result;
+		}
 
+		std::string queryIPAddress()
+		{
+			std::vector<std::string> ips = queryIPAddresses();
+			return ips.empty() ? "" : ips.front();
 		}
 
 		BatteryInformation queryBatteryInformation()
