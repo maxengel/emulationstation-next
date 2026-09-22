@@ -4,7 +4,7 @@
 #include "FileData.h"
 #include "SystemData.h"
 #include "PlatformId.h"
-#include "Log.h"
+#include "components/ImageComponent.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
 
@@ -42,8 +42,6 @@ namespace DisplayAspect
 		}
 		const std::string content = DisplayAspectText::screenshotContent(Utils::FileSystem::getFileName(path));
 		float aspect = 0.0f;
-		std::string matched;
-		int considered = 0, gamesSeen = 0;
 		if (!content.empty())
 		{
 			for (SystemData* system : SystemData::sSystemVector)
@@ -52,14 +50,11 @@ namespace DisplayAspect
 					continue;
 				if (system->hasPlatformId(PlatformIds::IMAGEVIEWER) || DisplayAspectText::forSystem(system->getThemeFolder()) == 0.0f)
 					continue;
-				considered++;
 				for (FileData* game : system->getRootFolder()->getFilesRecursive(GAME))
 				{
-					gamesSeen++;
 					if (Utils::FileSystem::getStem(game->getPath()) == content)
 					{
 						aspect = DisplayAspectText::forSystem(system->getThemeFolder());
-						matched = system->getName() + "/" + system->getThemeFolder();
 						break;
 					}
 				}
@@ -67,10 +62,18 @@ namespace DisplayAspect
 					break;
 			}
 		}
-		LOG(LogInfo) << "DisplayAspect: screenshot " << Utils::FileSystem::getFileName(path) << " content '" << content
-			<< "' systems considered " << considered << " games seen " << gamesSeen << " matched '" << matched << "' aspect " << aspect;
 		std::unique_lock<std::mutex> lock(mutex);
 		known[path] = aspect;
 		return aspect;
+	}
+
+	void applyToBoundImages(GuiComponent* root, const std::string& imagePath, float aspect)
+	{
+		if (root == nullptr)
+			return;
+		if (ImageComponent* image = dynamic_cast<ImageComponent*>(root))
+			image->setDisplayAspect(!imagePath.empty() && image->getImagePath() == imagePath ? aspect : 0.0f);
+		for (unsigned int i = 0; i < root->getChildCount(); i++)
+			applyToBoundImages(root->getChild(i), imagePath, aspect);
 	}
 }

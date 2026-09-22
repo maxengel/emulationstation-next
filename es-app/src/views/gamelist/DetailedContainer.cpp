@@ -6,7 +6,6 @@
 #include "FileData.h"
 #include "SystemData.h"
 #include "PlatformId.h"
-#include "Log.h"
 #include "LocaleES.h"
 #include "LangParser.h"
 #include "SaveStateRepository.h"
@@ -790,19 +789,6 @@ void DetailedContainer::loadThemedExtras(FileData* file)
 
 // Set the display aspect on every image under comp whose path is the
 // file's image (fork #243), and clear it on the others.
-static void applyDisplayAspect(GuiComponent* comp, const std::string& imagePath, float aspect)
-{
-	if (comp == nullptr)
-		return;
-	if (ImageComponent* image = dynamic_cast<ImageComponent*>(comp))
-	{
-		const std::string path = image->getProperty("path").s;
-		image->setDisplayAspect(!imagePath.empty() && path == imagePath ? aspect : 0.0f);
-	}
-	for (unsigned int i = 0; i < comp->getChildCount(); i++)
-		applyDisplayAspect(comp->getChild(i), imagePath, aspect);
-}
-
 void DetailedContainer::updateControls(FileData* file, bool isClearing, int moveBy, bool isDeactivating)
 {
 	bool state = (file != NULL);
@@ -1077,12 +1063,8 @@ void DetailedContainer::updateControls(FileData* file, bool isClearing, int move
 		const bool screenshots = file->getSystem() != nullptr && file->getSystem()->hasPlatformId(PlatformIds::IMAGEVIEWER);
 		const float aspect = screenshots ? DisplayAspect::forScreenshot(file) : 0.0f;
 		const std::string imageBound = file->getImagePath();
-		if (screenshots)
-			LOG(LogInfo) << "DisplayAspect: detailed view for " << file->getName() << " system " << (file->getSystem() ? file->getSystem()->getName() : "-")
-				<< " image '" << imageBound << "' aspect " << aspect << " md_image " << (mImage != nullptr ? "present" : "absent")
-				<< " extras " << mThemeExtras.size();
 		for (auto extra : mThemeExtras)
-			applyDisplayAspect(extra, imageBound, aspect);
+			DisplayAspect::applyToBoundImages(extra, imageBound, aspect);
 		if (mImage != nullptr)
 			mImage->setDisplayAspect(aspect);
 	}

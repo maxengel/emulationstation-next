@@ -6,6 +6,8 @@
 #include "Settings.h"
 #include "Sound.h"
 #include "SystemData.h"
+#include "DisplayAspect.h"
+#include "PlatformId.h"
 #include "SystemConf.h"
 #include "guis/GuiMsgBox.h"
 #include "Window.h"
@@ -749,6 +751,17 @@ void ISimpleGameListView::updateThemeExtrasBindings()
 
 	for (auto extra : mThemeExtras)
 		BindingManager::updateBindings(extra, file);
+
+	// A screenshot under the SCREENSHOTS entry is drawn at the aspect of the
+	// system it was taken in (fork #243, D-UI-080). The picture a theme binds
+	// with {game:image} is an extra of this view, so it is applied here;
+	// the details container does the same for its md_image and its own
+	// extras. A file of any other system resets them.
+	const bool screenshots = system != nullptr && system->hasPlatformId(PlatformIds::IMAGEVIEWER);
+	const float aspect = screenshots ? DisplayAspect::forScreenshot(file) : 0.0f;
+	const std::string imageBound = file->getImagePath();
+	for (auto extra : mThemeExtras)
+		DisplayAspect::applyToBoundImages(extra, imageBound, aspect);
 }
 
 bool ISimpleGameListView::onAction(const std::string& action)
