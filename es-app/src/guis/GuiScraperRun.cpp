@@ -212,8 +212,13 @@ void GuiScraperRun::update(int deltaTime)
 		mActivity->setText("");
 		mDetail  ->setText(p.failed ? fitOneLine(mSmallFont, p.failure, mLineWidth) : "");
 		// Each result is saved as it comes in; the lists show it once they
-		// are rebuilt (the sentence upstream's toast ended on).
-		mNote    ->setText(p.done - p.errors > 0 ? fitOneLine(mSmallFont, _("UPDATE GAMELISTS TO APPLY CHANGES."), mLineWidth) : "");
+		// are rebuilt (the sentence upstream's toast ended on). The longest
+		// form that fits the line (D-UI-035): the French of the full
+		// sentence ran off a 640x480 panel and was cut mid-word.
+		std::shared_ptr<Font> small = mSmallFont;
+		mNote    ->setText(p.done - p.errors > 0 ? CloudText::chooseThatFits(
+			{ _("UPDATE GAMELISTS TO APPLY CHANGES."), _("UPDATE GAMELISTS TO APPLY IT.") },
+			mLineWidth, [small](const std::string& t) { return small ? small->sizeText(t).x() : 0.0f; }) : "");
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
 		mFooter  ->setText(_("PRESS ANY BUTTON TO CLOSE"));
 	}
