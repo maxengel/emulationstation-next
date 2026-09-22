@@ -87,9 +87,15 @@ void ImageComponent::resize()
 	if (!mTexture || mTexture->getSize() == Vector2i::Zero()) // !mTexture->isLoaded())
 		return;
 
-	const Vector2f textureSize = mTexture->getPhysicalSize();
-	if (textureSize == Vector2f::Zero())
+	const Vector2f physicalSize = mTexture->getPhysicalSize();
+	if (physicalSize == Vector2f::Zero())
 		return;
+	// The proportions the picture is fitted at: the file's, unless a display
+	// aspect was set for it (fork #243) -- then the file's height at that
+	// width-to-height. The texture itself is untouched; only the quad is.
+	const Vector2f textureSize = (mDisplayAspect > 0.0f && physicalSize.y() > 0.0f)
+		? Vector2f(physicalSize.y() * mDisplayAspect, physicalSize.y())
+		: physicalSize;
 
 	auto targetSize = mTargetSize - mPadding.xy() - mPadding.zw();
 
@@ -440,6 +446,16 @@ void ImageComponent::setResize(float width, float height)
 	mSize = mTargetSize;
 	mTargetIsMax = false;
 	mTargetIsMin = false;
+	resize();
+}
+
+void ImageComponent::setDisplayAspect(float ratio)
+{
+	if (ratio < 0.0f)
+		ratio = 0.0f;
+	if (mDisplayAspect == ratio)
+		return;
+	mDisplayAspect = ratio;
 	resize();
 }
 

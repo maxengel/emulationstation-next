@@ -1,4 +1,5 @@
 #include "GuiSaveState.h"
+#include "DisplayAspect.h"
 #include "SystemData.h"
 #include "FileData.h"
 #include "utils/StringUtil.h"
@@ -43,6 +44,10 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	mLayout.setEntry(mTitle, Vector2i(1, 1), false, true);
 
 	mGrid = std::make_shared<ImageGridComponent<SaveStateItem>>(mWindow);
+	// RetroArch writes a thumbnail at the core's native size, which for the
+	// NES and the SNES is not the screen's shape (fork #243, D-UI-080): the
+	// tiles are drawn at the system's aspect, the picture scaled to it.
+	mGrid->setImageDisplayAspect(DisplayAspect::forSystem(game->getSourceFileData()->getSystem()));
 	mLayout.setEntry(mGrid, Vector2i(1, 3), true, true);
 
 	addChild(&mBackground);

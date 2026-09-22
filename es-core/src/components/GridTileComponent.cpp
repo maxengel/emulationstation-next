@@ -1039,8 +1039,16 @@ void GridTileComponent::setImage(const std::string& path, bool isDefaultImage)
 	else
 		mImage->setImage(path, false, MaxSizeInfo(mSize, mSelectedProperties.Image.sizeMode != "maxSize"), false);
 
+	mImage->setDisplayAspect(mDisplayAspect);
 	mImageLoaded = mImage->getTextureSize() != Vector2i::Zero();
 	resize();
+}
+
+void GridTileComponent::setDisplayAspect(float ratio)
+{
+	mDisplayAspect = ratio;
+	if (mImage != nullptr)
+		mImage->setDisplayAspect(ratio);
 }
 
 void GridTileComponent::setMarquee(const std::string& path)

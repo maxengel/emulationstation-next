@@ -124,6 +124,14 @@ public:
 	void setProperty(const std::string name, const ThemeData::ThemeElement::Property& value) override;
 	void setTargetIsMax() { mTargetIsMax = true; }
 	bool getTargetIsMax() { return mTargetIsMax; }
+	// Draw the picture at this width-to-height instead of the file's own
+	// (0 = the file's). For a screenshot or a save-state thumbnail RetroArch
+	// wrote at the core's native size -- NES 256x240 for a 4:3 picture --
+	// the file's proportions are the pixel grid, not what was on screen
+	// (fork #243, D-UI-080). Every sizing mode respects it; the picture is
+	// scaled, never cropped differently.
+	void setDisplayAspect(float ratio);
+	float getDisplayAspect() const { return mDisplayAspect; }
 
 	void setSaturation(float saturation);
 	void setCustomShader(const Renderer::ShaderInfo& customShader);
@@ -177,6 +185,7 @@ private:
 	bool mAllowFading;
 
 	std::string mPath;
+	float mDisplayAspect = 0.0f;
 
 	Alignment mHorizontalAlignment;
 	Alignment mVerticalAlignment;

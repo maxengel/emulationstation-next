@@ -230,6 +230,9 @@ public:
 	void setVideo(const std::string& path, float defaultDelay = -1.0);
 
 	void setImage(const std::string& path, bool isDefaultImage = false);
+	// The width-to-height the tile's picture is drawn at (fork #243; 0 =
+	// the file's own). Kept across setImage.
+	void setDisplayAspect(float ratio);
 	void setMarquee(const std::string& path);
 	
 	void setFavorite(bool favorite);
@@ -298,6 +301,7 @@ private:
 
 	std::string mCurrentMarquee;
 	std::string mCurrentPath;
+	float mDisplayAspect = 0.0f;
 	std::string mVideoPath;
 
 	void setSelectedZoom(float percent);
