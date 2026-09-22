@@ -496,7 +496,13 @@ GameInfoAndUserProgress RetroAchievements::getGameInfoAndUserProgress(int gameId
 		auto device = getGameInfoFromDevice(gameId, cheevosHash);
 		if (device.ID != 0 || device.NotOnDevice)
 			return device;
-		LOG(LogWarning) << "RetroAchievements: offline, but the proxy did not answer for game " << gameId << "; asking the web";
+		// The proxy did not answer, and there is no link to ask the web on:
+		// the web's answer would be its timeout, ten seconds later, in
+		// libcurl's words (fork #242: "Timeout was reached" on the RG35XX
+		// SP). Say what happened instead, in the player's.
+		LOG(LogWarning) << "RetroAchievements: offline, and the proxy did not answer for game " << gameId << "; not asking the web";
+		ret.Title = _("THE OFFLINE ACHIEVEMENTS SERVICE DIDN'T ANSWER. TRY AGAIN IN A MOMENT.");
+		return ret;
 	}
 
 	if (getApiLogin().empty())
