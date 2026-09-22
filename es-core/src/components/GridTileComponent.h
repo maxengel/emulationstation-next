@@ -233,6 +233,7 @@ public:
 	// The width-to-height the tile's picture is drawn at (fork #243; 0 =
 	// the file's own). Kept across setImage.
 	void setDisplayAspect(float ratio);
+	void setDisplayRotation(int quarterTurns);
 	void setMarquee(const std::string& path);
 	
 	void setFavorite(bool favorite);
@@ -302,6 +303,7 @@ private:
 	std::string mCurrentMarquee;
 	std::string mCurrentPath;
 	float mDisplayAspect = 0.0f;
+	int mDisplayRotation = 0;
 	std::string mVideoPath;
 
 	void setSelectedZoom(float percent);

@@ -1,4 +1,5 @@
 #include "FileData.h"
+#include "CaptureRotation.h"
 
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
@@ -921,6 +922,11 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 		if (captureCode != 0)
 			LOG(LogWarning) << "cloud_capture exited " << captureCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
 	}
+
+	// What the display did with this game's frame, for its captures (fork
+	// #245, D-UI-081): the core's rotation request is in the launch log
+	// only while the log is this session's, so it is read here.
+	CaptureRotation::recordAfterSession(gameToUpdate, options.launchedEmulator);
 
 	if (!p2kConv.empty()) // delete .keys file if it has been converted from p2k
 		Utils::FileSystem::removeFile(p2kConv);

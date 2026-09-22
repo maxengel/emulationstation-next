@@ -47,7 +47,13 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	// RetroArch writes a thumbnail at the core's native size, which for the
 	// NES and the SNES is not the screen's shape (fork #243, D-UI-080): the
 	// tiles are drawn at the system's aspect, the picture scaled to it.
-	mGrid->setImageDisplayAspect(DisplayAspect::forSystem(game->getSourceFileData()->getSystem()));
+	{
+		// The tiles are this game's captures: its system's aspect, and the
+		// turn the display gave its frame (fork #243, #245).
+		const DisplayAspect::Transform t = DisplayAspect::forGame(game);
+		mGrid->setImageDisplayAspect(t.aspect);
+		mGrid->setImageDisplayRotation(t.turns);
+	}
 	mLayout.setEntry(mGrid, Vector2i(1, 3), true, true);
 
 	addChild(&mBackground);

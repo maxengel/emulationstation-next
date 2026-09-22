@@ -95,6 +95,8 @@ set(ES_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiBackup.cpp # batocera
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiCloudTransfer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiOfflineScan.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CaptureRotation.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CaptureRotationText.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayAspect.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayAspectText.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiScraperRun.h
@@ -221,6 +223,8 @@ set(ES_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiBackup.cpp # batocera
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiCloudTransfer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiOfflineScan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CaptureRotation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/CaptureRotationText.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayAspect.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayAspectText.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiScraperRun.cpp

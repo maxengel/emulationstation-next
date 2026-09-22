@@ -1061,12 +1061,15 @@ void DetailedContainer::updateControls(FileData* file, bool isClearing, int move
 		// -- get the aspect; every other image keeps its own, and a file
 		// of any other system resets them.
 		const bool screenshots = file->getSystem() != nullptr && file->getSystem()->hasPlatformId(PlatformIds::IMAGEVIEWER);
-		const float aspect = screenshots ? DisplayAspect::forScreenshot(file) : 0.0f;
+		const DisplayAspect::Transform transform = screenshots ? DisplayAspect::forScreenshot(file) : DisplayAspect::Transform();
 		const std::string imageBound = file->getImagePath();
 		for (auto extra : mThemeExtras)
-			DisplayAspect::applyToBoundImages(extra, imageBound, aspect);
+			DisplayAspect::applyToBoundImages(extra, imageBound, transform);
 		if (mImage != nullptr)
-			mImage->setDisplayAspect(aspect);
+		{
+			mImage->setDisplayAspect(transform.aspect);
+			mImage->setDisplayRotation(transform.turns);
+		}
 	}
 
 	if (state && file != nullptr && !isClearing)
