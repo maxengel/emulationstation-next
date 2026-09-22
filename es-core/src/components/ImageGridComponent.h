@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #ifndef ES_CORE_COMPONENTS_IMAGE_GRID_COMPONENT_H
 #define ES_CORE_COMPONENTS_IMAGE_GRID_COMPONENT_H
 
@@ -94,6 +95,11 @@ public:
 	// each file's own): the save state manager's thumbnails are one
 	// system's, and RetroArch wrote them at the core's native size.
 	void setImageDisplayAspect(float ratio) { mImageDisplayAspect = ratio; }
+	void setImageDisplayRotation(int quarterTurns) { mImageDisplayRotation = quarterTurns; }
+	// Called for each tile once it has its entry, for a grid whose tiles
+	// differ one from the next (the SCREENSHOTS system: each file its own
+	// game's aspect and rotation, fork #245).
+	void setTileDecorator(const std::function<void(GridTileComponent*, const T&)>& decorator) { mTileDecorator = decorator; }
 	std::string getImage(const T& obj);
 
 	bool input(InputConfig* config, Input input) override;
@@ -175,6 +181,8 @@ private:
 	Vector2f mMargin;
 	Vector2f mTileSize;
 	float mImageDisplayAspect = 0.0f;
+	int mImageDisplayRotation = 0;
+	std::function<void(GridTileComponent*, const T&)> mTileDecorator;
 	Vector2i mGridDimension;
 	Vector2f mGridSizeOverride;
 
@@ -277,6 +285,7 @@ std::shared_ptr<GridTileComponent> ImageGridComponent<T>::createTile(int i, int 
 		tile->forceSize(mTileSize, mAutoLayoutZoom);
 
 	tile->setDisplayAspect(mImageDisplayAspect);
+	tile->setDisplayRotation(mImageDisplayRotation);
 	return tile;
 }
 
@@ -302,6 +311,8 @@ void ImageGridComponent<T>::preloadTiles()
 		loadTile(tile, entry);
 		
 		entry.data.tile = tile;
+		if (mTileDecorator)
+			mTileDecorator(tile.get(), entry.object);
 	}
 }
 
@@ -372,6 +383,8 @@ void ImageGridComponent<T>::ensureVisibleTileExist()
 				loadTile(tile, entry);
 
 				entry.data.tile = tile;
+		if (mTileDecorator)
+			mTileDecorator(tile.get(), entry.object);
 
 				if (tile->isVisible())
 					mVisibleTiles.push_back(tile);

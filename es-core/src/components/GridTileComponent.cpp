@@ -1040,6 +1040,7 @@ void GridTileComponent::setImage(const std::string& path, bool isDefaultImage)
 		mImage->setImage(path, false, MaxSizeInfo(mSize, mSelectedProperties.Image.sizeMode != "maxSize"), false);
 
 	mImage->setDisplayAspect(mDisplayAspect);
+		mImage->setDisplayRotation(mDisplayRotation);
 	mImageLoaded = mImage->getTextureSize() != Vector2i::Zero();
 	resize();
 }
@@ -1049,6 +1050,16 @@ void GridTileComponent::setDisplayAspect(float ratio)
 	mDisplayAspect = ratio;
 	if (mImage != nullptr)
 		mImage->setDisplayAspect(ratio);
+}
+
+void GridTileComponent::setDisplayRotation(int quarterTurns)
+{
+	quarterTurns = ((quarterTurns % 4) + 4) % 4;
+	if (mDisplayRotation == quarterTurns)
+		return;
+	mDisplayRotation = quarterTurns;
+	if (mImage != nullptr)
+		mImage->setDisplayRotation(mDisplayRotation);
 }
 
 void GridTileComponent::setMarquee(const std::string& path)

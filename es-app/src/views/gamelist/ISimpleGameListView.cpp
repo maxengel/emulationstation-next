@@ -758,10 +758,10 @@ void ISimpleGameListView::updateThemeExtrasBindings()
 	// the details container does the same for its md_image and its own
 	// extras. A file of any other system resets them.
 	const bool screenshots = system != nullptr && system->hasPlatformId(PlatformIds::IMAGEVIEWER);
-	const float aspect = screenshots ? DisplayAspect::forScreenshot(file) : 0.0f;
+	const DisplayAspect::Transform transform = screenshots ? DisplayAspect::forScreenshot(file) : DisplayAspect::Transform();
 	const std::string imageBound = file->getImagePath();
 	for (auto extra : mThemeExtras)
-		DisplayAspect::applyToBoundImages(extra, imageBound, aspect);
+		DisplayAspect::applyToBoundImages(extra, imageBound, transform);
 }
 
 bool ISimpleGameListView::onAction(const std::string& action)

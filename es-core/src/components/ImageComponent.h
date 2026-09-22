@@ -132,6 +132,12 @@ public:
 	// scaled, never cropped differently.
 	void setDisplayAspect(float ratio);
 	float getDisplayAspect() const { return mDisplayAspect; }
+	// Quarter turns counter-clockwise the picture is shown at inside its
+	// layout box (fork #245, D-UI-081): a vertical arcade game's capture is
+	// the core's landscape frame, which RetroArch turns for the display and
+	// the capture does not. The texture coordinates turn, the quad stays.
+	void setDisplayRotation(int quarterTurns);
+	int getDisplayRotation() const { return mDisplayRotation; }
 
 	void setSaturation(float saturation);
 	void setCustomShader(const Renderer::ShaderInfo& customShader);
@@ -186,6 +192,7 @@ private:
 
 	std::string mPath;
 	float mDisplayAspect = 0.0f;
+	int mDisplayRotation = 0;
 
 	Alignment mHorizontalAlignment;
 	Alignment mVerticalAlignment;

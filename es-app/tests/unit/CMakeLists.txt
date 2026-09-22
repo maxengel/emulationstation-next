@@ -40,6 +40,7 @@ add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/WifiTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/OfflineProxyUrlTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/SaveStateJobQueueTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/CaptureRotationTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/DisplayAspectTextTests.cpp
 	${ES_ROOT}/es-app/src/CloudText.cpp
 	${ES_ROOT}/es-app/src/CheevosRetry.cpp
@@ -47,6 +48,7 @@ add_executable(es-unit-tests
 	${ES_ROOT}/es-app/src/CheevosIndex.cpp
 	${ES_ROOT}/es-app/src/WifiText.cpp
 	${ES_ROOT}/es-app/src/SaveStateJobQueue.cpp
+	${ES_ROOT}/es-app/src/CaptureRotationText.cpp
 	${ES_ROOT}/es-app/src/DisplayAspectText.cpp
 	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
 	${ES_ROOT}/es-core/src/utils/TimeText.cpp
