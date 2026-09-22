@@ -1037,6 +1037,66 @@ void ViewController::reloadSystemListViewTheme(SystemData* system)
 	mSystemListView->reloadTheme(system);
 }
 
+std::string ViewController::dropGameListView(SystemData* system, bool* wasCurrent)
+{
+	if (wasCurrent != nullptr)
+		*wasCurrent = false;
+
+	auto it = mGameListViews.find(system);
+	if (it == mGameListViews.cend())
+		return "";
+
+	IGameListView* view = it->second.get();
+	std::string cursorPath;
+	FileData* cursor = view->getCursor();
+	if (cursor != nullptr && !cursor->isPlaceHolder())
+		cursorPath = cursor->getPath();
+
+	if (mCurrentView != nullptr && mCurrentView.get() == view)
+	{
+		if (wasCurrent != nullptr)
+			*wasCurrent = true;
+		mDropped.position = view->getPosition();
+		mCurrentView->onHide();
+		mCurrentView = nullptr;
+	}
+
+	mGameListViews.erase(it);
+	return cursorPath;
+}
+
+void ViewController::remakeGameListView(SystemData* system, const std::string& cursorPath, bool wasCurrent)
+{
+	system->setUIModeFilters();
+	system->updateDisplayedGameCount();
+
+	std::shared_ptr<IGameListView> newView = getGameListView(system);
+	if (newView == nullptr)
+		return;
+
+	if (!cursorPath.empty())
+	{
+		for (auto file : system->getRootFolder()->getFilesRecursive(GAME, true))
+		{
+			if (file->getPath() == cursorPath)
+			{
+				newView->setCursor(file);
+				break;
+			}
+		}
+	}
+
+	if (wasCurrent)
+	{
+		mCurrentView = newView;
+		mCurrentView->setPosition(mDropped.position);
+		mCurrentView->onShow();
+	}
+
+	if (mCurrentView)
+		updateHelpPrompts();
+}
+
 void ViewController::reloadGameListView(IGameListView* view)
 {
 	if (view == nullptr)

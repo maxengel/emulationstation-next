@@ -45,6 +45,19 @@ public:
 	// the current gamelist view (as it may change to be detailed).
 	void reloadGameListView(IGameListView* gamelist);
 	inline void reloadGameListView(SystemData* system) { reloadGameListView(getGameListView(system).get()); }
+
+	// The two halves of reloadGameListView, for a caller that is about to
+	// delete a system's FileData and re-read them (SystemData::
+	// rescanIfFolderChanged, fork #82 / #246). reloadGameListView reads the
+	// old view's cursor first, which is fine when the files outlive the
+	// view and a use of freed memory when they do not: the rescan deleted
+	// them with clear() and then asked for the reload, and the interface
+	// died on the eighteenth screenshot of a session. So: the cursor is
+	// read while it is alive and the view dropped BEFORE the files go, and
+	// a fresh view is made AFTER the folder is populated again, its cursor
+	// found by path.
+	std::string dropGameListView(SystemData* system, bool* wasCurrent);
+	void remakeGameListView(SystemData* system, const std::string& cursorPath, bool wasCurrent);
 	void reloadSystemListViewTheme(SystemData* system);
 
 	void reloadAll(Window* window = nullptr, bool reloadTheme = true); // Reload everything with a theme.  Used when the "ThemeSet" setting changes.
@@ -126,6 +139,7 @@ private:
 	void changeVolume(int increment);
 
 	std::shared_ptr<GuiComponent> mCurrentView;
+	struct { Vector3f position; } mDropped; // where the current view sat when dropGameListView took it down
 	std::map< SystemData*, std::shared_ptr<IGameListView> > mGameListViews;
 	std::shared_ptr<SystemView> mSystemListView;
 	

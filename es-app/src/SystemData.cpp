@@ -328,13 +328,23 @@ void SystemData::rescanIfFolderChanged()
 	LOG(LogInfo) << "SystemData::rescanIfFolderChanged: " << getName() << " changed on disk, re-reading " << mEnvData->mStartPath;
 	mFolderScannedAt = mtime;
 
+	// The view first, while its cursor is still a file that exists: clear()
+	// deletes every FileData below the root, and reloadGameListView read the
+	// old view's cursor after that -- freed memory, which held plausible
+	// bytes seventeen times and killed the interface on the eighteenth
+	// (fork #246: a screenshot per achievement, a rescan per game exit).
+	std::string cursorPath;
+	bool wasCurrent = false;
+	if (ViewController::get() != nullptr)
+		cursorPath = ViewController::get()->dropGameListView(this, &wasCurrent);
+
 	mRootFolder->clear();
 	std::unordered_map<std::string, FileData*> fileMap;
 	fileMap[mEnvData->mStartPath] = mRootFolder;
 	populateFolder(mRootFolder, fileMap);
 
 	if (ViewController::get() != nullptr)
-		ViewController::get()->reloadGameListView(this);
+		ViewController::get()->remakeGameListView(this, cursorPath, wasCurrent);
 }
 
 void SystemData::rescanChangedFolders()
