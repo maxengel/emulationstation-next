@@ -194,6 +194,10 @@ void ImageComponent::resize()
 	//mTexture->rasterizeAt((size_t)mSize.x(), (size_t)mSize.y());
 
 	mTexture->rasterizeAt((size_t)Math::round(mSize.x()), (size_t)Math::round(mSize.y()));
+	if (mDisplayAspect > 0.0f || mPath.find("/screenshots/") != std::string::npos)
+		LOG(LogInfo) << "DisplayAspect: resize " << mPath << " aspect " << mDisplayAspect << " physical " << physicalSize.x() << "x" << physicalSize.y()
+			<< " fitted " << textureSize.x() << "x" << textureSize.y() << " target " << targetSize.x() << "x" << targetSize.y()
+			<< (mTargetIsMax ? " max" : mTargetIsMin ? " min" : " fixed") << " -> " << mSize.x() << "x" << mSize.y();
 	onSizeChanged();
 }
 
@@ -456,6 +460,7 @@ void ImageComponent::setDisplayAspect(float ratio)
 	if (mDisplayAspect == ratio)
 		return;
 	mDisplayAspect = ratio;
+	LOG(LogInfo) << "DisplayAspect: set " << mPath << " -> " << ratio << (mTexture ? " texture" : " no texture");
 	resize();
 }
 
