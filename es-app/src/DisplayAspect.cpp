@@ -3,6 +3,7 @@
 #include "DisplayAspectText.h"
 #include "FileData.h"
 #include "SystemData.h"
+#include "PlatformId.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
 
@@ -46,7 +47,7 @@ namespace DisplayAspect
 			{
 				if (system == nullptr || system->isCollection() || !system->isGameSystem() || system->getRootFolder() == nullptr)
 					continue;
-				if (system->getName() == "screenshots" || DisplayAspectText::forSystem(system->getThemeFolder()) == 0.0f)
+				if (system->hasPlatformId(PlatformIds::IMAGEVIEWER) || DisplayAspectText::forSystem(system->getThemeFolder()) == 0.0f)
 					continue;
 				for (FileData* game : system->getRootFolder()->getFilesRecursive(GAME))
 				{
