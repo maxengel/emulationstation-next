@@ -90,6 +90,10 @@ public:
 	virtual void clear();
 
 	void setImage(const std::string& imagePath, const T& obj);
+	// Every tile's picture drawn at this width-to-height (fork #243; 0 =
+	// each file's own): the save state manager's thumbnails are one
+	// system's, and RetroArch wrote them at the core's native size.
+	void setImageDisplayAspect(float ratio) { mImageDisplayAspect = ratio; }
 	std::string getImage(const T& obj);
 
 	bool input(InputConfig* config, Input input) override;
@@ -170,6 +174,7 @@ private:
 	Vector4f mPadding;
 	Vector2f mMargin;
 	Vector2f mTileSize;
+	float mImageDisplayAspect = 0.0f;
 	Vector2i mGridDimension;
 	Vector2f mGridSizeOverride;
 
@@ -271,6 +276,7 @@ std::shared_ptr<GridTileComponent> ImageGridComponent<T>::createTile(int i, int 
 	if (mAutoLayout.x() != 0 && mAutoLayout.y() != 0)
 		tile->forceSize(mTileSize, mAutoLayoutZoom);
 
+	tile->setDisplayAspect(mImageDisplayAspect);
 	return tile;
 }
 

@@ -1,0 +1,52 @@
+#include "DisplayAspectText.h"
+
+#include <cctype>
+#include <set>
+
+namespace DisplayAspectText
+{
+	float forSystem(const std::string& themeFolder)
+	{
+		// Consoles and computers whose cores emit non-square pixels and
+		// whose picture is a 4:3 screen: the NES's 256x240 and the SNES's
+		// 256x224 are both 4:3 on the screen they were made for; the Mega
+		// Drive's 320x224 and 256x224 likewise; the PC Engine's 256-wide
+		// modes; the 8-bit computers and consoles; the disc systems whose
+		// software cores render at native size. Handhelds are absent on
+		// purpose: their pixels are square and the file is right as it
+		// is. Arcade is absent too: a vertical shooter is 3:4.
+		static const std::set<std::string> fourByThree = {
+			"nes", "famicom", "fds", "nesh",
+			"snes", "sfc", "snesh", "snesmsu1", "satellaview", "sufami",
+			"megadrive", "genesis", "megadriveh", "genh", "megadrive-japan", "sega32x", "segacd", "megacd",
+			"mastersystem", "sg-1000",
+			"pcengine", "tg16", "supergrafx", "pcenginecd", "tg16cd", "pcfx",
+			"atari2600", "atari5200", "atari7800", "atari800", "atarist",
+			"c64", "c128", "vic20", "c16", "pet", "amiga", "amigacd32",
+			"msx", "msx2", "colecovision", "intellivision", "odyssey2", "videopac", "channelf",
+			"amstradcpc", "zxspectrum", "zx81", "x1", "x68000", "pc-8800", "pc-9800",
+			"psx", "saturn", "neogeo", "neocd", "cdi", "3do", "n64", "n64dd",
+		};
+		return fourByThree.count(themeFolder) ? 4.0f / 3.0f : 0.0f;
+	}
+
+	std::string screenshotContent(const std::string& fileName)
+	{
+		// "<content>-YYMMDD-HHMMSS" with or without the extension: twelve
+		// digits in two groups of six after the last two dashes.
+		std::string stem = fileName;
+		const size_t dot = stem.rfind('.');
+		if (dot != std::string::npos && dot > 0)
+			stem = stem.substr(0, dot);
+		if (stem.size() < 15)
+			return "";
+		const std::string tail = stem.substr(stem.size() - 14);
+		if (tail[0] != '-' || tail[7] != '-')
+			return "";
+		for (size_t i = 1; i < 14; i++)
+			if (i != 7 && !isdigit((unsigned char) tail[i]))
+				return "";
+		const std::string content = stem.substr(0, stem.size() - 14);
+		return content;
+	}
+}
