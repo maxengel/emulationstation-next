@@ -19,22 +19,21 @@
 // (es-native-ui.md): a page that owns the screen, shows the live line and
 // the elapsed time -- no bar, because the client gives no percentage worth
 // drawing one from -- and stays with the outcome until the player dismisses
-// it. A page that outlives the job, not one that holds the player for its
-// length (audit #186 PL-07): B while it runs closes the page and the scan
-// carries on (OfflineScanJob, a thread that ends when the ctl does), the
-// row that offered it follows the run in its line, and pressing that row
-// again reopens this page on the run in flight. GuiCloudTransfer's shape,
-// without its rclone parser: the backend is raofflineproxy-ctl scan, which
-// talks to the run through ">>> " lines (its header spells them) and exits
-// with the codes CloudExit.h names for a run that did nothing.
+// it. The page is sat in for the run's length (D-UI-078, #241): the one way
+// out while it runs is CANCEL, a confirmation that says what cancelling
+// means (what was saved stays saved, the next scan carries on from there),
+// then OfflineScanJob::cancel(). GuiCloudTransfer's shape, without its
+// rclone parser: the backend is raofflineproxy-ctl scan, which talks to the
+// run through ">>> " lines (its header spells them) and exits with the codes
+// CloudExit.h names for a run that did nothing.
 class GuiOfflineScan : public GuiComponent
 {
 public:
 	// onChanged runs on the interface thread whenever the run's state
 	// changes, once when it ends, and after this page is gone, whichever
 	// button closed it -- so the row that opened the page can re-read the
-	// stamp and the run. The page attaches to the run in flight when there
-	// is one, and starts command otherwise.
+	// stamp. The page attaches to the run in flight when there is one (a
+	// TRY AGAIN's predecessor, ending), and starts command otherwise.
 	GuiOfflineScan(Window* window, const std::string& command, const std::function<void()>& onChanged = nullptr);
 	virtual ~GuiOfflineScan();
 
@@ -47,19 +46,18 @@ public:
 	// and this page's line 3 both end on, so the two never disagree.
 	static std::string readyPhrase(int ready);
 
-	// "SCANNING... - GAME i OF n": the row's line while a run is in flight
-	// and no page is watching, from the run's state.
-	static std::string runningPhrase(const OfflineScanJob::State& state);
-
 private:
-	// The done page's word (D-UI-028), from the exit code.
+	// The done page's word (D-UI-028), from the run's state.
 	struct Outcome
 	{
 		bool completed;
-		bool skipped;      // a sentinel: not online, or another scan running
+		bool skipped;      // a sentinel: not online, another scan running, or the player's cancel
 		std::string word;
 	};
-	static Outcome outcome(int exit);
+	static Outcome outcome(const OfflineScanJob::State& s);
+	// The CANCEL confirmation (D-UI-078): what cancelling means, then
+	// OfflineScanJob::cancel() on YES.
+	void askCancel();
 	static std::string fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width);
 	static std::string countsLine(int cached, int skipped, int errors);
 	void close();

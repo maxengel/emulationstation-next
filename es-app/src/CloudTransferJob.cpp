@@ -89,6 +89,19 @@ bool CloudTransferJob::stopForLaunch(bool hard)
 	return true;
 }
 
+bool CloudTransferJob::stopByPlayer()
+{
+	auto job = current();
+	if (job == nullptr || job->finished())
+		return false;
+	job->mStoppedByPlayer = true;
+	const pid_t pid = job->mPid;
+	if (pid > 0)
+		::kill(-pid, SIGTERM);
+	LOG(LogInfo) << "CloudTransferJob: cancelled by the player (SIGTERM, group " << pid << ")";
+	return true;
+}
+
 bool CloudTransferJob::finished() const
 {
 	std::unique_lock<std::mutex> lock(mMutex);
@@ -596,25 +609,27 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 
 	std::unique_lock<std::mutex> lock(mMutex);
 	foldUnit();   // the last unit: no ">>> unit" follows it
-	// Stopped for a game: SIGTERM shows up as a signal or as 143, and
-	// neither is what happened. CloudExit::Stopped is the scripts' own word
-	// for being stopped, whoever did the stopping (ThreadedCloudSync does
-	// the same for the card's cancel).
-	if (mStoppedForGame)
+	// Stopped for a game, or by the player (D-UI-078): SIGTERM shows up as
+	// a signal or as 143, and neither is what happened. CloudExit::Stopped
+	// is the scripts' own word for being stopped, whoever did the stopping
+	// (ThreadedCloudSync does the same for the card's cancel).
+	const bool stopped = mStoppedForGame || mStoppedByPlayer;
+	if (stopped)
 	{
 		ret = CloudExit::Stopped;
 		// The scripts' INT/TERM trap stamped each part it was inside with 130
 		// and no token, and the rows under MANAGE CLOUD STORAGE read that as
 		// COULDN'T FINISH once this run was dismissed (#203). Say what
-		// happened in their place, with the token the card's cancel writes.
-		restampStoppedParts();
+		// happened in their place: the token the card's cancel writes for a
+		// game, the player's own for a cancel (CloudText's outcome tokens).
+		restampStoppedParts(mStoppedByPlayer ? "player-cancelled" : "cancelled");
 	}
 	mExit = ret;
 	// A command with no tier lines (the match; anything composed before
 	// them) that did not complete: what it said is its failed item -- the
 	// unit the why arrived under, or the why alone -- and with no why at
 	// all, the code's phrase for the unit that was running, if one was.
-	if (ret != 0 && ret != 9 && mFailed.empty() && !mStoppedForGame)
+	if (ret != 0 && ret != 9 && mFailed.empty() && !stopped)
 	{
 		for (auto& w : mPendingWhys)
 			mFailed.push_back(w);
@@ -634,7 +649,7 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 // started keeps the stamp of its last real run, which is the truth about
 // it. The scripts each own one stamp under /storage/.cache/cloud_sync; the
 // content restore's depends on the verb it ran with.
-void CloudTransferJob::restampStoppedParts()
+void CloudTransferJob::restampStoppedParts(const char* token)
 {
 	struct Part { const char* script; const char* stamp; };
 	static const Part PARTS[] = {
@@ -654,8 +669,8 @@ void CloudTransferJob::restampStoppedParts()
 		struct stat st;
 		if (stat(path.c_str(), &st) != 0 || st.st_mtime < mStartedAt - 1)
 			continue;   // not this run's: the part never got as far as its trap
-		ThreadedCloudSync::writeStamp(path, CloudExit::Stopped, "cancelled", "");
-		LOG(LogInfo) << "CloudTransferJob: " << stamp << " restamped as stopped for a game";
+		ThreadedCloudSync::writeStamp(path, CloudExit::Stopped, token, "");
+		LOG(LogInfo) << "CloudTransferJob: " << stamp << " restamped as " << token;
 	}
 }
 

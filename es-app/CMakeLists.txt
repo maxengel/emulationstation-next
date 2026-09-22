@@ -95,6 +95,7 @@ set(ES_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiBackup.cpp # batocera
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiCloudTransfer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiOfflineScan.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiScraperRun.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiInstall.h # batocera
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiInstall.cpp # batocera
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiLoading.h # batocera
@@ -218,6 +219,7 @@ set(ES_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiBackup.cpp # batocera
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiCloudTransfer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiOfflineScan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiScraperRun.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiInstall.cpp # batocera    
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiThemeInstaller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/guis/GuiBezelInstaller.cpp

@@ -1,5 +1,7 @@
 #include "guis/GuiCloudTransfer.h"
 
+#include "guis/GuiMsgBox.h"
+
 #include "CloudExit.h"
 #include "CloudOffer.h"
 #include "CloudText.h"
@@ -190,9 +192,8 @@ void GuiCloudTransfer::clearDoneRows()
 	if (mDetail) mDetail->setText("");
 }
 
-// While the transfer runs, B closes the page and the run carries on in the
-// background (fork #187; the row on the CLOUD page follows it in its line,
-// and pressing that row opens this page on it again); every other press is
+// While the transfer runs, B asks whether to cancel it (D-UI-078: the page
+// is sat in, and CANCEL is the one way out); every other press is
 // refused, since there is nothing to choose and a stray press should not
 // dismiss a page somebody is waiting on. Not B either on a page whose
 // completed run has an action in place of an exit (setCompletedAction): a
@@ -211,10 +212,10 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	std::unique_lock<std::mutex> lock(job.mMutex);
 	if (!job.mFinished)
 	{
-		if (leaveable() && config->isMappedTo(BUTTON_BACK, input))
+		if (cancellable() && config->isMappedTo(BUTTON_BACK, input))
 		{
 			lock.unlock();
-			delete this;
+			askCancel();
 		}
 		return true;
 	}
@@ -290,6 +291,21 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	return true;
 }
 
+// What cancelling means, read at the moment of deciding (D-UI-023): each
+// file rclone moves is renamed into place whole, so what is across stays,
+// and the next run finishes what this one did not (D-CLOUD-077). YES first,
+// NO last so B answers NO. Nothing of the page is captured: the stop is a
+// static call on the run in flight, and the page shows the outcome as the
+// run ends.
+void GuiCloudTransfer::askCancel()
+{
+	mWindow->pushGui(new GuiMsgBox(mWindow,
+		_("CANCEL THIS BACKUP OR RESTORE?") + std::string("\n\n")
+			+ _("WHAT'S ALREADY IN PLACE STAYS. THE NEXT BACKUP OR RESTORE FINISHES WHAT THIS ONE DIDN'T."),
+		_("YES"), [] { CloudTransferJob::stopByPlayer(); },
+		_("NO"), nullptr));
+}
+
 std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 {
 	std::vector<HelpPrompt> prompts;
@@ -297,8 +313,8 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 	std::unique_lock<std::mutex> lock(job.mMutex);
 	if (!job.mFinished)
 	{
-		if (leaveable())
-			prompts.push_back(HelpPrompt(BUTTON_BACK, _("KEEP IT RUNNING IN THE BACKGROUND")));
+		if (cancellable())
+			prompts.push_back(HelpPrompt(BUTTON_BACK, _("CANCEL")));
 		return prompts;
 	}
 	const Outcome o = outcome(job);
@@ -344,12 +360,12 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 	// card's own phrase for the same thing (ThreadedCloudSync's cancel), and
 	// no failed item -- nothing went wrong, and the next run finishes what
 	// this one did not.
-	if (job.mStoppedForGame)
+	if (job.mStoppedForGame || job.mStoppedByPlayer)
 	{
 		o.completed = false;
 		o.partial = false;
 		o.skipped = true;
-		o.word = _("SKIPPED - YOU STARTED A GAME");
+		o.word = job.mStoppedByPlayer ? _("SKIPPED - YOU CANCELLED IT") : _("SKIPPED - YOU STARTED A GAME");
 		return o;
 	}
 	o.completed = job.mExit == 0 || job.mExit == 9;
@@ -908,16 +924,15 @@ void GuiCloudTransfer::update(int deltaTime)
 		mDetail->setText(fitOneLine(mSmallFont, totals, mLineWidth));
 
 		mElapsed->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		// 7. That the page can be left, and how: the longest form that fits
-		// the line (D-UI-035), so a 640x480 panel keeps the sentence to one
-		// row. A page that cannot be left (setCompletedAction) says only
-		// that it takes a while -- the old footer said the player could
-		// leave it running while the page took every button.
-		if (leaveable())
+		// 7. That the page can be cancelled, and how: the longest form that
+		// fits the line (D-UI-035), so a 640x480 panel keeps the sentence to
+		// one row. A page that cannot be (setCompletedAction) says only that
+		// it takes a while.
+		if (cancellable())
 		{
 			std::shared_ptr<Font> font = mSmallFont;
 			mFooter->setText(CloudText::chooseThatFits(
-				{ _("THIS CAN TAKE A WHILE. PRESS B TO KEEP IT RUNNING IN THE BACKGROUND."), _("PRESS B TO KEEP IT RUNNING IN THE BACKGROUND.") },
+				{ _("THIS CAN TAKE A WHILE. PRESS B TO CANCEL."), _("PRESS B TO CANCEL.") },
 				mLineWidth, [font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; }));
 		}
 		else

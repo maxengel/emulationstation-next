@@ -158,6 +158,7 @@ TEST_CASE("parseLastRun names each of the four outcomes")
 	// The launch cancel, by token: a 130 that was not one reads as a
 	// failure instead.
 	CHECK(parseLastRun("1789000000 130 cancelled").outcome == Outcome::SkippedGameStarted);
+	CHECK(parseLastRun("1789000000 130 player-cancelled").outcome == Outcome::SkippedCancelled);
 	CHECK(parseLastRun("1789000000 130 stopped").outcome == Outcome::Failed);
 
 	// A composed run whose parts disagreed keeps its own token, and has

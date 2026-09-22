@@ -68,6 +68,12 @@ public:
 	// game starts: the signal is not the end of the run, the process ending
 	// is (ThreadedCloudSync::cancelForLaunch says why).
 	static bool stopForLaunch(bool hard);
+	// The player's CANCEL on the transfer page (D-UI-078): the same SIGTERM
+	// to the run's process group, and the run marked stopped by the player,
+	// so its outcome reads SKIPPED - YOU CANCELLED IT and the parts it was
+	// inside are restamped with the player's own token. False when no run
+	// is in flight.
+	static bool stopByPlayer();
 
 	const std::string& command() const { return mCommand; }
 	const std::string& title() const { return mTitle; }
@@ -78,6 +84,8 @@ public:
 	time_t finishedAt() const;
 	// Stopped by stopForLaunch: the launch's word, not a failure.
 	bool stoppedForGame() const { return mStoppedForGame; }
+	// Stopped by stopByPlayer: the player's word, not a failure.
+	bool stoppedByPlayer() const { return mStoppedByPlayer; }
 
 private:
 	friend class GuiCloudTransfer;
@@ -164,9 +172,10 @@ private:
 	std::chrono::steady_clock::time_point mStarted;
 	time_t mStartedAt;   // wall clock, to tell a stamp this run wrote from an older one
 
-	// Stopped for a game: the scripts' trap stamped each part it was inside
-	// with 130 and no token; say what happened in their place (#203).
-	void restampStoppedParts();
+	// Stopped for a game or by the player: the scripts' trap stamped each
+	// part it was inside with 130 and no token; say what happened in their
+	// place (#203), with the token for who stopped it.
+	void restampStoppedParts(const char* token);
 	int mElapsedMs;             // frozen when the run ends
 	time_t mFinishedAt;
 	// The command's process group (run() starts it under setsid and reads
@@ -175,6 +184,7 @@ private:
 	// read by the page.
 	std::atomic<pid_t> mPid{0};
 	std::atomic<bool> mStoppedForGame{false};
+	std::atomic<bool> mStoppedByPlayer{false};
 
 	static std::mutex sMutex;
 	static std::shared_ptr<CloudTransferJob> sCurrent;

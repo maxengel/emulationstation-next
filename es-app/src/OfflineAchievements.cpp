@@ -282,6 +282,11 @@ std::string OfflineAchievements::scanWhy(const std::string& token)
 	// those games again, since nothing marks them cached.
 	if (token == "SOME_GAMES_NOT_SAVED")
 		return _("SOME GAMES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
+	// The player's CANCEL on the scan page (D-UI-078): the ctl's INT trap
+	// stamps it so the row says so; not a failure, and the next scan
+	// carries on from what was saved.
+	if (token == "CANCELLED")
+		return _("YOU CANCELLED IT");
 	return _("SOMETHING WENT WRONG");
 }
 
