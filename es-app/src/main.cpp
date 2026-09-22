@@ -38,6 +38,11 @@
 #include "ImageIO.h"
 #include "components/VideoVlcComponent.h"
 #include <csignal>
+#ifdef __GLIBC__
+#include <execinfo.h>
+#include <unistd.h>
+#include <string.h>
+#endif
 #include "InputConfig.h"
 #include "RetroAchievements.h"
 #include "TextToSpeech.h"
@@ -360,8 +365,30 @@ void signalHandler(int signum)
 
 	Log::flush();
 
-	// cleanup and close up stuff here  
-	exit(signum);
+	// The frames, to stderr (the journal on ROCKNIX, where the one line
+	// above had been the whole record of a crash -- fork #246). glibc's
+	// backtrace is not async-signal-safe either, no more than the LOG
+	// above; a handler that has already decided the process is done can
+	// afford the risk, and a frame list that prints nine times in ten is
+	// worth more than a guaranteed silence. The addresses are symbolised on
+	// the build host with addr2line against the same build's unstripped
+	// binary (.claude/rules/device-builds.md, "Reading a crash").
+#ifdef __GLIBC__
+	{
+		void* frames[64];
+		const int count = backtrace(frames, 64);
+		const char* head = "EmulationStation crash backtrace (innermost first; symbolise with addr2line):\n";
+		(void) !write(STDERR_FILENO, head, strlen(head));
+		backtrace_symbols_fd(frames, count, STDERR_FILENO);
+	}
+#endif
+
+	// Then die of the signal itself, not of exit(): exit() ran the static
+	// destructors on the faulting thread, so the core the kernel kept
+	// described the teardown and not the fault, and the exit code hid the
+	// signal from systemd. The default action dumps at the fault.
+	signal(signum, SIG_DFL);
+	raise(signum);
 }
 
 void playVideo()
@@ -617,6 +644,15 @@ int main(int argc, char* argv[])
 	signal(SIGILL, signalHandler);
 	signal(SIGINT, signalHandler);
 	signal(SIGSEGV, signalHandler);
+#ifdef __GLIBC__
+	// backtrace() loads libgcc's unwinder on its first call; take that first
+	// call here, while nothing is on fire, so the one in the handler does no
+	// loading in a process that has just faulted (glibc's own advice).
+	{
+		void* warm[2];
+		backtrace(warm, 2);
+	}
+#endif
 	// signal(SIGTERM, signalHandler);
 
 	srand((unsigned int)time(NULL));
