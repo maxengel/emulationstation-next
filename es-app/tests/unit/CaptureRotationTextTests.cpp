@@ -33,11 +33,16 @@ TEST_CASE("the display's turn is the core's, unless rotation is forbidden, plus 
 
 TEST_CASE("the record is one digit and reads back, and anything else reads as none")
 {
-	CHECK(CaptureRotationText::recordText(1) == "1\n");
-	CHECK(CaptureRotationText::recordText(5) == "1\n");
-	CHECK(CaptureRotationText::recordText(-1) == "3\n");
+	CHECK(CaptureRotationText::recordText(1) == "turns=1\n");
+	CHECK(CaptureRotationText::recordText(5) == "turns=1\n");
+	CHECK(CaptureRotationText::recordText(-1) == "turns=3\n");
+	// longer than the three bytes readAllText's byte-order-mark check reads
+	CHECK(CaptureRotationText::recordText(0).size() > 3);
+	CHECK(CaptureRotationText::parseRecord("turns=1\n") == 1);
+	CHECK(CaptureRotationText::parseRecord("turns=3") == 3);
 	CHECK(CaptureRotationText::parseRecord("1\n") == 1);
 	CHECK(CaptureRotationText::parseRecord("  3") == 3);
+	CHECK(CaptureRotationText::parseRecord("turns=x") == 0);
 	CHECK(CaptureRotationText::parseRecord("") == 0);
 	CHECK(CaptureRotationText::parseRecord("9") == 0);
 	CHECK(CaptureRotationText::parseRecord("north") == 0);

@@ -494,7 +494,6 @@ void ImageComponent::setDisplayRotation(int quarterTurns)
 	if (mDisplayRotation == quarterTurns)
 		return;
 	mDisplayRotation = quarterTurns;
-	LOG(LogInfo) << "DisplayRotation: " << mPath << " turns " << mDisplayRotation << (mTexture ? " texture" : " no texture");
 	resize();
 }
 

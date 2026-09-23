@@ -53,7 +53,6 @@ namespace CaptureRotation
 		int turns = 0;
 		if (Utils::FileSystem::exists(path, false))
 			turns = CaptureRotationText::parseRecord(Utils::FileSystem::readAllText(path));
-		LOG(LogInfo) << "CaptureRotation: read " << path << " exists " << (Utils::FileSystem::exists(path, false) ? "yes" : "no") << " turns " << turns;
 		std::unique_lock<std::mutex> lock(sLock);
 		sKnown[path] = turns;
 		return turns;

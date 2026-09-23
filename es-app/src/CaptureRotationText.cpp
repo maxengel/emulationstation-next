@@ -64,7 +64,7 @@ namespace CaptureRotationText
 	std::string recordText(int turns)
 	{
 		turns = ((turns % 4) + 4) % 4;
-		return std::string(1, (char)('0' + turns)) + "\n";
+		return "turns=" + std::string(1, (char)('0' + turns)) + "\n";
 	}
 
 	int parseRecord(const std::string& text)
@@ -72,6 +72,9 @@ namespace CaptureRotationText
 		size_t p = 0;
 		while (p < text.size() && (text[p] == ' ' || text[p] == '\t' || text[p] == '\r' || text[p] == '\n'))
 			p++;
+		const std::string key = "turns=";
+		if (text.compare(p, key.size(), key) == 0)
+			p += key.size();
 		if (p >= text.size() || text[p] < '0' || text[p] > '3')
 			return 0;
 		return text[p] - '0';
