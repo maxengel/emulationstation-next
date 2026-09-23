@@ -61,6 +61,28 @@ namespace CaptureRotationText
 		return turns;
 	}
 
+	int turnsFromTable(const std::string& table, const std::string& romName)
+	{
+		if (romName.empty())
+			return 0;
+		size_t pos = 0;
+		while (pos < table.size())
+		{
+			size_t end = table.find('\n', pos);
+			if (end == std::string::npos)
+				end = table.size();
+			const std::string line = table.substr(pos, end - pos);
+			pos = end + 1;
+			if (line.size() < romName.size() + 2 || line.compare(0, romName.size(), romName) != 0 || line[romName.size()] != ' ')
+				continue;
+			const char c = line[romName.size() + 1];
+			if (c < '0' || c > '3')
+				return 0;
+			return c - '0';
+		}
+		return 0;
+	}
+
 	std::string recordText(int turns)
 	{
 		turns = ((turns % 4) + 4) % 4;

@@ -19,6 +19,11 @@ namespace CaptureRotationText
 	// mod 4. A core that asked for nothing counts as 0.
 	int fold(int coreTurns, const std::string& retroarchConfig);
 
+	// A core's table -- "<romname> <turns>" per line, generated from the
+	// core's own driver flags at build time (fork #248) -- read for one
+	// game: the turns, or 0 when the game is not in it.
+	int turnsFromTable(const std::string& table, const std::string& romName);
+
 	// The record's text, "turns=N" and a newline, and reading it back:
 	// N is 0-3 and anything else reads as 0. A bare digit reads too. The
 	// line is longer than three bytes on purpose -- readAllText skips a

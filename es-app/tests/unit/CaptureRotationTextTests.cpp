@@ -47,3 +47,21 @@ TEST_CASE("the record is one digit and reads back, and anything else reads as no
 	CHECK(CaptureRotationText::parseRecord("9") == 0);
 	CHECK(CaptureRotationText::parseRecord("north") == 0);
 }
+
+TEST_CASE("the core's table gives a game its turn by ROM name, and nothing to the rest")
+{
+	const std::string table = "1942 1\ndkong 3\nmspacman 3\npacman 3\nsome-flipped 2\n";
+	CHECK(CaptureRotationText::turnsFromTable(table, "mspacman") == 3);
+	CHECK(CaptureRotationText::turnsFromTable(table, "1942") == 1);
+	CHECK(CaptureRotationText::turnsFromTable(table, "some-flipped") == 2);
+	CHECK(CaptureRotationText::turnsFromTable(table, "dkong") == 3);
+	// a prefix is not a match, nor is a name the table lacks
+	CHECK(CaptureRotationText::turnsFromTable(table, "mspac") == 0);
+	CHECK(CaptureRotationText::turnsFromTable(table, "pac") == 0);
+	CHECK(CaptureRotationText::turnsFromTable(table, "sf2") == 0);
+	CHECK(CaptureRotationText::turnsFromTable(table, "") == 0);
+	CHECK(CaptureRotationText::turnsFromTable("", "mspacman") == 0);
+	CHECK(CaptureRotationText::turnsFromTable("mspacman x\n", "mspacman") == 0);
+	// the last line needs no newline
+	CHECK(CaptureRotationText::turnsFromTable("galaga 3", "galaga") == 3);
+}
