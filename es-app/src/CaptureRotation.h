@@ -12,7 +12,8 @@ class FileData;
 // was never played here, which has no captures either, simply has none.
 namespace CaptureRotation
 {
-	// Quarter turns counter-clockwise, 0-3; 0 when there is no record.
+	// Quarter turns counter-clockwise, 0-3: the record when there is one,
+	// else the core's own table (fork #248) for the game's ROM name, else 0.
 	int read(FileData* game);
 
 	// After a session: read the launch log and RetroArch's config, and

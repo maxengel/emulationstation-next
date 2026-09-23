@@ -19,6 +19,41 @@ namespace
 	std::map<std::string, int> sKnown;   // record path -> turns
 }
 
+namespace
+{
+	// The core's own table (fork #248): <romname> <turns>, one line per
+	// game with a turn, installed with the core. Read once per core.
+	const char* TABLE_DIR = "/usr/config/emulationstation/rotation";
+	std::map<std::string, std::string> sTables;   // core -> table text
+
+	int fromTable(FileData* game)
+	{
+		FileData* source = game->getSourceFileData();
+		if (source == nullptr)
+			return 0;
+		const std::string core = source->getCore(true);
+		if (core.empty())
+			return 0;
+		std::string table;
+		{
+			std::unique_lock<std::mutex> lock(sLock);
+			auto it = sTables.find(core);
+			if (it != sTables.cend())
+				table = it->second;
+			else
+			{
+				const std::string path = std::string(TABLE_DIR) + "/" + core + ".txt";
+				if (Utils::FileSystem::exists(path))
+					table = Utils::FileSystem::readAllText(path);
+				sTables[core] = table;
+			}
+		}
+		if (table.empty())
+			return 0;
+		return CaptureRotationText::turnsFromTable(table, Utils::FileSystem::getStem(source->getPath()));
+	}
+}
+
 namespace CaptureRotation
 {
 	std::string recordPath(FileData* game)
@@ -53,6 +88,8 @@ namespace CaptureRotation
 		int turns = 0;
 		if (Utils::FileSystem::exists(path, false))
 			turns = CaptureRotationText::parseRecord(Utils::FileSystem::readAllText(path));
+		else
+			turns = fromTable(game);
 		std::unique_lock<std::mutex> lock(sLock);
 		sKnown[path] = turns;
 		return turns;
