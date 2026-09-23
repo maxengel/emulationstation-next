@@ -3157,7 +3157,9 @@ void GuiMenu::openSystemSettings()
 			securityGui->addSaveFunc([this, rootpassword] {
 				SystemConf::getInstance()->saveSystemConf();
 				const std::string rootpass = SystemConf::getInstance()->get("root.password");
-				Utils::Platform::runSystemCommand("setrootpass " + rootpass, "", nullptr);
+				// Quoted, as the Wi-Fi key is: a password with a space, a $ or a
+				// quote reached the shell unquoted and was cut or misread (fork #198).
+				Utils::Platform::runSystemCommand("setrootpass " + Utils::String::shellQuote(rootpass), "", nullptr);
 			});
 			mWindow->pushGui(securityGui);
 		});
@@ -5322,10 +5324,18 @@ void GuiMenu::openGamesSettings()
 
 	// INCREMENTAL SAVESTATES
 	auto incrementalSaveStates = std::make_shared<OptionListComponent<std::string>>(mWindow, _("INCREMENTAL SAVE STATES"));
+	// A device upgraded from before the row had two spellings can hold "0",
+	// which matches no entry, so the row showed INCREMENT PER SAVE while the
+	// launcher ran with auto-index off. "0" reads as DO NOT INCREMENT, which
+	// is what it does and what Batocera's launcher makes of it (fork #209,
+	// D-UI-083); the row's next save writes "2".
+	std::string incrementalValue = SystemConf::getInstance()->get("global.incrementalsavestates");
+	if (incrementalValue == "0")
+		incrementalValue = "2";
 	incrementalSaveStates->addRange({
 		{ _("INCREMENT PER SAVE"), _("Never overwrite old save states, always make new ones."), "" }, // Don't use 1 -> 1 is YES, auto too
 		{ _("DO NOT INCREMENT"), _("Use current slot on a new game."), "2" } },
-		SystemConf::getInstance()->get("global.incrementalsavestates"));
+		incrementalValue);
 
 	s->addWithLabel(_("INCREMENTAL SAVE STATES"), incrementalSaveStates);
 	s->addSaveFunc([incrementalSaveStates] { SystemConf::getInstance()->set("global.incrementalsavestates", incrementalSaveStates->getSelected()); });
@@ -5990,7 +6000,7 @@ static void cloudSetupOpenPasswordPage(Window* window, const std::string& curren
 		{
 			SystemConf::getInstance()->saveSystemConf();
 			LOG(LogInfo) << "cloud_setup wizard: applying new device password";
-			Utils::Platform::runSystemCommand("setrootpass " + changed, "", nullptr);
+			Utils::Platform::runSystemCommand("setrootpass " + Utils::String::shellQuote(changed), "", nullptr); // fork #198
 		}
 	});
 	pw->onFinalize(onDone);
