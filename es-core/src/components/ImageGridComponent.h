@@ -94,8 +94,6 @@ public:
 	// Every tile's picture drawn at this width-to-height (fork #243; 0 =
 	// each file's own): the save state manager's thumbnails are one
 	// system's, and RetroArch wrote them at the core's native size.
-	void setImageDisplayAspect(float ratio) { mImageDisplayAspect = ratio; }
-	void setImageDisplayRotation(int quarterTurns) { mImageDisplayRotation = quarterTurns; }
 	// Called for each tile once it has its entry, for a grid whose tiles
 	// differ one from the next (the SCREENSHOTS system: each file its own
 	// game's aspect and rotation, fork #245).
@@ -180,8 +178,6 @@ private:
 	Vector4f mPadding;
 	Vector2f mMargin;
 	Vector2f mTileSize;
-	float mImageDisplayAspect = 0.0f;
-	int mImageDisplayRotation = 0;
 	std::function<void(GridTileComponent*, const T&)> mTileDecorator;
 	Vector2i mGridDimension;
 	Vector2f mGridSizeOverride;
@@ -284,8 +280,6 @@ std::shared_ptr<GridTileComponent> ImageGridComponent<T>::createTile(int i, int 
 	if (mAutoLayout.x() != 0 && mAutoLayout.y() != 0)
 		tile->forceSize(mTileSize, mAutoLayoutZoom);
 
-	tile->setDisplayAspect(mImageDisplayAspect);
-	tile->setDisplayRotation(mImageDisplayRotation);
 	return tile;
 }
 
