@@ -32,12 +32,26 @@ namespace DisplayAspectText
 
 	std::string screenshotContent(const std::string& fileName)
 	{
-		// "<content>-YYMMDD-HHMMSS" with or without the extension: twelve
-		// digits in two groups of six after the last two dashes.
+		// Two shapes RetroArch writes: "<content>-YYMMDD-HHMMSS" for a
+		// screenshot the player took (twelve digits in two groups of six
+		// after the last two dashes), and "<content>-cheevo-<id>" for the
+		// one it takes at an achievement unlock (fork #248: the
+		// maintainer's SCREENSHOTS folder was mostly the second kind).
+		// With or without the extension.
 		std::string stem = fileName;
 		const size_t dot = stem.rfind('.');
 		if (dot != std::string::npos && dot > 0)
 			stem = stem.substr(0, dot);
+		const size_t cheevo = stem.rfind("-cheevo-");
+		if (cheevo != std::string::npos && cheevo > 0 && cheevo + 8 < stem.size())
+		{
+			bool digits = true;
+			for (size_t i = cheevo + 8; i < stem.size(); i++)
+				if (!isdigit((unsigned char) stem[i]))
+					digits = false;
+			if (digits)
+				return stem.substr(0, cheevo);
+		}
 		if (stem.size() < 15)
 			return "";
 		const std::string tail = stem.substr(stem.size() - 14);
