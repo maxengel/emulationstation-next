@@ -25,6 +25,13 @@ TEST_CASE("RetroArch's screenshot name gives the content back, and nothing else 
 	CHECK(DisplayAspectText::screenshotContent("Dr. Mario (Japan, USA) (Rev A)-260922-003107.png") == "Dr. Mario (Japan, USA) (Rev A)");
 	CHECK(DisplayAspectText::screenshotContent("Tobu-Tobu-260922-153012.png") == "Tobu-Tobu");
 	CHECK(DisplayAspectText::screenshotContent("Bobl-260922-153012") == "Bobl");
+	// the screenshot RetroArch takes at an achievement unlock
+	CHECK(DisplayAspectText::screenshotContent("mspacman-cheevo-225135.png") == "mspacman");
+	CHECK(DisplayAspectText::screenshotContent("bublbobl-cheevo-380824.png") == "bublbobl");
+	CHECK(DisplayAspectText::screenshotContent("Dr. Mario (Japan, USA) (Rev A)-cheevo-8937.png") == "Dr. Mario (Japan, USA) (Rev A)");
+	CHECK(DisplayAspectText::screenshotContent("mspacman-cheevo-.png") == "");
+	CHECK(DisplayAspectText::screenshotContent("mspacman-cheevo-x1.png") == "");
+	CHECK(DisplayAspectText::screenshotContent("-cheevo-1.png") == "");
 	// a save-state thumbnail, a manual name, a date with letters, too short
 	CHECK(DisplayAspectText::screenshotContent("Bobl.state1.png") == "");
 	CHECK(DisplayAspectText::screenshotContent("holiday.png") == "");
