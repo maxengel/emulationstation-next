@@ -53,7 +53,6 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 		const DisplayAspect::Transform t = DisplayAspect::forGame(game);
 		mGrid->setImageDisplayAspect(t.aspect);
 		mGrid->setImageDisplayRotation(t.turns);
-		LOG(LogInfo) << "GuiSaveState: " << game->getName() << " aspect " << t.aspect << " turns " << t.turns;
 	}
 	mLayout.setEntry(mGrid, Vector2i(1, 3), true, true);
 

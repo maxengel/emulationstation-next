@@ -19,8 +19,11 @@ namespace CaptureRotationText
 	// mod 4. A core that asked for nothing counts as 0.
 	int fold(int coreTurns, const std::string& retroarchConfig);
 
-	// The record's text, and reading it back: one digit, 0-3; anything
-	// else reads as 0.
+	// The record's text, "turns=N" and a newline, and reading it back:
+	// N is 0-3 and anything else reads as 0. A bare digit reads too. The
+	// line is longer than three bytes on purpose -- readAllText skips a
+	// UTF-8 byte-order mark by reading three bytes first, and a shorter
+	// file comes back empty.
 	std::string recordText(int turns);
 	int parseRecord(const std::string& text);
 }
