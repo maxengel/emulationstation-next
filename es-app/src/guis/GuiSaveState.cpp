@@ -48,11 +48,18 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 	// NES and the SNES is not the screen's shape (fork #243, D-UI-080): the
 	// tiles are drawn at the system's aspect, the picture scaled to it.
 	{
-		// The tiles are this game's captures: its system's aspect, and the
-		// turn the display gave its frame (fork #243, #245).
+		// A tile that shows one of this game's captures takes the game's
+		// display transform -- its system's aspect and the turn the display
+		// gave its frame (fork #243, #245). Only that tile: START NEW GAME
+		// and START NEW AUTO SAVE carry the arrow, and a grid-wide transform
+		// turned and fitted the arrow with the rest (fork #250).
 		const DisplayAspect::Transform t = DisplayAspect::forGame(game);
-		mGrid->setImageDisplayAspect(t.aspect);
-		mGrid->setImageDisplayRotation(t.turns);
+		mGrid->setTileDecorator([t](GridTileComponent* tile, const SaveStateItem& item)
+		{
+			const bool capture = item.saveState != nullptr && !item.saveState->getScreenShot().empty();
+			tile->setDisplayAspect(capture ? t.aspect : 0.0f);
+			tile->setDisplayRotation(capture ? t.turns : 0);
+		});
 	}
 	mLayout.setEntry(mGrid, Vector2i(1, 3), true, true);
 
