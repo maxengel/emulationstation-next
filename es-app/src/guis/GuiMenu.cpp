@@ -4379,8 +4379,8 @@ static std::string cloudRunOrigin(time_t when)
 // which is fine -- a locale does not change while the menu is open). The
 // time half is decided live, because ClockMode12 is a switch the player can
 // flip and come straight back to this page. One helper, so the row under a
-// transfer left running (fork #187) dates its outcome the way every other
-// LAST row does.
+// transfer whose outcome page has not yet been dismissed (fork #187,
+// D-UI-070) dates its outcome the way every other LAST row does.
 static std::string cloudLastLabel(time_t when)
 {
 	const std::string fmt = Utils::Time::getSystemDateFormat()
@@ -4917,15 +4917,17 @@ static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 	}).detach();
 }
 
-// The three rows of BACKUP AND RESTORE follow a transfer left running in
-// the background (fork #187; the scan row under SCAN GAMES is the model,
-// audit #186 PL-07). The transfer page can be closed with B while its run
-// goes on, so the run needs a place to be seen from: the row that launched
-// it carries the run's line while it runs (BACKING UP... - ITEM 2 OF 4 .
-// NES), its outcome once it has ended and nobody has opened the page (LAST
-// <date> - COMPLETED), and its own line again once the outcome has been
-// read; pressing that row opens the page on the run, or on the outcome with
-// TRY AGAIN. The other two rows dim meanwhile -- the scripts' flock refuses
+// The three rows of BACKUP AND RESTORE follow the transfer that is current
+// (CloudTransferJob::current). Built for a page that could be left with
+// its run going on (fork #187; the scan row under SCAN GAMES was the model,
+// audit #186 PL-07); since D-UI-078 the transfer page is sat in, so while
+// a run goes this hub is under it and is not ticked, and what these rows
+// meet is the run's outcome, kept current until the outcome page has been
+// dismissed (D-UI-070): LAST <date> - COMPLETED, then the row's own line
+// again. The running words (BACKING UP... - ITEM 2 OF 4 . NES) and the
+// press that opens the run's page remain for the seam -- a run that is
+// current with no page over it -- and are not a design anybody can reach
+// by pressing B (#258 PL-006). The other two rows dim meanwhile -- the scripts' flock refuses
 // a second run, so the only thing a press on them can do is show the one in
 // flight, which it does. Nothing here is written to disk: the scripts stamp
 // each part of a run as they always did (last-backup, last-content-restore,
@@ -5030,14 +5032,16 @@ static void cloudHubRefresh(const std::shared_ptr<CloudHubRows>& rows)
 	cloudHubRefreshRow(rows->match,   job, kind == CloudText::TransferKind::Match);
 }
 
-// The run reports to no page while it is in the background, so the hub
-// carries one component that is never drawn and never focused, asks once a
-// second while the page is open, and refreshes the rows -- which change
-// their words only when they differ (cloudHubRefreshRow). Owned by the page
-// (EXTRACHILDREN: GuiComponent's destructor deletes it), so it dies with
-// the page; ticked by the page's update, which Window gives to the top page
-// alone, so the transfer page over it pauses it and the rows catch up the
-// second the page is left. The same shape as the scan row's refresher.
+// The hub carries one component that is never drawn and never focused,
+// asks once a second while the hub is the top page, and refreshes the rows
+// -- which change their words only when they differ (cloudHubRefreshRow).
+// Owned by the page (EXTRACHILDREN: GuiComponent's destructor deletes it),
+// so it dies with the page; ticked by the page's update, which Window
+// gives to the top page alone, so the transfer page over it pauses it and
+// the rows catch up the second that page is dismissed -- which, with the
+// page sat in (D-UI-078), is when the run has ended and its outcome is
+// what there is to show. Built as the scan row's refresher was, for a run
+// nobody was watching (#187).
 class CloudHubRefresher : public GuiComponent
 {
 public:
@@ -5107,8 +5111,9 @@ void GuiMenu::openCloud(Window* window)
 	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 	auto s = new GuiSettings(window, _("CLOUD"));
 
-	// The three rows follow a transfer left running in the background
-	// (fork #187): see cloudAddTransferRow and the refresher below.
+	// The three rows follow the current transfer's outcome (D-UI-070; the
+	// page is sat in since D-UI-078): see cloudAddTransferRow and the
+	// refresher above.
 	auto rows = std::make_shared<CloudHubRows>();
 	s->addGroup(_("BACKUP AND RESTORE"));
 	cloudAddTransferRow(s, window, configured, rows->backup, _("BACK UP TO THE CLOUD"),
@@ -8884,7 +8889,7 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 	}).detach();
 }
 
-// The WI-FI SSID row's value: the network the device is on now, from
+// The WI-FI NETWORK row's value (WI-FI SSID until D-UI-071): the network the device is on now, from
 // NetworkManager, asked off the interface thread as the IP address and the
 // internet status are (fork #191). It used to be wifi.ssid, the network
 // configured last, because that is what the row edited -- and once

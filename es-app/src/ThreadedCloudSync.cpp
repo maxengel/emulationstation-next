@@ -683,10 +683,12 @@ void ThreadedCloudSync::run()
 void ThreadedCloudSync::start(Window* window, const std::string& command,
 	const std::string& title, const std::string& running, Origin origin)
 {
-	// Or a back up, restore or match left running on the transfer page
-	// (fork #187): the scripts' flock would answer this run with
-	// CloudExit::LockHeld and the card would say these same words after
-	// starting; said here, before, in the words the flock's code reads as.
+	// Or a back up, restore or match still current on the transfer page
+	// (fork #187; the page is sat in since D-UI-078, so this is the seam's
+	// guard rather than an everyday path): the scripts' flock would answer
+	// this run with CloudExit::LockHeld and the card would say these same
+	// words after starting; said here, before, in the words the flock's
+	// code reads as.
 	if (ThreadedCloudSync::mInstance != nullptr || CloudTransferJob::running())
 	{
 		window->pushGui(new GuiMsgBox(window, _("A SYNC IS ALREADY RUNNING.")));

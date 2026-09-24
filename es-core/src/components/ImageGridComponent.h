@@ -414,6 +414,12 @@ void ImageGridComponent<T>::ensureVisibleTileExist()
 			{
 				auto tile = createTile(idx, dimOpposite, tileDistance, startPosition);
 				loadTile(tile, entry);
+				// The loop copy is the same entry drawn again at the other end,
+				// so it takes the same decoration (a screenshot's turn and
+				// aspect, fork #243/#245); the two creation sites above did
+				// and this one did not (audit #258 PL-017).
+				if (mTileDecorator)
+					mTileDecorator(tile.get(), entry.object);
 				mScrollLoopTiles[idx] = tile;
 			}
 		}

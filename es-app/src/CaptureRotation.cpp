@@ -1,5 +1,8 @@
 #include "CaptureRotation.h"
 
+#include "DisplayAspect.h"
+#include <sys/stat.h>
+
 #include "CaptureRotationText.h"
 #include "FileData.h"
 #include "Log.h"
@@ -16,13 +19,15 @@ namespace
 	const char* RETROARCH_CONFIG = "/storage/.config/retroarch/retroarch.cfg";
 
 	std::mutex sLock;
-	std::map<std::string, int> sKnown;   // record path -> turns
 }
 
 namespace
 {
 	// The core's own table (fork #248): <romname> <turns>, one line per
-	// game with a turn, installed with the core. Read once per core.
+	// game with a turn, installed with the core. Read once per core and
+	// kept for the process's life on purpose: the tables are on the
+	// read-only image and change only with an update, which restarts the
+	// interface (audit #258 PL-019 asked of each cache when it goes stale).
 	const char* TABLE_DIR = "/usr/config/emulationstation/rotation";
 	std::map<std::string, std::string> sTables;   // core -> table text
 
@@ -73,26 +78,50 @@ namespace CaptureRotation
 		return "";
 	}
 
+	// The turns read per record path, with the record's modification time
+	// when one existed (0 for a turn that came from the table). A record
+	// written behind the interface's back -- by hand over ssh, by a restore
+	// -- has a newer mtime than the one cached, and is read again; before
+	// this the cache was updated by recordAfterSession alone, so a record
+	// that arrived any other way was not seen until a restart (audit #258
+	// PL-019). The stat is one syscall a lookup; a screenshot list of a few
+	// hundred is a few hundred stats, once per rebuild of its tiles.
+	struct Known { int turns; time_t mtime; };
+	std::map<std::string, Known> sKnownAt;
+
+	static time_t recordMtime(const std::string& path)
+	{
+		struct stat st;
+		return ::stat(path.c_str(), &st) == 0 ? st.st_mtime : 0;
+	}
+
 	int read(FileData* game)
 	{
 		const std::string path = recordPath(game);
 		if (path.empty())
 			return 0;
+		const time_t mtime = recordMtime(path);
 		{
 			std::unique_lock<std::mutex> lock(sLock);
-			auto it = sKnown.find(path);
-			if (it != sKnown.cend())
-				return it->second;
+			auto it = sKnownAt.find(path);
+			if (it != sKnownAt.cend() && it->second.mtime == mtime)
+				return it->second.turns;
 		}
 		// Uncached exists: the record is written while the interface runs.
 		int turns = 0;
-		if (Utils::FileSystem::exists(path, false))
+		if (mtime != 0 && Utils::FileSystem::exists(path, false))
 			turns = CaptureRotationText::parseRecord(Utils::FileSystem::readAllText(path));
 		else
 			turns = fromTable(game);
 		std::unique_lock<std::mutex> lock(sLock);
-		sKnown[path] = turns;
+		sKnownAt[path] = Known{ turns, mtime };
 		return turns;
+	}
+
+	void forgetAll()
+	{
+		std::unique_lock<std::mutex> lock(sLock);
+		sKnownAt.clear();
 	}
 
 	void recordAfterSession(FileData* game, const std::string& emulator)
@@ -121,7 +150,14 @@ namespace CaptureRotation
 		Utils::FileSystem::writeAllText(path, CaptureRotationText::recordText(turns));
 		LOG(LogInfo) << "CaptureRotation: " << game->getName() << " turns " << turns << " (core " << coreTurns << ") -> " << path;
 
-		std::unique_lock<std::mutex> lock(sLock);
-		sKnown[path] = turns;
+		{
+			std::unique_lock<std::mutex> lock(sLock);
+			sKnownAt[path] = Known{ turns, recordMtime(path) };
+		}
+		// The screenshots of this game were resolved to a Transform before
+		// the session; that cache is keyed by screenshot path and knows
+		// nothing of the record, so it is emptied here and rebuilt on the
+		// next look (audit #258 PL-019).
+		DisplayAspect::forgetScreenshots();
 	}
 }

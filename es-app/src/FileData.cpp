@@ -785,8 +785,9 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// own timeouts let it run (#103).
 	//
 	// A sync the player asked for, and a back up, restore or match they
-	// started on the transfer page and left running (fork #187,
-	// D-CLOUD-113), used to refuse the launch outright: theirs to wait for.
+	// started on the transfer page (fork #187, D-CLOUD-113; while that page
+	// could be left with the run going, before D-UI-078), used to refuse
+	// the launch outright: theirs to wait for.
 	// Maintainer, 2026-09-15, having met the refusal on the RG SP: "We
 	// should say for the user, would you like to cancel and play, or would
 	// you like to stop the sync or continue ... If it shows a modal anyways

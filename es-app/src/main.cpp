@@ -352,43 +352,69 @@ int setLocale(char * argv1)
 }
 
 
-void signalHandler(int signum) 
+// write(2) only: the one call a handler for a fault may make without
+// asking what the faulting thread was holding.
+static void crashWrite(const char* text)
 {
-	if (signum == SIGSEGV)
-		LOG(LogError) << "Interrupt signal SIGSEGV received.\n";
-	else if (signum == SIGFPE)
-		LOG(LogError) << "Interrupt signal SIGFPE received.\n";
-	else if (signum == SIGFPE)
-		LOG(LogError) << "Interrupt signal SIGFPE received.\n";
-	else
-		LOG(LogError) << "Interrupt signal (" << signum << ") received.\n";
+	(void) !write(STDERR_FILENO, text, strlen(text));
+}
 
-	Log::flush();
+// A fault (SIGSEGV, SIGFPE, SIGILL): say which, print the frames, die of it.
+//
+// Nothing here takes a lock or allocates. The handler used to LOG the
+// signal and flush the log, and Log's mutex is a plain std::mutex -- so a
+// fault raised while a thread was inside Log::write (the logger's own
+// buffer, a bad pointer in a message) deadlocked the handler on the lock
+// that thread still held, and a crash that essway would have restarted in
+// seconds sat as a hang nothing on the device watches (audit #258 PL-003;
+// D-SYS-006 is the watchdog question, still open). The signal's name goes
+// to stderr with write(2), which is the journal on ROCKNIX; the log file
+// says nothing about the fault, and the journal says everything.
+//
+// The frames, to stderr (the journal, where one log line had been the
+// whole record of a crash -- fork #246). glibc's backtrace is not
+// async-signal-safe either; a handler that has already decided the
+// process is done can afford the risk, and a frame list that prints nine
+// times in ten is worth more than a guaranteed silence. The addresses are
+// symbolised on the build host with addr2line against the same build's
+// unstripped binary (.claude/rules/device-builds.md, "Reading a crash").
+//
+// Then die of the signal itself, not of exit(): exit() ran the static
+// destructors on the faulting thread, so the core the kernel kept
+// described the teardown and not the fault, and the exit code hid the
+// signal from systemd. The default action dumps at the fault. Installed
+// with SA_RESETHAND (below), so a second fault inside this handler ends
+// the process by the default action rather than re-entering it.
+void signalHandler(int signum)
+{
+	crashWrite("EmulationStation: fatal signal ");
+	crashWrite(signum == SIGSEGV ? "SIGSEGV" : signum == SIGFPE ? "SIGFPE" : signum == SIGILL ? "SIGILL" : "(other)");
+	crashWrite(" received.\n");
 
-	// The frames, to stderr (the journal on ROCKNIX, where the one line
-	// above had been the whole record of a crash -- fork #246). glibc's
-	// backtrace is not async-signal-safe either, no more than the LOG
-	// above; a handler that has already decided the process is done can
-	// afford the risk, and a frame list that prints nine times in ten is
-	// worth more than a guaranteed silence. The addresses are symbolised on
-	// the build host with addr2line against the same build's unstripped
-	// binary (.claude/rules/device-builds.md, "Reading a crash").
 #ifdef __GLIBC__
 	{
 		void* frames[64];
 		const int count = backtrace(frames, 64);
-		const char* head = "EmulationStation crash backtrace (innermost first; symbolise with addr2line):\n";
-		(void) !write(STDERR_FILENO, head, strlen(head));
+		crashWrite("EmulationStation crash backtrace (innermost first; symbolise with addr2line):\n");
 		backtrace_symbols_fd(frames, count, STDERR_FILENO);
 	}
 #endif
 
-	// Then die of the signal itself, not of exit(): exit() ran the static
-	// destructors on the faulting thread, so the core the kernel kept
-	// described the teardown and not the fault, and the exit code hid the
-	// signal from systemd. The default action dumps at the fault.
 	signal(signum, SIG_DFL);
 	raise(signum);
+}
+
+// Ctrl-C is not a fault. It takes the path every SIGINT took before #246
+// -- exit(), which runs the atexit hooks: onExit joins the save state
+// bookkeeper's worker, so a copy or a deletion still on it is recorded
+// before the process is gone (D-UI-073), and closes the log. #246 moved
+// SIGINT onto the fault path with the rest, which dropped that hook
+// without saying so (audit #258 PL-003); this puts it back. On a device
+// nothing sends SIGINT -- essway stops the unit with SIGTERM -- so this is
+// the developer's terminal and the harness's kill.
+void interruptHandler(int signum)
+{
+	exit(128 + signum);
 }
 
 void playVideo()
@@ -640,10 +666,20 @@ int main(int argc, char* argv[])
 #endif
 
 	// signal(SIGABRT, signalHandler);
-	signal(SIGFPE, signalHandler);
-	signal(SIGILL, signalHandler);
-	signal(SIGINT, signalHandler);
-	signal(SIGSEGV, signalHandler);
+	// The faults through sigaction with SA_RESETHAND: the handler runs once,
+	// and a fault inside it -- a bad frame pointer under backtrace, say --
+	// meets the default action instead of the handler again (#258 PL-003).
+	{
+		struct sigaction fault;
+		memset(&fault, 0, sizeof(fault));
+		fault.sa_handler = signalHandler;
+		sigemptyset(&fault.sa_mask);
+		fault.sa_flags = SA_RESETHAND | SA_NODEFER;
+		sigaction(SIGFPE, &fault, nullptr);
+		sigaction(SIGILL, &fault, nullptr);
+		sigaction(SIGSEGV, &fault, nullptr);
+	}
+	signal(SIGINT, interruptHandler);
 #ifdef __GLIBC__
 	// backtrace() loads libgcc's unwinder on its first call; take that first
 	// call here, while nothing is on fire, so the one in the handler does no

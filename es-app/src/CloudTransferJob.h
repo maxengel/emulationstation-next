@@ -13,11 +13,15 @@
 
 // One run of a transfer command -- a back up, a restore or a match as
 // GuiMenu composes them, or the journey's first restore -- apart from the
-// page that shows it (GuiCloudTransfer), so the page can be left and the
-// run goes on (fork #187). A 1.4 GiB restore is an hour on a handheld's
-// Wi-Fi, and the fourth surface tier (es-native-ui.md) is a page that
-// outlives the job, not one that holds the player for its length; the scan
-// page's OfflineScanJob (audit #186 PL-07) is the model this follows.
+// page that shows it (GuiCloudTransfer): the job reads the pipe to its end
+// whatever happens to the page. It was built so the page could be left
+// with the run going on (fork #187); since D-UI-078 the page is sat in and
+// CANCEL is the way out, and the separation earns its keep the other way
+// round -- the page's lifetime never decides the run's, and a cancel is a
+// signal to the run, not a page closing. A 1.4 GiB restore is an hour on a
+// handheld's Wi-Fi, and the fourth surface tier (es-native-ui.md) is a
+// page that outlives the job; the scan page's OfflineScanJob is the model
+// this follows.
 //
 // The run is a thread of its own reading the command's stdout -- rclone's
 // stats blocks and the scripts' ">>> " lines; handleLine is the reader and
@@ -166,9 +170,10 @@ private:
 	// run still going has nothing to do with the run (#145).
 	std::string mOffer;
 	std::vector<std::string> mOfferArgs;
-	// Elapsed is the run's, not a page's: a page can be closed and opened
-	// again while the run goes on, and a counter that ticked only while a
-	// page was up read 0:05 after ten minutes in the background.
+	// Elapsed is the run's, not a page's: while the page could be closed
+	// and opened again over a run (#187, before D-UI-078) a counter that
+	// ticked only while a page was up read 0:05 after ten minutes; the
+	// run's own clock is right in either design.
 	std::chrono::steady_clock::time_point mStarted;
 	time_t mStartedAt;   // wall clock, to tell a stamp this run wrote from an older one
 

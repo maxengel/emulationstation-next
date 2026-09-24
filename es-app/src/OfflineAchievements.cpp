@@ -159,6 +159,12 @@ bool OfflineAchievements::proxyOffline()
 	// does not count) is offline, whatever the file says.
 	if (Utils::Platform::queryIPAddress().empty())
 		return true;
+	// An address and no state file yet: the toggle has just gone on and the
+	// proxy's monitor has not probed. That reads as online, on purpose -- a
+	// player with a link who has just enabled the feature expects the page
+	// they had a minute ago, and the web request is bounded; reading it as
+	// offline would show an empty device copy for a store that has cached
+	// nothing yet (audit #258 PL-028 asked which; this is the trade).
 	if (!Utils::FileSystem::exists(ONLINE_STATE, false))
 		return false;
 	bool online = true;

@@ -161,9 +161,12 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::shared_ptr<CloudTr
 	mBackground.fitTo(mPanelSize, Vector3f(mPanelPos.x(), mPanelPos.y(), 0), Vector2f(-32, -32));
 }
 
-// Nothing to join: the run is the job's, and goes on without the page
-// (fork #187). The page that owned its worker made quitting the interface
-// wait on a restore, and could not be left while one ran.
+// Nothing to join: the run is the job's (CloudTransferJob), not this
+// page's. The page that owned its worker made quitting the interface wait
+// on a restore (before #187); since D-UI-078 the page is sat in and a run
+// ends by finishing or by CANCEL, so this destructor meets a finished or a
+// cancelled run in practice -- and a running one only if the page were
+// popped by something other than the player, which the job survives.
 GuiCloudTransfer::~GuiCloudTransfer()
 {
 }
@@ -403,7 +406,8 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 
 // The verb's word for a run, from its command (CloudText::transferKind), in
 // the running form the cards use (BACKING UP SAVES, SYNCING SAVES...): the
-// head of the row's line while the run is in the background.
+// head of the hub row's line for a run that is current while the hub is
+// the top page (the seam left by D-UI-078; see GuiCloudTransfer.h).
 std::string GuiCloudTransfer::verbWord(const CloudTransferJob& job)
 {
 	switch (CloudText::transferKind(job.mCommand))

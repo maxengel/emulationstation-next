@@ -544,9 +544,10 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 	// process's own stderr and never reached the page.
 	//
 	// SIGPIPE ignored inside them, as the scan's job does (OfflineScanJob):
-	// should this process end while the run is in the background, the
-	// scripts' own ">>> " lines meet a closed pipe and fail without killing
-	// the shell, so a part that can still end writes its stamp. rclone's
+	// should this process end while the run is still going -- essway
+	// restarting the interface under a transfer -- the scripts' own ">>> "
+	// lines meet a closed pipe and fail without killing the shell, so a
+	// part that can still end writes its stamp. rclone's
 	// progress rides the same pipe, and rclone ends on a broken one, so the
 	// run itself is not promised to outlive the interface: each file it
 	// moves is renamed into place whole and the next run finishes what this

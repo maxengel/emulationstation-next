@@ -25,7 +25,7 @@ public:
 	std::string getDescription();
 	// A line set later re-lays the entry: an entry built with no line is
 	// one line high and grows when one arrives, and shrinks when it goes
-	// (the WI-FI SSID row, whose line is asked off the interface thread and
+	// (the WI-FI NETWORK row, whose line is asked off the interface thread and
 	// is often nothing -- fork #191). The list holding the row still has to
 	// be re-laid by the caller (GuiSettings::updateSize).
 	void setDescription(const std::string& description);

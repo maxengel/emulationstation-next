@@ -456,9 +456,10 @@ namespace Utils
 		//
 		// What counts as a credential's value, in the shapes this tree builds:
 		//
-		//   setrootpass hunter2                the rest of the line -- GuiMenu passes
-		//                                      the password unquoted, so a space in
-		//                                      it would otherwise leave a tail visible
+		//   setrootpass hunter2                the rest of the line: GuiMenu quotes
+		//                                      the password since #198, and a log line
+		//                                      from before it, or a hand-typed one, has
+		//                                      it bare -- either way no tail is left
 		//   wifictl connect 'ssid' 'psk' 'CC'  the second word after connect or
 		//   wifictl enable 'ssid' 'psk'        enable: the passphrase, not the SSID
 		//   --password x, -p x, -pin x,        a flag ending in a credential word,

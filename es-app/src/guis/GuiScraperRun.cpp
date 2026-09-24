@@ -174,7 +174,8 @@ std::string GuiScraperRun::fitOneLine(const std::shared_ptr<Font>& font, std::st
 	return text + "...";
 }
 
-// "GAMES SCRAPED: 12  ·  COULDN'T SCRAPE: 1" -- what this run did. A game the
+// "GAMES SCRAPED: 12  -  COULDN'T SCRAPE: 1" (the separator on screen is a
+// middle dot; ASCII here, es-code-traps.md) -- what this run did. A game the
 // scraper could not do (no match, a timeout) counts against the run and
 // is the next scrape's (D-UI-030).
 std::string GuiScraperRun::countsLine(const ThreadedScraper::Progress& p)

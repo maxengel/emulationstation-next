@@ -23,6 +23,13 @@ namespace CaptureRotation
 
 	// Where the record lives, "" when the game's system keeps no states.
 	std::string recordPath(FileData* game);
+
+	// Forget every turn read so far, so the next read asks the record (or
+	// the table) again. Called when a record is written by something other
+	// than recordAfterSession -- the harness's synthetic line, a restore
+	// that brought records down -- and by the screenshot cache when a
+	// session has just recorded (audit #258 PL-019).
+	void forgetAll();
 }
 
 #endif // ES_APP_CAPTURE_ROTATION_H

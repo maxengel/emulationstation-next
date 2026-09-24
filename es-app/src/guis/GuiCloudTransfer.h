@@ -22,16 +22,26 @@
 // So a long transfer owns the screen and stays there until it is dismissed.
 // The result is the last thing on it, not the first thing to disappear.
 //
-// And it is left running, not sat in (fork #187; the scan page is the
-// model, audit #186 PL-07): the run is a CloudTransferJob apart from this
-// page, B while it runs closes the page and the run goes on, the row that
-// launched it on the CLOUD page follows the run in its line, pressing that
-// row opens this page on the run again -- or on the outcome, once it has
-// ended -- and the outcome is what a page opened after the end shows.
-// Every other press is refused while it runs, because there is nothing to
-// choose. A page whose completed run has an action in place of an exit
-// (a settings restore: the configuration under this process is being
-// replaced, #114) is the exception and takes every button, as it did.
+// And it is sat in (D-UI-078, fork #241): the page owns the screen for the
+// run's length, and the one way out while it runs is CANCEL -- a
+// confirmation that says what cancelling means for this job (what has
+// moved stays, the next run finishes the rest), then the stop. Every other
+// press is refused while it runs, because there is nothing to choose. For
+// a week (#187, D-UI-060/070, the shape audit #186 PL-07 gave the scan
+// page) it was the other way: B left the page with the run going on
+// behind it, the row that launched it followed the run in its line, and a
+// press on that row reopened this page. The maintainer met the same B
+// prompt on the scan page and asked what would happen; "nothing tells you"
+// was the whole case, and D-UI-078 reversed it. The run is still a
+// CloudTransferJob apart from this page -- the job, not the page, reads
+// the pipe to its end -- so the seams built for the leavable page (the hub
+// row's line, the launch gate's question, the sync card's refusal) stay
+// true of a run that is current, and are reached only in the moment
+// between the run's end and the page's dismissal, or if this page were
+// ever gone while its run was not. A page whose completed run has an
+// action in place of an exit (a settings restore: the configuration under
+// this process is being replaced, #114) is the exception and takes every
+// button, as it did.
 class GuiCloudTransfer : public GuiComponent
 {
 public:
@@ -77,11 +87,13 @@ public:
 	// them disagree on a number.
 	static std::string sizeLabel(unsigned long bytes);
 
-	// The words the row under BACK UP / RESTORE / MATCH borrows while a run
-	// is in the background (fork #187), so the row and this page say the same
-	// thing about the same run: the verb's word (BACKING UP...), the same
-	// with ITEM i OF n behind it once an item is known, and that item's
-	// label (SAVES, NES) for a panel with room for it.
+	// The words the row under BACK UP / RESTORE / MATCH borrows for a run
+	// that is current while the hub is the top page -- since D-UI-078 the
+	// page is sat in, so that is the outcome's moment, not the run's; the
+	// running words remain for the seam (see the class comment) -- so the
+	// row and this page say the same thing about the same run: the verb's
+	// word (BACKING UP...), the same with ITEM i OF n behind it once an item
+	// is known, and that item's label (SAVES, NES) for a panel with room.
 	struct RowWords
 	{
 		std::string word;
@@ -93,9 +105,11 @@ public:
 	// ended and nobody has opened the page: COMPLETED, COULDN'T FINISH, or
 	// SKIPPED with its reason.
 	static std::string outcomeWord(const std::shared_ptr<CloudTransferJob>& job);
-	// The sentence the launch gate asks over a run in the background
-	// (D-CLOUD-129: STOP IT AND PLAY or KEEP WAITING): YOUR BACKUP TO THE
-	// CLOUD IS STILL RUNNING., in the run's own verb.
+	// The sentence the launch gate asks over a run that is still current
+	// when a game is launched (D-CLOUD-129: STOP IT AND PLAY or KEEP
+	// WAITING): YOUR BACKUP TO THE CLOUD IS STILL RUNNING., in the run's own
+	// verb. With the page sat in (D-UI-078) a launch cannot reach the gate
+	// while a run goes; the gate stays as the seam's guard.
 	static std::string stillRunningSentence(const std::shared_ptr<CloudTransferJob>& job);
 
 private:

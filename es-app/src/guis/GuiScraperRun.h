@@ -35,7 +35,7 @@ private:
 	// The done page's word (D-UI-028), from how the run ended.
 	static std::string outcomeWord(const ThreadedScraper::Progress& p);
 	static std::string fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width);
-	// "GAMES SCRAPED: n  ·  COULDN'T SCRAPE: e"
+	// "GAMES SCRAPED: n  -  COULDN'T SCRAPE: e" (a middle dot on screen; ASCII here)
 	static std::string countsLine(const ThreadedScraper::Progress& p);
 	// The CANCEL confirmation: what cancelling means, then
 	// ThreadedScraper::stop() on YES.

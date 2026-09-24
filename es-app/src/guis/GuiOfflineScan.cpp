@@ -90,7 +90,9 @@ GuiOfflineScan::GuiOfflineScan(Window* window, const std::string& command, const
 	mJob->setOnChanged(mOnChanged);
 }
 
-// Nothing to join: the run is the job's, and goes on without the page.
+// Nothing to join: the run is the job's (OfflineScanJob). The page is sat
+// in since D-UI-078 -- CANCEL ends the run before the page goes -- so the
+// job outliving the page is the seam's guard, not the design.
 GuiOfflineScan::~GuiOfflineScan()
 {
 }

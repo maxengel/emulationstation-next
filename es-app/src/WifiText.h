@@ -45,7 +45,8 @@ namespace WifiText
 	std::string parseCurrent(const std::vector<std::string>& lines);
 
 	// A row of the Wi-Fi picker (fork #191; the maintainer's paradigm of
-	// 2026-09-15: the WI-FI SSID row is the network the device is on, the
+	// 2026-09-15: the WI-FI NETWORK row -- WI-FI SSID until D-UI-071 renamed
+	// it for its new value -- is the network the device is on, the
 	// list behind it is what is in range, and a saved one joins with a
 	// press). Built by pickerRows from what `wifictl list` found, the
 	// profiles `wifictl saved` holds and the network `wifictl current`

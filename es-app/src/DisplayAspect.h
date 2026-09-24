@@ -26,6 +26,10 @@ namespace DisplayAspect
 	Transform forGame(FileData* game);
 	Transform forScreenshot(FileData* screenshot);
 	Transform forScreenshotPath(const std::string& path);
+	// Empty the screenshot cache, so a game whose rotation record has just
+	// been written (CaptureRotation::recordAfterSession) turns its
+	// screenshots on the next look rather than after a restart (#258 PL-019).
+	void forgetScreenshots();
 
 	// Give every ImageComponent under root that shows imagePath the
 	// transform, and every other one its file's own; a component bound to

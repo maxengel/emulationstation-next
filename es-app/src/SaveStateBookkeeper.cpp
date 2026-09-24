@@ -79,7 +79,12 @@ namespace
 			+ " --system " + Utils::String::shellQuote(job.system)
 			+ " --rom " + Utils::String::shellQuote(job.rom);
 		int code = ApiSystem::executeScriptLegacy(adopt, nullptr).second;
-		if (code != 0)
+		// 3 is the script's "not a state of this unit; nothing recorded"
+		// (cloud_capture's header) -- it used to exit 0 there and this line
+		// logged a recording that had not happened (audit #258 PL-016).
+		if (code == 3)
+			LOG(LogWarning) << "cloud_capture --adopt recorded nothing: " << job.stateFile << " is not a state of this game on disk";
+		else if (code != 0)
 			LOG(LogWarning) << "cloud_capture --adopt exited " << code << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
 		else
 			LOG(LogInfo) << "save state copy recorded: " << job.stateFile;

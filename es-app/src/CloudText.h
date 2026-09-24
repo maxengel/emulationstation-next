@@ -202,8 +202,9 @@ namespace CloudText
 	// a back up sends up (cloud_backup, cloud_content_backup). verbOf answers
 	// the card's question about the saves scripts and reads the content
 	// scripts as Other; this reads a whole composed command by the scripts
-	// it names, for the row that follows a run left in the background and
-	// for the launch gate's sentence over it. backuptool decides nothing: it
+	// it names, for the hub row that follows the current run's outcome
+	// (D-UI-070) and for the launch gate's sentence over a run still
+	// current. backuptool decides nothing: it
 	// appears in a settings restore (restore --then-cloud) and a settings
 	// backup alike, and the cloud script beside it says which. A command
 	// naming a restore and a backup script both is the card's sync, not a

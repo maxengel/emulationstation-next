@@ -41,14 +41,25 @@ namespace DisplayAspect
 	// the cursor back over a screenshot costs nothing. A screenshot whose
 	// game is in no list (a ROM since removed, a name RetroArch shortened)
 	// keeps the file's own proportions and turn.
+	// The screenshot -> Transform cache, and its lock. Emptied by
+	// forgetScreenshots when a session records a rotation, since the turn
+	// inside a cached Transform came from the record as it stood (#258
+	// PL-019); the game lookup it saves is redone once per screenshot after.
+	static std::mutex sShotLock;
+	static std::map<std::string, Transform> sShots;
+
+	void forgetScreenshots()
+	{
+		std::unique_lock<std::mutex> lock(sShotLock);
+		sShots.clear();
+	}
+
 	Transform forScreenshotPath(const std::string& path)
 	{
-		static std::mutex mutex;
-		static std::map<std::string, Transform> known;
 		{
-			std::unique_lock<std::mutex> lock(mutex);
-			auto it = known.find(path);
-			if (it != known.cend())
+			std::unique_lock<std::mutex> lock(sShotLock);
+			auto it = sShots.find(path);
+			if (it != sShots.cend())
 				return it->second;
 		}
 		const std::string content = DisplayAspectText::screenshotContent(Utils::FileSystem::getFileName(path));
@@ -75,8 +86,8 @@ namespace DisplayAspect
 					break;
 			}
 		}
-		std::unique_lock<std::mutex> lock(mutex);
-		known[path] = t;
+		std::unique_lock<std::mutex> lock(sShotLock);
+		sShots[path] = t;
 		return t;
 	}
 

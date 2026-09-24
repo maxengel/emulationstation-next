@@ -8,7 +8,8 @@
 #include <string>
 #include <vector>
 
-// The Wi-Fi picker behind NETWORK SETTINGS' WI-FI SSID row (fork #191; the
+// The Wi-Fi picker behind NETWORK SETTINGS' WI-FI NETWORK row (fork #191,
+// renamed from WI-FI SSID by D-UI-071; the
 // maintainer's paradigm of 2026-09-15: the row is the network the device is
 // on, this list is what is in range). One row per network in range -- the
 // one joined now first and marked CONNECTED, the ones NetworkManager holds a
