@@ -36,6 +36,21 @@ namespace Utils
 		// for a clock that was wrong when the file was written.
 		enum class DayRelation { Today, Yesterday, Older };
 		DayRelation dayRelation(const tm& stamp, const tm& now);
+
+		// The locale's date with a two-digit year: "09/24/2026" -> "09/24/26",
+		// "24/09/2026" -> "24/09/26". A save is not from another century, and
+		// the two characters buy the word between the date and the time
+		// (fork #195, D-UI-089, the maintainer's call). A date with no
+		// four-digit year is returned as it came.
+		std::string shortYear(const std::string& localeDate);
+
+		// When a save was made, as the tile says it (D-UI-089): "TODAY at
+		// 17:07", "YESTERDAY at 14:03", "09/24/26 at 14:03". The words come
+		// translated from the caller -- TODAY, YESTERDAY in the label case,
+		// "at" lower-case by the maintainer's word ("adding 'at', in
+		// lowercase, if possible"), the a-grave in French.
+		std::string whenText(DayRelation relation, const std::string& shortDate, const std::string& timeText,
+		                     const std::string& todayWord, const std::string& yesterdayWord, const std::string& atWord);
 	}
 }
 

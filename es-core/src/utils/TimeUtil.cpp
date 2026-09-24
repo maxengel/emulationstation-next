@@ -215,25 +215,28 @@ namespace Utils
 			return clockText(clockTstruct, twelveHour, std::string(markerBuf, markerLen));
 		}
 
-		std::string DateTime::toRelativeLocalTimeString(const std::string& yesterdayWord)
+		std::string DateTime::toShortLocalDateString()
+		{
+			time_t     clockNow = getTime();
+			struct tm  clockTstruct = *localtime(&clockNow);
+			char dateBuf[64];
+			const size_t dateLen = strftime(dateBuf, sizeof(dateBuf), "%x", &clockTstruct);
+			return shortYear(std::string(dateBuf, dateLen));
+		}
+
+		std::string DateTime::toRelativeLocalTimeString(const std::string& todayWord, const std::string& yesterdayWord, const std::string& atWord)
 		{
 			// Both in local time, so the day boundary is the player's
-			// midnight (fork #195, D-UI-087). The rule is dayRelation's, held
-			// by es-unit-tests; this is the shell that asks the clock.
+			// midnight (fork #195, D-UI-087, D-UI-089). The rules are
+			// dayRelation's and whenText's, held by es-unit-tests; this is the
+			// shell that asks the clock and the locale.
 			time_t     stampNow = getTime();
 			struct tm  stamp    = *localtime(&stampNow);
 			time_t     clockNow = now();
 			struct tm  today    = *localtime(&clockNow);
 
-			switch (dayRelation(stamp, today))
-			{
-			case DayRelation::Today:
-				return localClockText(stamp);
-			case DayRelation::Yesterday:
-				return yesterdayWord + " " + localClockText(stamp);
-			default:
-				return toLocalTimeString();
-			}
+			return whenText(dayRelation(stamp, today), toShortLocalDateString(), localClockText(stamp),
+			                todayWord, yesterdayWord, atWord);
 		}
 
 		Duration::Duration(const time_t& _time)

@@ -37,11 +37,15 @@ namespace Utils
 			void               setIsoString (const std::string& _isoString);
 			const std::string& getIsoString () const { return mIsoString; }
 			std::string		   toLocalTimeString();
-			// The same time, said relative to today (fork #195, D-UI-087): the
-			// time alone for a stamp from today, yesterdayWord and the time for
-			// one from yesterday (the caller passes the translated word), the
-			// date and the time for anything older or in the future.
-			std::string		   toRelativeLocalTimeString(const std::string& yesterdayWord);
+			// When this was, as a save state tile says it (fork #195, D-UI-089):
+			// "TODAY at 17:07", "YESTERDAY at 14:03", "09/24/26 at 14:03" -- the
+			// caller passes the three translated words; the date is the
+			// locale's with a two-digit year; the time follows the 12-hour
+			// switch (D-UI-058).
+			std::string		   toRelativeLocalTimeString(const std::string& todayWord, const std::string& yesterdayWord, const std::string& atWord);
+			// The locale's date of this stamp with a two-digit year, and the
+			// time half alone, for callers that compose their own line.
+			std::string		   toShortLocalDateString();
 			static std::string localClockText(const tm& clockTstruct);
 
 			double			   elapsedSecondsSince(const DateTime& _since);

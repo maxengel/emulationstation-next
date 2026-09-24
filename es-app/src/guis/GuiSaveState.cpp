@@ -133,10 +133,17 @@ GuiSaveState::GuiSaveState(Window* window, FileData* game, const std::function<v
 		// width, and the time half writes the same number of characters at
 		// every hour on either clock, AM/PM included (fork #195; TimeText's
 		// test holds it to that), so the sample measures the row's shape
-		// whatever the switch says when the manager opens. The tiles say the
-		// time alone for today and YESTERDAY for yesterday (fork #195,
-		// D-UI-087); the date form measured here is the widest of the three.
-		const std::string widest = Utils::Time::DateTime::now().toLocalTimeString();
+		// whatever the switch says when the manager opens. A tile's second
+		// line is TODAY at 17:07, YESTERDAY at 14:03 or 09/24/26 at 14:03
+		// (fork #195, D-UI-089), so the sample is the widest of the three
+		// words with the same "at" and time -- in French AUJOURD'HUI is the
+		// longest, in English the date is.
+		const std::string at = " " + _("at") + " " + Utils::Time::DateTime::localClockText(Utils::Time::DateTime::now().getTimeStruct());
+		const std::string candidates[] = { _("TODAY") + at, _("YESTERDAY") + at, Utils::Time::DateTime::now().toShortLocalDateString() + at };
+		std::string widest = candidates[0];
+		for (const std::string& c : candidates)
+			if (labelFont->sizeText(c).x() > labelFont->sizeText(widest).x())
+				widest = c;
 		const float widestPx = labelFont->sizeText(widest).x();
 		if (widestPx > tileWidth * 0.86f && widestPx > 0)
 		{
@@ -273,11 +280,11 @@ void GuiSaveState::loadGrid()
 		}
 
 		if (item->slot == -1)
-			mGrid->add(_("AUTO SAVE") + std::string("\r\n") + item->creationDate.toRelativeLocalTimeString(_("YESTERDAY")) + coreinfo, item->getScreenShot(), SaveStateItem(item));
+			mGrid->add(_("AUTO SAVE") + std::string("\r\n") + item->creationDate.toRelativeLocalTimeString(_("TODAY"), _("YESTERDAY"), _("at")) + coreinfo, item->getScreenShot(), SaveStateItem(item));
 		else if (supportsIncrementalSaveStates && item->config != nullptr ? item->config->incremental : incrementalSaveStates)
-			mGrid->add(item->creationDate.toRelativeLocalTimeString(_("YESTERDAY")) + coreinfo, item->getScreenShot(), SaveStateItem(item));
+			mGrid->add(item->creationDate.toRelativeLocalTimeString(_("TODAY"), _("YESTERDAY"), _("at")) + coreinfo, item->getScreenShot(), SaveStateItem(item));
 		else 
-			mGrid->add(_("SLOT") + std::string(" ") + std::to_string(item->slot) + std::string("\r\n") + item->creationDate.toRelativeLocalTimeString(_("YESTERDAY")) + coreinfo, item->getScreenShot(), SaveStateItem(item));
+			mGrid->add(_("SLOT") + std::string(" ") + std::to_string(item->slot) + std::string("\r\n") + item->creationDate.toRelativeLocalTimeString(_("TODAY"), _("YESTERDAY"), _("at")) + coreinfo, item->getScreenShot(), SaveStateItem(item));
 	}
 
 	// The help bar follows the cursor, and a rebuild moves the cursor

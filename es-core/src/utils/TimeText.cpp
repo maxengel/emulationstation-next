@@ -52,5 +52,32 @@ namespace Utils
 				return DayRelation::Yesterday;
 			return DayRelation::Older;
 		}
+
+		std::string shortYear(const std::string& localeDate)
+		{
+			// The first run of exactly four digits bounded by non-digits is
+			// the year in every locale's %x that writes one; keep its last two.
+			for (size_t i = 0; i + 4 <= localeDate.size(); i++)
+			{
+				bool run = true;
+				for (size_t k = 0; k < 4; k++)
+					if (!isdigit((unsigned char)localeDate[i + k])) { run = false; break; }
+				if (!run)
+					continue;
+				const bool before = (i == 0) || !isdigit((unsigned char)localeDate[i - 1]);
+				const bool after = (i + 4 == localeDate.size()) || !isdigit((unsigned char)localeDate[i + 4]);
+				if (before && after)
+					return localeDate.substr(0, i) + localeDate.substr(i + 2);
+			}
+			return localeDate;
+		}
+
+		std::string whenText(DayRelation relation, const std::string& shortDate, const std::string& timeText,
+		                     const std::string& todayWord, const std::string& yesterdayWord, const std::string& atWord)
+		{
+			const std::string day = (relation == DayRelation::Today) ? todayWord
+			                      : (relation == DayRelation::Yesterday) ? yesterdayWord : shortDate;
+			return day + " " + atWord + " " + timeText;
+		}
 	}
 }

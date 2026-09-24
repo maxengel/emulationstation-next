@@ -14,6 +14,8 @@
 using Utils::Time::clockText;
 using Utils::Time::dayRelation;
 using Utils::Time::DayRelation;
+using Utils::Time::shortYear;
+using Utils::Time::whenText;
 
 static tm at(int hour, int minute)
 {
@@ -123,5 +125,25 @@ TEST_CASE("two days ago is older, and so is a stamp from the future")
 	CHECK(dayRelation(on(2026, 3, 1), on(2026, 9, 24)) == DayRelation::Older);
 	CHECK(dayRelation(on(2026, 9, 25, 9, 0), on(2026, 9, 24, 21, 0)) == DayRelation::Older);
 	CHECK(dayRelation(on(2025, 9, 24), on(2026, 9, 24)) == DayRelation::Older);
+}
+
+// The words on the tile (D-UI-089): the day word or the short date, then
+// "at" as the caller spells it, then the time.
+TEST_CASE("the year loses its century, whatever the locale's order")
+{
+	CHECK(shortYear("09/24/2026") == "09/24/26");
+	CHECK(shortYear("24/09/2026") == "24/09/26");
+	CHECK(shortYear("2026-09-24") == "26-09-24");
+	CHECK(shortYear("24.09.2026") == "24.09.26");
+	CHECK(shortYear("09/24/26") == "09/24/26");
+	CHECK(shortYear("") == "");
+}
+
+TEST_CASE("the tile says TODAY at, YESTERDAY at, or the short date at")
+{
+	CHECK(whenText(DayRelation::Today, "09/24/26", "17:07", "TODAY", "YESTERDAY", "at") == "TODAY at 17:07");
+	CHECK(whenText(DayRelation::Yesterday, "09/24/26", "02:03 PM", "TODAY", "YESTERDAY", "at") == "YESTERDAY at 02:03 PM");
+	CHECK(whenText(DayRelation::Older, "09/22/26", "14:03", "TODAY", "YESTERDAY", "at") == "09/22/26 at 14:03");
+	CHECK(whenText(DayRelation::Yesterday, "24/09/26", "14:03", "AUJOURD'HUI", "HIER", "\xc3\xa0") == "HIER \xc3\xa0 14:03");
 }
 

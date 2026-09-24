@@ -1378,6 +1378,12 @@ msgstr "SAUV. AUTO"
 msgid "YESTERDAY"
 msgstr "HIER"
 
+msgid "TODAY"
+msgstr "AUJOURD’HUI"
+
+msgid "at"
+msgstr "à"
+
 msgid "SLOT"
 msgstr "EMPLACEMENT"
 
