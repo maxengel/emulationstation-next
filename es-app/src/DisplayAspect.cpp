@@ -41,17 +41,35 @@ namespace DisplayAspect
 	// the cursor back over a screenshot costs nothing. A screenshot whose
 	// game is in no list (a ROM since removed, a name RetroArch shortened)
 	// keeps the file's own proportions and turn.
-	// The screenshot -> Transform cache, and its lock. Emptied by
-	// forgetScreenshots when a session records a rotation, since the turn
-	// inside a cached Transform came from the record as it stood (#258
-	// PL-019); the game lookup it saves is redone once per screenshot after.
+	// The screenshot -> game cache, and its lock: which system and which
+	// game path a screenshot's content name resolved to ("" when none),
+	// never the Transform itself. The turn is asked of CaptureRotation on
+	// every look, which stats the record, so a record written by a session
+	// or by hand over ssh is seen on the next look without a restart; the
+	// cache used to hold the whole Transform and kept the turn it was built
+	// with until the process ended (audit #258 PL-019). A FileData pointer
+	// is not cached either: the list that owns it is rebuilt by a rescan
+	// (#246's lesson), so the game is found again by path each time.
+	// forgetScreenshots empties it when a session records a rotation, which
+	// also covers a screenshot whose game arrived after the first look.
+	struct ShotGame { std::string system; std::string gamePath; };
 	static std::mutex sShotLock;
-	static std::map<std::string, Transform> sShots;
+	static std::map<std::string, ShotGame> sShots;
 
 	void forgetScreenshots()
 	{
 		std::unique_lock<std::mutex> lock(sShotLock);
 		sShots.clear();
+	}
+
+	static FileData* findGame(const ShotGame& sg)
+	{
+		if (sg.system.empty())
+			return nullptr;
+		SystemData* system = SystemData::getSystem(sg.system);
+		if (system == nullptr || system->getRootFolder() == nullptr)
+			return nullptr;
+		return system->getRootFolder()->FindByPath(sg.gamePath);
 	}
 
 	Transform forScreenshotPath(const std::string& path)
@@ -60,10 +78,17 @@ namespace DisplayAspect
 			std::unique_lock<std::mutex> lock(sShotLock);
 			auto it = sShots.find(path);
 			if (it != sShots.cend())
-				return it->second;
+			{
+				if (it->second.system.empty())
+					return Transform();
+				if (FileData* game = findGame(it->second))
+					return forGame(game);
+				// The list was rebuilt under it: look again below.
+			}
 		}
 		const std::string content = DisplayAspectText::screenshotContent(Utils::FileSystem::getFileName(path));
 		Transform t;
+		ShotGame sg;
 		bool found = false;
 		if (!content.empty())
 		{
@@ -78,6 +103,7 @@ namespace DisplayAspect
 					if (Utils::FileSystem::getStem(game->getPath()) == content)
 					{
 						t = forGame(game);
+						sg = ShotGame{ system->getName(), game->getPath() };
 						found = true;
 						break;
 					}
@@ -87,7 +113,7 @@ namespace DisplayAspect
 			}
 		}
 		std::unique_lock<std::mutex> lock(sShotLock);
-		sShots[path] = t;
+		sShots[path] = sg;
 		return t;
 	}
 

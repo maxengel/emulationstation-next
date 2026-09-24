@@ -404,17 +404,23 @@ void signalHandler(int signum)
 	raise(signum);
 }
 
-// Ctrl-C is not a fault. It takes the path every SIGINT took before #246
-// -- exit(), which runs the atexit hooks: onExit joins the save state
-// bookkeeper's worker, so a copy or a deletion still on it is recorded
-// before the process is gone (D-UI-073), and closes the log. #246 moved
-// SIGINT onto the fault path with the rest, which dropped that hook
-// without saying so (audit #258 PL-003); this puts it back. On a device
-// nothing sends SIGINT -- essway stops the unit with SIGTERM -- so this is
-// the developer's terminal and the harness's kill.
-void interruptHandler(int signum)
+// Ctrl-C is not a fault, and it is not an exit() either. Before #246 every
+// signal ended in exit(signum) from the handler; #246 moved SIGINT onto the
+// fault path with the rest, which dropped the atexit hooks (the save state
+// bookkeeper's join, D-UI-073) without saying so. Putting exit() back was
+// tried first (audit #258 PL-003) and died of SIGSEGV in the teardown on
+// guest d -- exit() from a handler skips the end of main(), so the static
+// destructors met a window and a renderer still in use, which is the very
+// thing #246's comment on the faults describes. So the handler only sets a
+// flag, and the main loop ends the same way a QUIT event ends it: the
+// end of main() runs, the bookkeeper is joined, the log is closed. On a
+// device nothing sends SIGINT -- essway stops the unit with SIGTERM -- so
+// this is the developer's terminal and the harness's kill.
+static volatile sig_atomic_t sInterrupted = 0;
+
+void interruptHandler(int)
 {
-	exit(128 + signum);
+	sInterrupted = 1;
 }
 
 void playVideo()
@@ -1067,6 +1073,15 @@ int main(int argc, char* argv[])
 	while(running)
 	{
 		SDL_Event event;
+
+		// SIGINT (interruptHandler): quit through the loop's own end, so
+		// the teardown below runs on this thread (#258 PL-003).
+		if (sInterrupted)
+		{
+			LOG(LogInfo) << "SIGINT received; quitting";
+			running = false;
+			continue;
+		}
 
 		bool ps_standby = PowerSaver::getState() && (int) SDL_GetTicks() - ps_time > PowerSaver::getMode();
 		if(ps_standby ? SDL_WaitEventTimeout(&event, PowerSaver::getTimeout()) : SDL_PollEvent(&event))
