@@ -55,11 +55,35 @@ namespace DisplayAspect
 	struct ShotGame { std::string system; std::string gamePath; };
 	static std::mutex sShotLock;
 	static std::map<std::string, ShotGame> sShots;
+	// The library by stem, built on the first screenshot that misses sShots
+	// and kept until forgetScreenshots: a list of S never-seen screenshots
+	// used to walk every game S times on the interface thread (audit #258,
+	// the seat's G-04); now the library is walked once. The first game of
+	// the first system to carry a stem wins, as the walk did.
+	static std::map<std::string, ShotGame> sStems;
+	static bool sStemsBuilt = false;
 
 	void forgetScreenshots()
 	{
 		std::unique_lock<std::mutex> lock(sShotLock);
 		sShots.clear();
+		sStems.clear();
+		sStemsBuilt = false;
+	}
+
+	static void buildStems()
+	{
+		sStems.clear();
+		for (SystemData* system : SystemData::sSystemVector)
+		{
+			if (system == nullptr || system->isCollection() || !system->isGameSystem() || system->getRootFolder() == nullptr)
+				continue;
+			if (system->hasPlatformId(PlatformIds::IMAGEVIEWER))
+				continue;
+			for (FileData* game : system->getRootFolder()->getFilesRecursive(GAME))
+				sStems.emplace(Utils::FileSystem::getStem(game->getPath()), ShotGame{ system->getName(), game->getPath() });
+		}
+		sStemsBuilt = true;
 	}
 
 	static FileData* findGame(const ShotGame& sg)
@@ -89,30 +113,19 @@ namespace DisplayAspect
 		const std::string content = DisplayAspectText::screenshotContent(Utils::FileSystem::getFileName(path));
 		Transform t;
 		ShotGame sg;
-		bool found = false;
+		std::unique_lock<std::mutex> lock(sShotLock);
+		if (!sStemsBuilt)
+			buildStems();
 		if (!content.empty())
 		{
-			for (SystemData* system : SystemData::sSystemVector)
+			auto it = sStems.find(content);
+			if (it != sStems.cend())
 			{
-				if (system == nullptr || system->isCollection() || !system->isGameSystem() || system->getRootFolder() == nullptr)
-					continue;
-				if (system->hasPlatformId(PlatformIds::IMAGEVIEWER))
-					continue;
-				for (FileData* game : system->getRootFolder()->getFilesRecursive(GAME))
-				{
-					if (Utils::FileSystem::getStem(game->getPath()) == content)
-					{
-						t = forGame(game);
-						sg = ShotGame{ system->getName(), game->getPath() };
-						found = true;
-						break;
-					}
-				}
-				if (found)
-					break;
+				sg = it->second;
+				if (FileData* game = findGame(sg))
+					t = forGame(game);
 			}
 		}
-		std::unique_lock<std::mutex> lock(sShotLock);
 		sShots[path] = sg;
 		return t;
 	}

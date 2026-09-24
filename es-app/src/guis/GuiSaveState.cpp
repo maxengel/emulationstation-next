@@ -520,7 +520,9 @@ void GuiSaveState::update(int deltaTime)
 		if (files != mShown)
 		{
 			// The exception path, so it is logged: a deletion that did not
-			// take, or a file that arrived while the page was open.
+			// take, or a file that arrived while the page was open -- seen
+			// here, when a job lands, since the disk is read at no other
+			// moment (audit #258, the seat's G-07).
 			LOG(LogInfo) << "save state manager: a landed job left the disk differing from the page ("
 				<< mShown.size() << " shown, " << files.size() << " on disk); rebuilt";
 			const int cursor = mGrid->getCursorIndex();
