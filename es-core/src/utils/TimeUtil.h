@@ -37,6 +37,12 @@ namespace Utils
 			void               setIsoString (const std::string& _isoString);
 			const std::string& getIsoString () const { return mIsoString; }
 			std::string		   toLocalTimeString();
+			// The same time, said relative to today (fork #195, D-UI-087): the
+			// time alone for a stamp from today, yesterdayWord and the time for
+			// one from yesterday (the caller passes the translated word), the
+			// date and the time for anything older or in the future.
+			std::string		   toRelativeLocalTimeString(const std::string& yesterdayWord);
+			static std::string localClockText(const tm& clockTstruct);
 
 			double			   elapsedSecondsSince(const DateTime& _since);
 

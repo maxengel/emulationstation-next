@@ -26,6 +26,16 @@ namespace Utils
 		// On it: hh:MM and the marker, as %I:%M %p prints it -- the clock in
 		// the corner and the cloud rows' LAST lines use the same form.
 		std::string clockText(const tm& t, bool twelveHour, const std::string& localeMarker);
+
+		// Which day a stamp falls on, as a player would say it (fork #195,
+		// D-UI-087): TODAY reads as the time alone, YESTERDAY as that word
+		// and the time, OLDER as the date and the time. Calendar days in
+		// local time, so 23:59 and 00:01 across midnight are a day apart
+		// and December 31st to January 1st is one day too. A stamp on a
+		// later day than now is OLDER: the date is the honest thing to show
+		// for a clock that was wrong when the file was written.
+		enum class DayRelation { Today, Yesterday, Older };
+		DayRelation dayRelation(const tm& stamp, const tm& now);
 	}
 }
 

@@ -200,14 +200,40 @@ namespace Utils
 			char dateBuf[64];
 			const size_t dateLen = strftime(dateBuf, sizeof(dateBuf), "%x", &clockTstruct);
 
+			return std::string(dateBuf, dateLen) + " " + localClockText(clockTstruct);
+		}
+
+		// The time half alone, as toLocalTimeString writes it after the date.
+		std::string DateTime::localClockText(const tm& clockTstruct)
+		{
 			const bool twelveHour = Settings::ClockMode12();
 			char markerBuf[32];
 			size_t markerLen = 0;
 			if (twelveHour)
 				markerLen = strftime(markerBuf, sizeof(markerBuf), "%p", &clockTstruct);
 
-			return std::string(dateBuf, dateLen) + " "
-				+ clockText(clockTstruct, twelveHour, std::string(markerBuf, markerLen));
+			return clockText(clockTstruct, twelveHour, std::string(markerBuf, markerLen));
+		}
+
+		std::string DateTime::toRelativeLocalTimeString(const std::string& yesterdayWord)
+		{
+			// Both in local time, so the day boundary is the player's
+			// midnight (fork #195, D-UI-087). The rule is dayRelation's, held
+			// by es-unit-tests; this is the shell that asks the clock.
+			time_t     stampNow = getTime();
+			struct tm  stamp    = *localtime(&stampNow);
+			time_t     clockNow = now();
+			struct tm  today    = *localtime(&clockNow);
+
+			switch (dayRelation(stamp, today))
+			{
+			case DayRelation::Today:
+				return localClockText(stamp);
+			case DayRelation::Yesterday:
+				return yesterdayWord + " " + localClockText(stamp);
+			default:
+				return toLocalTimeString();
+			}
 		}
 
 		Duration::Duration(const time_t& _time)

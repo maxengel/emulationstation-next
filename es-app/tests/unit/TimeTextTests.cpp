@@ -12,6 +12,8 @@
 #include "utils/TimeText.h"
 
 using Utils::Time::clockText;
+using Utils::Time::dayRelation;
+using Utils::Time::DayRelation;
 
 static tm at(int hour, int minute)
 {
@@ -85,3 +87,41 @@ TEST_CASE("every hour writes the same number of characters, so one sample measur
 		CHECK(clockText(at(h, 0), false, "").size() == twentyFour);
 	}
 }
+
+// The day rule behind the SAVE STATE MANAGER's tiles (fork #195, D-UI-087):
+// today is the time alone, yesterday is the word and the time, anything
+// else is the date. Calendar days, local time -- the player's midnight.
+static tm on(int year, int month, int day, int hour = 12, int minute = 0)
+{
+	tm t = {};
+	t.tm_year = year - 1900;
+	t.tm_mon = month - 1;
+	t.tm_mday = day;
+	t.tm_hour = hour;
+	t.tm_min = minute;
+	return t;
+}
+
+TEST_CASE("the same calendar day is today, whatever the hours")
+{
+	CHECK(dayRelation(on(2026, 9, 24, 0, 1), on(2026, 9, 24, 23, 59)) == DayRelation::Today);
+	CHECK(dayRelation(on(2026, 9, 24, 21, 7), on(2026, 9, 24, 21, 19)) == DayRelation::Today);
+}
+
+TEST_CASE("the day before is yesterday, across midnight, a month end and a year end")
+{
+	CHECK(dayRelation(on(2026, 9, 23, 23, 59), on(2026, 9, 24, 0, 1)) == DayRelation::Yesterday);
+	CHECK(dayRelation(on(2026, 9, 30), on(2026, 10, 1)) == DayRelation::Yesterday);
+	CHECK(dayRelation(on(2025, 12, 31), on(2026, 1, 1)) == DayRelation::Yesterday);
+	CHECK(dayRelation(on(2028, 2, 29), on(2028, 3, 1)) == DayRelation::Yesterday);
+	CHECK(dayRelation(on(2027, 2, 28), on(2027, 3, 1)) == DayRelation::Yesterday);
+}
+
+TEST_CASE("two days ago is older, and so is a stamp from the future")
+{
+	CHECK(dayRelation(on(2026, 9, 22, 23, 59), on(2026, 9, 24, 0, 1)) == DayRelation::Older);
+	CHECK(dayRelation(on(2026, 3, 1), on(2026, 9, 24)) == DayRelation::Older);
+	CHECK(dayRelation(on(2026, 9, 25, 9, 0), on(2026, 9, 24, 21, 0)) == DayRelation::Older);
+	CHECK(dayRelation(on(2025, 9, 24), on(2026, 9, 24)) == DayRelation::Older);
+}
+

@@ -25,5 +25,32 @@ namespace Utils
 			const std::string marker = !localeMarker.empty() ? localeMarker : (t.tm_hour < 12 ? "AM" : "PM");
 			return std::string(buf) + " " + marker;
 		}
+
+		// Days since 1970-01-01 for a civil date, so two tm values compare
+		// as calendar days without any year-length or leap arithmetic here
+		// (Howard Hinnant's days_from_civil; valid for every year the tm
+		// can hold).
+		static long dayNumber(const tm& t)
+		{
+			long y = t.tm_year + 1900;
+			const unsigned m = (unsigned)(t.tm_mon + 1);
+			const unsigned d = (unsigned)t.tm_mday;
+			y -= m <= 2;
+			const long era = (y >= 0 ? y : y - 399) / 400;
+			const unsigned yoe = (unsigned)(y - era * 400);
+			const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+			const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+			return era * 146097 + (long)doe - 719468;
+		}
+
+		DayRelation dayRelation(const tm& stamp, const tm& now)
+		{
+			const long ago = dayNumber(now) - dayNumber(stamp);
+			if (ago == 0)
+				return DayRelation::Today;
+			if (ago == 1)
+				return DayRelation::Yesterday;
+			return DayRelation::Older;
+		}
 	}
 }

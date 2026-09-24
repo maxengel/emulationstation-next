@@ -1375,6 +1375,9 @@ msgstr "NOUVELLE SAUV. AUTO"
 msgid "AUTO SAVE"
 msgstr "SAUV. AUTO"
 
+msgid "YESTERDAY"
+msgstr "HIER"
+
 msgid "SLOT"
 msgstr "EMPLACEMENT"
 
