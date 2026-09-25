@@ -627,7 +627,7 @@ std::string FileData::getlaunchCommand(LaunchGameOptions& options, bool includeC
 		else
 #endif
 #if ROCKNIX
-			command = Utils::String::replace(command, "%NETPLAY%", "--connect " + options.ip + " --port " + std::to_string(options.port) + " --nick " + SystemConf::getInstance()->get("global.netplay.nickname"));
+			command = Utils::String::replace(command, "%NETPLAY%", "--connect " + Utils::String::shellQuote(options.ip) + " --port " + std::to_string(options.port) + " --nick " + Utils::String::shellQuote(SystemConf::getInstance()->get("global.netplay.nickname"))); // fork #275
 #else
 			command = Utils::String::replace(command, "%NETPLAY%", "-netplaymode " + mode + " -netplayport " + std::to_string(options.port) + " -netplayip " + options.ip + session + pass);
 #endif
@@ -640,7 +640,7 @@ std::string FileData::getlaunchCommand(LaunchGameOptions& options, bool includeC
 		else
 #endif
 #if ROCKNIX
-			command = Utils::String::replace(command, "%NETPLAY%", "--host --port " + SystemConf::getInstance()->get("global.netplay.port") + " --nick " + SystemConf::getInstance()->get("global.netplay.nickname"));
+			command = Utils::String::replace(command, "%NETPLAY%", "--host --port " + Utils::String::shellQuote(SystemConf::getInstance()->get("global.netplay.port")) + " --nick " + Utils::String::shellQuote(SystemConf::getInstance()->get("global.netplay.nickname"))); // fork #275
 #else
 			command = Utils::String::replace(command, "%NETPLAY%", "-netplaymode host");
 #endif

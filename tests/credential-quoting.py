@@ -29,7 +29,29 @@ import re
 import sys
 
 CREDENTIAL_COMMANDS = ("setrootpass", "wifictl connect", "wifictl enable", "wifictl join", "wifictl forget",
-                       "cloud_setup --set-syncpath")
+                       "cloud_setup --set-syncpath", "--connect", "--host --port")
+# A site inside a WIN32-only region is code no ROCKNIX build compiles (fork
+# #275: the netplay command has a Windows twin beside the ROCKNIX one); the
+# check reads the region markers and leaves those sites alone.
+WIN32_IF = re.compile(r'^\s*#\s*(?:if\s+(?:defined\s*\(\s*)?WIN32|ifdef\s+WIN32)\b')
+PP_IF = re.compile(r'^\s*#\s*if(?:def|ndef)?\b')
+PP_ELSE = re.compile(r'^\s*#\s*(?:else|elif)\b')
+PP_ENDIF = re.compile(r'^\s*#\s*endif\b')
+
+
+def win32_only_lines(text):
+    """Line numbers (1-based) inside the taken branch of a #if WIN32 block."""
+    out, stack = set(), []   # stack entries: True while inside a WIN32 branch
+    for n, line in enumerate(text.split("\n"), 1):
+        if PP_IF.match(line):
+            stack.append(bool(WIN32_IF.match(line)))
+        elif PP_ELSE.match(line) and stack:
+            stack[-1] = False
+        elif PP_ENDIF.match(line) and stack:
+            stack.pop()
+        elif any(stack):
+            out.add(n)
+    return out
 SITE = re.compile(r'"((?:timeout \d+ )?(?:/usr/bin/)?(?:%s)) (?:\\")?"\s*\+\s*' % "|".join(re.escape(c) for c in CREDENTIAL_COMMANDS))
 STATEMENT_END = re.compile(r';\s*\n')
 OPERAND = re.compile(r'\+\s*([A-Za-z_][\w:]*)\s*(\(?)')
@@ -45,7 +67,10 @@ def main():
                     continue
                 path = os.path.join(dp, f)
                 text = open(path, encoding="utf-8", errors="replace").read()
+                skip = win32_only_lines(text)
                 for m in SITE.finditer(text):
+                    if text.count("\n", 0, m.start()) + 1 in skip:
+                        continue
                     sites += 1
                     end = STATEMENT_END.search(text, m.end())
                     statement = text[m.start():end.end() if end else len(text)]
