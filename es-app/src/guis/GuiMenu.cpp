@@ -7594,7 +7594,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 			{
 				SystemConf::getInstance()->saveSystemConf();
 				LOG(LogInfo) << "restore relink: applying device password";
-				Utils::Platform::runSystemCommand("setrootpass " + changed, "", nullptr);
+				Utils::Platform::runSystemCommand("setrootpass " + Utils::String::shellQuote(changed), "", nullptr); // fork #198
 			}
 		});
 		pw->onFinalize([s, reopen] { s->close(); reopen(); });
