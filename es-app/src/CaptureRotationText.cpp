@@ -39,9 +39,21 @@ namespace CaptureRotationText
 {
 	int turnsFromLog(const std::string& launchLog)
 	{
+		// Only the last launch's lines count (fork #280): the file held
+		// every launch since it was last removed on a device whose log level
+		// was none, and a vertical game's line at its end turned every game
+		// exited after it. RetroArch prints its build banner once per
+		// process, so the search starts at the last one; a log with none is
+		// no launch's. (Not the content line: a core that loads its own
+		// content -- fbneo, mame, the rotating ones -- gets "Content loading
+		// skipped" instead.)
+		const std::string banner = "=== Build ";
+		const size_t launch = launchLog.rfind(banner);
+		if (launch == std::string::npos)
+			return -1;
 		const std::string tag = "SET_ROTATION: \"";
 		size_t pos = launchLog.rfind(tag);
-		if (pos == std::string::npos)
+		if (pos == std::string::npos || pos < launch)
 			return -1;
 		pos += tag.size();
 		if (pos >= launchLog.size() || launchLog[pos] < '0' || launchLog[pos] > '9')

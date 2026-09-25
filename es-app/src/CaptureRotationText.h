@@ -10,8 +10,13 @@
 // frame as the core drew it, so the interface turns it by the same amount.
 namespace CaptureRotationText
 {
-	// The last "[Environ] SET_ROTATION: "n" (deg)." line of a launch log,
-	// as 0-3; -1 when the log has none (a core that never asked).
+	// The last "[Environ] SET_ROTATION: "n" (deg)." line of a launch log
+	// AFTER its last "=== Build" banner (RetroArch prints one per process),
+	// as 0-3; -1 when that launch has none (a core that never asked), and
+	// -1 when the log has no banner at all. Only the last launch's section
+	// counts: the file held every launch since it was last removed on a
+	// device whose log level was none (fork #280), and a vertical game's
+	// line at its end turned every game exited after it.
 	int turnsFromLog(const std::string& launchLog);
 
 	// What the display did with the core's request: nothing when

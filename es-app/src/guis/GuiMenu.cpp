@@ -8927,16 +8927,29 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 
 	std::thread([window, ip, addresses, notConnected, fill]
 	{
-		const std::vector<std::string> found = ApiSystem::getInstance()->getIpAddresses();
-		window->postToUiThread([ip, addresses, found, notConnected, fill]
+		// The row's value is the first address on a link of the device's own
+		// (NOT CONNECTED when there is none, as INTERNET STATUS says beside
+		// it); the list behind A carries every address with its interface, a
+		// tunnel's included and named, since a tailnet address is what the
+		// player reaches the device by from elsewhere (fork #279).
+		const std::vector<Utils::Platform::InterfaceAddress> found = Utils::Platform::queryInterfaceAddresses();
+		std::string first;
+		std::vector<std::string> lines;
+		for (const auto& a : found)
+		{
+			lines.push_back(a.address + "  " + a.interface);
+			if (first.empty() && a.physical)
+				first = a.address;
+		}
+		window->postToUiThread([ip, addresses, first, lines, notConnected, fill]
 		{
 			if (auto held = addresses.lock())
-				*held = found;
+				*held = lines;
 
-			if (found.empty())
+			if (first.empty())
 				fill(ip, notConnected);
 			else
-				fill(ip, found.size() == 1 ? found[0] : found[0] + " (+)");
+				fill(ip, lines.size() == 1 ? first : first + " (+)");
 		});
 	}).detach();
 
@@ -9030,11 +9043,13 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	// upstream's shape once it is in: NOT CONNECTED, the one address, or the
 	// first with (+) after it and A listing them all -- filled from the same
 	// worker, since getifaddrs is what #103 moved off the interface thread.
+	// The value is a link's address; the list names every interface, a
+	// tunnel's too, and opens whenever there is one to show (fork #279).
 	auto ip = std::make_shared<TextComponent>(mWindow, "", font, color);
 	auto ipList = std::make_shared<std::vector<std::string>>();
 	s->addWithLabel(_("IP ADDRESS"), ip, false, [window, ipList]
 	{
-		if (ipList->size() < 2)
+		if (ipList->empty())
 			return;
 
 		std::string text = _("AVAILABLE IP ADDRESSES:\n\n");

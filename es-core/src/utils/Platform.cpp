@@ -282,6 +282,20 @@ namespace Utils
 			return quitMode == QuitMode::FAST_REBOOT || quitMode == QuitMode::FAST_SHUTDOWN;
 		}
 
+#if !WIN32
+		// A link of the device's own: up, with a carrier, not loopback and
+		// not point-to-point. A tun such as tailscale0 keeps its fixed
+		// address whether or not any network carries it, so "the device has
+		// an address" is asked of the links alone (fork #279). Upstream's
+		// bccd71570 dropped the older list of interface names that did this,
+		// and the fork's offline checks had relied on it.
+		static bool isLinkInterface(unsigned int flags)
+		{
+			return (flags & IFF_LOOPBACK) == 0 && (flags & IFF_POINTOPOINT) == 0
+				&& (flags & IFF_UP) != 0 && (flags & IFF_RUNNING) != 0;
+		}
+#endif
+
 		std::vector<std::string> queryIPAddresses()
 		{
 			std::vector<std::string> result;
@@ -326,11 +340,8 @@ namespace Utils
 					char addressBuffer[INET_ADDRSTRLEN];
 					inet_ntop(AF_INET, tmpAddrPtr, addressBuffer, INET_ADDRSTRLEN);
 
-					std::string ifName = ifa->ifa_name;
-					if ((ifa->ifa_flags & IFF_LOOPBACK) == 0)
-					{
+					if (isLinkInterface(ifa->ifa_flags))
 						result.push_back(std::string(addressBuffer));
-					}
 				}
 			}
 
@@ -353,11 +364,8 @@ namespace Utils
 						if (strncmp(addressBuffer, "fe80:", 5) == 0)
 							continue;
 
-						std::string ifName = ifa->ifa_name;
-						if ((ifa->ifa_flags & IFF_LOOPBACK) == 0)
-						{
+						if (isLinkInterface(ifa->ifa_flags))
 							result.push_back(std::string(addressBuffer));
-						}
 					}
 				}
 			}
@@ -366,6 +374,26 @@ namespace Utils
 				freeifaddrs(ifAddrStruct);
 #endif
 
+			return result;
+		}
+
+		std::vector<InterfaceAddress> queryInterfaceAddresses()
+		{
+			std::vector<InterfaceAddress> result;
+#if !WIN32 && !defined(DEVTEST)
+			struct ifaddrs* ifAddrStruct = NULL;
+			getifaddrs(&ifAddrStruct);
+			for (struct ifaddrs* ifa = ifAddrStruct; ifa != NULL; ifa = ifa->ifa_next)
+			{
+				if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET || (ifa->ifa_flags & IFF_LOOPBACK) != 0)
+					continue;
+				char addressBuffer[INET_ADDRSTRLEN];
+				inet_ntop(AF_INET, &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr, addressBuffer, INET_ADDRSTRLEN);
+				result.push_back(InterfaceAddress{ std::string(addressBuffer), std::string(ifa->ifa_name), isLinkInterface(ifa->ifa_flags) });
+			}
+			if (ifAddrStruct != NULL)
+				freeifaddrs(ifAddrStruct);
+#endif
 			return result;
 		}
 

@@ -66,6 +66,14 @@ namespace Utils
 
 		BatteryInformation queryBatteryInformation();
 
+		// One address on one interface, and whether that interface is a link
+		// of the device's own -- up, with a carrier, not loopback, not
+		// point-to-point -- as against a tunnel such as tailscale0, which
+		// keeps its fixed address whether or not any network carries it
+		// (fork #279). queryIPAddresses() is the physical ones, IPv4 first,
+		// and is what every "is the device connected" question reads.
+		struct InterfaceAddress { std::string address; std::string interface; bool physical; };
+		std::vector<InterfaceAddress> queryInterfaceAddresses();
 		std::vector<std::string> queryIPAddresses();
 		std::string queryIPAddress();
 		std::string getArchString();

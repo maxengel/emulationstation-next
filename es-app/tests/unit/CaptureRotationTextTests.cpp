@@ -6,15 +6,43 @@
 // gave a game's frame (fork #245, D-UI-081).
 TEST_CASE("the last SET_ROTATION line of a launch log gives the core's turns")
 {
-	CHECK(CaptureRotationText::turnsFromLog("[INFO] [Environ] SET_ROTATION: \"1\" (90 deg).\n") == 1);
-	CHECK(CaptureRotationText::turnsFromLog("[INFO] [Environ] SET_ROTATION: \"3\" (270 deg).\n") == 3);
-	CHECK(CaptureRotationText::turnsFromLog("[INFO] [Environ] SET_ROTATION: \"0\" (0 deg).\n") == 0);
+	const std::string load = "[INFO] === Build =======================================\n"
+	                         "[INFO] [Content] Content loading skipped. Implementation will load it on its own.\n";
+	CHECK(CaptureRotationText::turnsFromLog(load + "[INFO] [Environ] SET_ROTATION: \"1\" (90 deg).\n") == 1);
+	CHECK(CaptureRotationText::turnsFromLog(load + "[INFO] [Environ] SET_ROTATION: \"3\" (270 deg).\n") == 3);
+	CHECK(CaptureRotationText::turnsFromLog(load + "[INFO] [Environ] SET_ROTATION: \"0\" (0 deg).\n") == 0);
 	// the last one counts: a core that changed its mind
-	CHECK(CaptureRotationText::turnsFromLog("SET_ROTATION: \"1\" (90 deg).\nsomething\nSET_ROTATION: \"0\" (0 deg).\n") == 0);
+	CHECK(CaptureRotationText::turnsFromLog(load + "SET_ROTATION: \"1\" (90 deg).\nsomething\nSET_ROTATION: \"0\" (0 deg).\n") == 0);
 	// a log with no request is not a request for 0
-	CHECK(CaptureRotationText::turnsFromLog("[INFO] [Core]: Content loaded.\n") == -1);
+	CHECK(CaptureRotationText::turnsFromLog(load + "[INFO] [Core]: Content loaded.\n") == -1);
 	CHECK(CaptureRotationText::turnsFromLog("") == -1);
-	CHECK(CaptureRotationText::turnsFromLog("SET_ROTATION: \"x\"") == -1);
+	CHECK(CaptureRotationText::turnsFromLog(load + "SET_ROTATION: \"x\"") == -1);
+}
+
+// The file held every launch since it was last removed on a device whose
+// log level was none (fork #280): Ms. Pac-Man's four launches left "3" at
+// its end, and Aladdin, F-Zero and Dr. Mario were turned by it. A launch
+// starts at RetroArch's build banner -- not at "Loading content file",
+// which a core that loads its own content (fbneo, mame) never prints.
+TEST_CASE("only the last launch's section of the log counts")
+{
+	const std::string banner = "[INFO] === Build =======================================\n";
+	const std::string pacman = banner +
+	                           "[INFO] [Content] Content loading skipped. Implementation will load it on its own.\n"
+	                           "[INFO] [Environ] SET_ROTATION: \"3\" (270 deg).\n"
+	                           "[INFO] [Runtime] Content ran for a total of: 00 hours, 05 minutes, 03 seconds.\n";
+	const std::string drmario = banner +
+	                            "[INFO] [Content] Loading content file: \"/storage/roms/nes/Dr. Mario.zip#Dr. Mario.nes\".\n"
+	                            "[INFO] [Core] Content loaded.\n";
+	// an earlier launch's line is not this launch's
+	CHECK(CaptureRotationText::turnsFromLog(pacman + drmario) == -1);
+	CHECK(CaptureRotationText::turnsFromLog(pacman + pacman + drmario) == -1);
+	// this launch's own line is
+	CHECK(CaptureRotationText::turnsFromLog(drmario + pacman) == 3);
+	CHECK(CaptureRotationText::turnsFromLog(drmario + drmario + "[INFO] [Environ] SET_ROTATION: \"1\" (90 deg).\n") == 1);
+	// a rotation line with no banner before it belongs to no launch
+	CHECK(CaptureRotationText::turnsFromLog("[INFO] [Environ] SET_ROTATION: \"3\" (270 deg).\n") == -1);
+	CHECK(CaptureRotationText::turnsFromLog("[INFO] [Content] Loading content file: \"x\".\n[INFO] [Environ] SET_ROTATION: \"3\" (270 deg).\n") == -1);
 }
 
 TEST_CASE("the display's turn is the core's, unless rotation is forbidden, plus the player's own")
