@@ -475,6 +475,15 @@ void GuiMenu::openResetOptions()
 		}, _("NO"), nullptr));
 	});
 
+	if (Utils::Platform::GetEnv("DEVICE_RK817_FUEL_GAUGE") == "true") {
+		s->addEntry(_("RESET BATTERY FUEL GAUGE"), true, [window] {
+		window->pushGui(new GuiMsgBox(window, _("WARNING: THE PMIC FUEL GAUGE WILL BE RESET AND THE SYSTEM WILL POWER OFF!\n\nLEAVE THE CHARGER UNPLUGGED AND POWER THE DEVICE BACK ON AFTER A FEW SECONDS. THE BATTERY LEVEL IS RE-ESTIMATED FROM THE RESTING BATTERY VOLTAGE AND BECOMES ACCURATE AGAIN AFTER A FULL CHARGE.\n\nRESET FUEL GAUGE AND POWER OFF?"), _("YES"),
+			[] {
+			Utils::Platform::runSystemCommand("/usr/bin/run \"/usr/bin/factoryreset rk817-fuelgauge\"", "", nullptr);
+			}, _("NO"), nullptr));
+		});
+	}
+
 	s->addEntry(_("FACTORY RESET"), true, [window] {
 	window->pushGui(new GuiMsgBox(window, _("WARNING: YOUR DATA AND ALL OTHER CONFIGURATIONS WILL BE RESET TO DEFAULTS!\n\nIF YOU WANT TO KEEP YOUR SETTINGS MAKE A BACKUP AND SAVE IT ON AN EXTERNAL DRIVE BEFORE RUNNING THIS OPTION!\n\nEJECT YOUR GAME CARD BEFORE PROCEEDING!\n\nRESET SYSTEM AND RESTART?"), _("YES"),
 		[window] {
@@ -954,6 +963,21 @@ void GuiMenu::openDeveloperSettings()
 	
 	s->addSwitch(_("SHOW FRAMERATE"), _("Also turns on the emulator's native FPS counter, if available."), "DrawFramerate", true, nullptr);
 	s->addSwitch(_("VSYNC"), "VSync", true, [] { Renderer::setSwapInterval(); });
+	
+	// Antialiasing (solves flickering issues with AMD on Windows in some cases)
+	auto antiAliasing = std::make_shared<OptionListComponent<int>>(mWindow, _("ANTI-ALIASING (MSAA)"), false);
+	antiAliasing->add(_("DISABLED"), 0, Settings::getInstance()->getInt("AntiAliasing") == 0);
+	antiAliasing->add("2X", 2, Settings::getInstance()->getInt("AntiAliasing") == 2);
+	antiAliasing->add("4X", 4, Settings::getInstance()->getInt("AntiAliasing") == 4);
+	if (!antiAliasing->hasSelection())
+		antiAliasing->selectFirstItem();
+	s->addWithLabel(_("ANTI-ALIASING (MSAA)"), antiAliasing);
+	s->addSaveFunc([s, antiAliasing]
+		{
+			if (Settings::getInstance()->setInt("AntiAliasing", antiAliasing->getSelected()))
+				s->setVariable("reboot", true);
+		});
+
 	auto fpsLimit = std::make_shared<OptionListComponent<int>>(mWindow, _("FPS LIMIT"), false);
 	fpsLimit->add(_("NO"), 0, Settings::FpsLimit() == 0);
 	fpsLimit->add("25", 25, Settings::FpsLimit() == 25);
@@ -1305,6 +1329,11 @@ void GuiMenu::openDeveloperSettings()
 	s->addWithLabel(_("CONTROL EMULATIONSTATION WITH FIRST JOYSTICK ONLY"), firstJoystickOnly);
 	s->addSaveFunc([this, firstJoystickOnly] { Settings::getInstance()->setBool("FirstJoystickOnly", firstJoystickOnly->getState()); });
 
+  // Keep default behavior, but make it configurable
+  s->addSwitch(_("RIGHT ANALOG STICK CHANGES VOLUME"),
+             _("Move the right stick up/down to raise or lower the audio volume."),
+             "RightStickVolume", true, nullptr);
+
 //#if !defined(WIN32)
 	{
 	  auto gun_mt = std::make_shared<SliderComponent>(mWindow, 0.f, 10.f, 0.1f, "%");
@@ -1464,6 +1493,21 @@ void GuiMenu::openUpdatesSettings(bool selectTorrentService)
 				SystemConf::getInstance()->saveSystemConf();
 		});
 
+#if BATOCERA
+		std::string update_architecture;
+		if (ApiSystem::getInstance()->canArchitectureUpdate(update_architecture)) {
+		  auto architecture_update_switch = std::make_shared<SwitchComponent>(mWindow);
+		  architecture_update_switch->setState(SystemConf::getInstance()->get("updates.architecture") == "1");
+		  updateGui->addWithLabel(_("ARCHITECTURE UPDATE") + " (" + update_architecture + ")", architecture_update_switch);
+
+		  architecture_update_switch->setOnChangedCallback([this, architecture_update_switch]()
+		  {
+		    SystemConf::getInstance()->set("updates.architecture", architecture_update_switch->getState() ? "1" : "");
+		    SystemConf::getInstance()->saveSystemConf();
+		  });
+		}
+#endif
+
 		// Start update
 		updateGui->addEntry(GuiUpdate::state == GuiUpdateState::State::UPDATE_READY ? _("APPLY UPDATE") : _("START UPDATE"), true, [this]
 		{
@@ -1622,12 +1666,12 @@ void GuiMenu::openSystemSettings()
 	if (language.empty()) 
 		language = "en_US";
 
-	language_choice->add("ARABIC",               "ar_YE", language == "ar_YE");
+	language_choice->add("العربية",               "ar_YE", language == "ar_YE");
 	language_choice->add("CATALÀ",               "ca_ES", language == "ca_ES");
 	language_choice->add("ČEŠTINA",                "cs_CZ", language == "cs_CZ");
 	language_choice->add("CYMRAEG",              "cy_GB", language == "cy_GB");
 	language_choice->add("DEUTSCH", 	     "de_DE", language == "de_DE");
-	language_choice->add("GREEK",                "el_GR", language == "el_GR");
+	language_choice->add("ΕΛΛΗΝΙΚΆ",                "el_GR", language == "el_GR");
 	language_choice->add("ENGLISH (US)", 	     "en_US", language == "en_US" || language == "en");
 	language_choice->add("ENGLISH (UK)", 	     "en_GB", language == "en_GB");
 	language_choice->add("ESPAÑOL", 	     "es_ES", language == "es_ES" || language == "es");
@@ -1637,24 +1681,24 @@ void GuiMenu::openSystemSettings()
 	language_choice->add("FRANÇAIS",             "fr_FR", language == "fr_FR" || language == "fr");
 	language_choice->add("GALEGO",               "gl_ES", language == "gl_ES");
 	language_choice->add("עברית",                "he_IL", language == "he_IL");
-	language_choice->add("HUNGARIAN",            "hu_HU", language == "hu_HU");
+	language_choice->add("HRVATSKI",            "hu_HU", language == "hu_HU");
 	language_choice->add("BAHASA INDONESIA",     "id_ID", language == "id_ID");
 	language_choice->add("ITALIANO",             "it_IT", language == "it_IT");
-	language_choice->add("JAPANESE", 	     "ja_JP", language == "ja_JP");
-	language_choice->add("KOREAN",   	     "ko_KR", language == "ko_KR" || language == "ko");
-	language_choice->add("NORWEGIAN BOKMAL",     "nb_NO", language == "nb_NO");
-	language_choice->add("DUTCH",                "nl_NL", language == "nl_NL");
-	language_choice->add("NORWEGIAN",            "nn_NO", language == "nn_NO");
+	language_choice->add("日本語", 	     "ja_JP", language == "ja_JP");
+	language_choice->add("한국어",   	     "ko_KR", language == "ko_KR" || language == "ko");
+	language_choice->add("NORSK BOKMÅL",     "nb_NO", language == "nb_NO");
+	language_choice->add("NEDERLANDS",                "nl_NL", language == "nl_NL");
+	language_choice->add("NORSK NYNORSK",            "nn_NO", language == "nn_NO");
 	language_choice->add("OCCITAN",              "oc_FR", language == "oc_FR");
-	language_choice->add("POLISH",               "pl_PL", language == "pl_PL");
+	language_choice->add("POLSKI",               "pl_PL", language == "pl_PL");
 	language_choice->add("PORTUGUÊS BRASILEIRO", "pt_BR", language == "pt_BR");
-	language_choice->add("PORTUGUÊS PORTUGAL",   "pt_PT", language == "pt_PT");
+	language_choice->add("PORTUGUÊS",   "pt_PT", language == "pt_PT");
 	language_choice->add("ROMÂNĂ",               "ro_RO", language == "ro_RO");
 	language_choice->add("РУССКИЙ",              "ru_RU", language == "ru_RU");
 	language_choice->add("SLOVENČINA", 	     "sk_SK", language == "sk_SK");
 	language_choice->add("SVENSKA", 	     "sv_SE", language == "sv_SE");
 	language_choice->add("TÜRKÇE",  	     "tr_TR", language == "tr_TR");
-	language_choice->add("Українська",           "uk_UA", language == "uk_UA");
+	language_choice->add("УКРАЇНСЬКА",           "uk_UA", language == "uk_UA");
 	language_choice->add("TIẾNG VIỆT",           "vi_VN", language == "vi_VN");
 	language_choice->add("简体中文", 	     "zh_CN", language == "zh_CN");
 	language_choice->add("正體中文", 	     "zh_TW", language == "zh_TW");
@@ -2060,12 +2104,15 @@ void GuiMenu::openSystemSettings()
 		if (!lfound)
 			optionsColors->add(selectedColors, selectedColors, true);
 		s->addWithLabel(_("LED COLOR"), optionsColors);
-		s->addSaveFunc([this, optionsColors, selectedColors]
-		{
-			if (optionsColors->changed()) {
-				SystemConf::getInstance()->set("led.color", optionsColors->getSelected());
-				Utils::Platform::runSystemCommand("/usr/bin/sh -lc \"/usr/bin/ledcontrol " + optionsColors->getSelected() + "\"" , "", nullptr);
-			}
+
+		optionsColors->setSelectedChangedCallback([](const std::string& newColor) {
+			SystemConf::getInstance()->set("led.color", newColor);
+			SystemConf::getInstance()->saveSystemConf();
+			Utils::Platform::runSystemCommand("/usr/bin/sh -lc \"/usr/bin/ledcontrol " + newColor + "\"", "", nullptr);
+		});
+
+		s->addSaveFunc([optionsColors] {
+			SystemConf::getInstance()->set("led.color", optionsColors->getSelected());
 		});
 	}
 
@@ -2079,13 +2126,16 @@ void GuiMenu::openSystemSettings()
 	        optionsLEDBrightness->add(_("MID"),"mid", selectedLEDBrightness == "mid");
 	        optionsLEDBrightness->add(_("MIN"),"min", selectedLEDBrightness == "min");
 	        s->addWithLabel(_("LED BRIGHTNESS"), optionsLEDBrightness);
-	        s->addSaveFunc([this, optionsLEDBrightness, selectedLEDBrightness]
-	        {
-	                if (optionsLEDBrightness->changed()) {
-	                        SystemConf::getInstance()->set("led.brightness", optionsLEDBrightness->getSelected());
-	                        Utils::Platform::runSystemCommand("/usr/bin/ledcontrol brightness " + optionsLEDBrightness->getSelected(), "", nullptr);
-	                }
-	        });
+
+		optionsLEDBrightness->setSelectedChangedCallback([](const std::string& newBrightness) {
+			SystemConf::getInstance()->set("led.brightness", newBrightness);
+			SystemConf::getInstance()->saveSystemConf();
+			Utils::Platform::runSystemCommand("/usr/bin/ledcontrol brightness " + newBrightness, "", nullptr);
+		});
+
+		s->addSaveFunc([optionsLEDBrightness] {
+			SystemConf::getInstance()->set("led.brightness", optionsLEDBrightness->getSelected());
+		});
 	}
 
 	if (Utils::Platform::GetEnv("DEVICE_ANALOG_STICKS_LED_CONTROL") == "true"){
@@ -2356,7 +2406,7 @@ void GuiMenu::openSystemSettings()
 		dtbOverlayItem(mWindow, s, "custom");
 	}
 
-#if defined(AMD64) || defined(RK3326) || defined(RK3566) || defined(RK3588) || defined(RK3399) || defined(SM6115) || defined(SM8250)
+#if defined(AMD64) || defined(RK3326) || defined(RK3566) || defined(RK3588) || defined(RK3399) || defined(SM6115) || defined(SM8250) || defined(H700)
 	// Allow user control over how the device sleeps - only show for devices with real suspend enabled
 	s->addGroup(_("SUSPEND"));
 	auto optionsSleep = std::make_shared<OptionListComponent<std::string> >(mWindow, _("DEVICE SUSPEND MODE"), false);
@@ -2536,7 +2586,7 @@ void GuiMenu::openSystemSettings()
 			// audio device
 			auto optionsAudio = std::make_shared<OptionListComponent<std::string> >(mWindow, _("AUDIO OUTPUT"), false);
 
-			std::string selectedAudio = ApiSystem::getInstance()->getCurrentAudioOutputDevice();
+			std::string selectedAudio = SystemConf::getInstance()->get("audio.device");
 			if (selectedAudio.empty())
 				selectedAudio = "auto";
 
@@ -2585,7 +2635,7 @@ void GuiMenu::openSystemSettings()
 		{
 			auto optionsAudioProfile = std::make_shared<OptionListComponent<std::string> >(mWindow, _("AUDIO PROFILE"), false);
 
-			std::string selectedAudioProfile = ApiSystem::getInstance()->getCurrentAudioOutputProfile();
+			std::string selectedAudioProfile = SystemConf::getInstance()->get("audio.profile");
 			if (selectedAudioProfile.empty())
 				selectedAudioProfile = "auto";
 
@@ -2874,7 +2924,7 @@ void GuiMenu::openSystemSettings()
         s->addEntry(_("MULTISCREENS"), true, [this] { openMultiScreensSettings(); });
 #endif
 
-#if defined(BATOCERA) || defined(ROCKNIX)
+#ifdef BATOCERA
 	int red, green, blue;
 	bool ledSupported = ApiSystem::getInstance()->getLED(red, green, blue);
 
@@ -3262,7 +3312,7 @@ void GuiMenu::openSystemOptionsConfiguration(Window* mWindow, std::string config
 	GuiSettings* guiSystemOptions = new GuiSettings(mWindow, _("SYSTEM OPTIONS").c_str());
 	bool cfound = false;
 
-#if defined(S922X) || defined(RK3588) || defined(RK3399)|| defined(RK3576) || defined(SM6115) || defined(SM8250) || defined(SM8550) || defined(SM8650)
+#if defined(S922X) || defined(RK3588) || defined(RK3399)|| defined(RK3576)|| defined(SM4450) || defined(SM6115) || defined(SM8250) || defined(SM8550) || defined(SM8650)
 	// Core chooser
 	auto cores_used = std::make_shared<OptionListComponent<std::string>>(mWindow, _("CORES USED"));
 	cores_used->addRange({ {("DEFAULT"), "" }, { _("ALL"), "all" },{ _("BIG") , "big" },{ _("LITTLE") , "little" } }, SystemConf::getInstance()->get(configName + ".cores"));
@@ -5571,19 +5621,19 @@ void GuiMenu::openGamesSettings()
 			lang_choices->add("FRANÇAIS", "Fr", currentLang == "Fr");
 			lang_choices->add("PORTUGUÊS", "Pt", currentLang == "Pt");
 			lang_choices->add("DEUTSCH", "De", currentLang == "De");
-			lang_choices->add("GREEK", "El", currentLang == "El");
+			lang_choices->add("ΕΛΛΗΝΙΚΆ", "El", currentLang == "El");
 			lang_choices->add("ESPAÑOL", "Es", currentLang == "Es");
-			lang_choices->add("CZECH", "Cs", currentLang == "Cs");
-			lang_choices->add("DANISH", "Da", currentLang == "Da");
-			lang_choices->add("CROATIAN", "Hr", currentLang == "Hr");
-			lang_choices->add("HUNGARIAN", "Hu", currentLang == "Hu");
+			lang_choices->add("ČEŠTINA", "Cs", currentLang == "Cs");
+			lang_choices->add("DANSK", "Da", currentLang == "Da");
+			lang_choices->add("HRVATSKI", "Hr", currentLang == "Hr");
+			lang_choices->add("MAGYAR", "Hu", currentLang == "Hu");
 			lang_choices->add("ITALIANO", "It", currentLang == "It");
-			lang_choices->add("JAPANESE", "Ja", currentLang == "Ja");
-			lang_choices->add("KOREAN", "Ko", currentLang == "Ko");
-			lang_choices->add("DUTCH", "Nl", currentLang == "Nl");
-			lang_choices->add("NORWEGIAN", "Nn", currentLang == "Nn");
-			lang_choices->add("POLISH", "Pl", currentLang == "Pl");
-			lang_choices->add("ROMANIAN", "Ro", currentLang == "Ro");
+			lang_choices->add("日本語", "Ja", currentLang == "Ja");
+			lang_choices->add("한국어", "Ko", currentLang == "Ko");
+			lang_choices->add("NEDERLANDS", "Nl", currentLang == "Nl");
+			lang_choices->add("NORSK", "Nn", currentLang == "Nn");
+			lang_choices->add("POLSKI", "Pl", currentLang == "Pl");
+			lang_choices->add("ROMÂNĂ", "Ro", currentLang == "Ro");
 			lang_choices->add("РУССКИЙ", "Ru", currentLang == "Ru");
 			lang_choices->add("SVENSKA", "Sv", currentLang == "Sv");
 			lang_choices->add("TÜRKÇE", "Tr", currentLang == "Tr");
@@ -8851,10 +8901,12 @@ std::vector<std::pair<std::string, std::string>> getCountryCodes()
 // finds nothing to write to. The strings are looked up here, on the
 // interface thread, so the workers carry text and nothing else.
 static void networkSettingsFillIn(Window* window, GuiSettings* s,
-	const std::shared_ptr<TextComponent>& ipRow, const std::shared_ptr<TextComponent>& statusRow)
+	const std::shared_ptr<TextComponent>& ipRow, const std::shared_ptr<std::vector<std::string>>& ipList,
+	const std::shared_ptr<TextComponent>& statusRow)
 {
 	std::weak_ptr<ComponentList> list = s->getMenu().getList();
 	std::weak_ptr<TextComponent> ip = ipRow;
+	std::weak_ptr<std::vector<std::string>> addresses = ipList;
 	std::weak_ptr<TextComponent> status = statusRow;
 	const std::string connected = _("CONNECTED");
 	const std::string notConnected = _("NOT CONNECTED");
@@ -8873,10 +8925,19 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 		rows->onSizeChanged();
 	};
 
-	std::thread([window, ip, fill]
+	std::thread([window, ip, addresses, notConnected, fill]
 	{
-		const std::string address = ApiSystem::getInstance()->getIpAddress();
-		window->postToUiThread([ip, address, fill] { fill(ip, address); });
+		const std::vector<std::string> found = ApiSystem::getInstance()->getIpAddresses();
+		window->postToUiThread([ip, addresses, found, notConnected, fill]
+		{
+			if (auto held = addresses.lock())
+				*held = found;
+
+			if (found.empty())
+				fill(ip, notConnected);
+			else
+				fill(ip, found.size() == 1 ? found[0] : found[0] + " (+)");
+		});
 	}).detach();
 
 	std::thread([window, status, connected, notConnected, fill]
@@ -8965,9 +9026,24 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	auto s = new GuiSettings(mWindow, _("NETWORK SETTINGS").c_str());
 	s->addGroup(_("INFORMATION"));
 
-	// Both arrive later; see networkSettingsFillIn.
+	// Both arrive later; see networkSettingsFillIn. The address row keeps
+	// upstream's shape once it is in: NOT CONNECTED, the one address, or the
+	// first with (+) after it and A listing them all -- filled from the same
+	// worker, since getifaddrs is what #103 moved off the interface thread.
 	auto ip = std::make_shared<TextComponent>(mWindow, "", font, color);
-	s->addWithLabel(_("IP ADDRESS"), ip);
+	auto ipList = std::make_shared<std::vector<std::string>>();
+	s->addWithLabel(_("IP ADDRESS"), ip, false, [window, ipList]
+	{
+		if (ipList->size() < 2)
+			return;
+
+		std::string text = _("AVAILABLE IP ADDRESSES:\n\n");
+		for (const auto& address : *ipList)
+			text += address + "\n";
+		text.pop_back();
+
+		window->pushGui(new GuiMsgBox(window, text, _("OK"), nullptr));
+	});
 
 	// What this device is called on the network. system.hostname keeps whatever
 	// the player typed; the network only takes letters, digits and hyphens, so
@@ -8982,7 +9058,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	auto status = std::make_shared<TextComponent>(mWindow, _("CHECKING..."), font, color);
 	s->addWithLabel(_("INTERNET STATUS"), status);
 
-	networkSettingsFillIn(window, s, ip, status);
+	networkSettingsFillIn(window, s, ip, ipList, status);
 
 	// Network Indicator
 	auto networkIndicator = std::make_shared<SwitchComponent>(mWindow);
@@ -9111,29 +9187,10 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	optionsAdhocID->add(_("3 (CLIENT 2)"),"3", selectedAdhocID == "3");
 	optionsAdhocID->add(_("4 (CLIENT 3)"),"4", selectedAdhocID == "4");
 
-	auto optionsChannels = std::make_shared<OptionListComponent<std::string> >(mWindow, _("LOCAL NETWORK CHANNEL"), false);
-
-	std::vector<std::string> availableChannels = ApiSystem::getInstance()->getAvailableChannels();
-	std::string selectedChannel = SystemConf::getInstance()->get("wifi.adhoc.channel");
-
-	if (selectedChannel.empty())
-		selectedChannel = "6";
-
-	bool wfound = false;
-	for (auto it = availableChannels.begin(); it != availableChannels.end(); it++)
-	{
-		optionsChannels->add((*it), (*it), selectedChannel == (*it));
-		if (selectedChannel == (*it))
-			wfound = true;
-	}
-
-	if (!wfound)
-		optionsChannels->add(selectedChannel, selectedChannel, true);
-
 	if (baseAdhocEnabled)
 	{
 		s->addWithLabel(_("LOCAL PLAY ID"), optionsAdhocID);
-		s->addWithLabel(_("LOCAL NETWORK CHANNEL"), optionsChannels);
+		s->addSaveFunc([optionsAdhocID] { SystemConf::getInstance()->set("wifi.adhoc.id", optionsAdhocID->getSelected()); });
 	}
 
 
@@ -9210,13 +9267,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 		}
 	});
 
-	enable_adhoc->setOnChangedCallback([this, s, window, baseAdhocEnabled, baseWifiEnabled, enable_wifi, enable_adhoc, optionsAdhocID, selectedAdhocID, optionsChannels, selectedChannel]
+	enable_adhoc->setOnChangedCallback([this, s, window, baseAdhocEnabled, baseWifiEnabled, enable_wifi, enable_adhoc, optionsAdhocID, selectedAdhocID]
 	{
 		bool wifienabled = enable_wifi->getState();
 		bool adhocenabled = enable_adhoc->getState();
 
 		SystemConf::getInstance()->set("wifi.adhoc.id", optionsAdhocID->getSelected());
-		SystemConf::getInstance()->set("wifi.adhoc.channel", optionsChannels->getSelected());
 
 		SystemConf::getInstance()->set("global.netplay.host", "192.168.80.1");
 		SystemConf::getInstance()->set("global.netplay.port", "55435");

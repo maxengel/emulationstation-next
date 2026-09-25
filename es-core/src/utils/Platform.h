@@ -66,6 +66,7 @@ namespace Utils
 
 		BatteryInformation queryBatteryInformation();
 
+		std::vector<std::string> queryIPAddresses();
 		std::string queryIPAddress();
 		std::string getArchString();
 		unsigned long long getTotalSystemMemory();

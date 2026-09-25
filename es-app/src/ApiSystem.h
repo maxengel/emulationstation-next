@@ -213,6 +213,7 @@ public:
     virtual bool ping();
     virtual bool canUpdate(std::vector<std::string>& output);
     virtual bool canLocalUpdate(); // update from a local media
+    virtual bool canArchitectureUpdate(std::string& architecture); // allow to upgrade architectures
 	virtual void setReadyFlag(bool ready = true);
 	virtual bool isReadyFlagSet();
 
@@ -276,6 +277,7 @@ public:
 	// SystemConf before trusting either.
 	bool joinWifiNetwork(const std::string& name);
 
+	virtual std::vector<std::string> getIpAddresses();
 	virtual std::string getIpAddress();
 	virtual bool isWifiAPModeSupported();
 

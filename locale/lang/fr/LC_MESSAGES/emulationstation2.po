@@ -2032,6 +2032,9 @@ msgstr "Active également le compteur d’IPS de l’émulateur si disponible."
 msgid "VSYNC"
 msgstr "SYNCHRONISATION VERTICALE"
 
+msgid "ANTI-ALIASING (MSAA)"
+msgstr "ANTICRÉNELAGE (MSAA)"
+
 msgid "FPS LIMIT"
 msgstr "LIMITE D’IPS"
 
@@ -2204,6 +2207,12 @@ msgstr ""
 msgid "CONTROL EMULATIONSTATION WITH FIRST JOYSTICK ONLY"
 msgstr "CONTRÔLER EMULATIONSTATION AVEC LA 1ÈRE MANETTE UNIQUEMENT"
 
+msgid "RIGHT ANALOG STICK CHANGES VOLUME"
+msgstr "MODIFICATION DU VOLUME PAR LE STICK ANALOGIQUE DROIT"
+
+msgid "Move the right stick up/down to raise or lower the audio volume."
+msgstr "Déplacez le joystick droit vers le haut/bas pour changer le volume audio."
+
 msgid "GUN MOVE TOLERENCE"
 msgstr "TOLÉRANCE DE MOUVEMENT DES PISTOLETS"
 
@@ -2273,6 +2282,9 @@ msgstr "VÉRIFIER LES MISES À JOUR"
 
 msgid "UPDATE TYPE"
 msgstr "TYPE DE MISE À JOUR"
+
+msgid "ARCHITECTURE UPDATE"
+msgstr "MISE À JOUR DE L'ARCHITECTURE"
 
 msgid "APPLY UPDATE"
 msgstr "APPLIQUER LA MISE À JOUR"
@@ -2908,6 +2920,9 @@ msgstr "ACTIVER LE SON DES VIDÉOS"
 msgid "IP ADDRESS"
 msgstr "ADRESSE IP"
 
+msgid "AVAILABLE IP ADDRESSES:\n\n"
+msgstr "ADRESSES IP DISPONIBLES :\n\n"
+
 msgid "CONNECTED"
 msgstr "CONNECTÉ"
 
@@ -3501,7 +3516,7 @@ msgstr "4 joueurs"
 msgid "never played"
 msgstr "jamais joué"
 
-msgid "retroachievements"
+msgid "RetroAchievements"
 msgstr "RetroAchievements"
 
 msgid "arcade"
