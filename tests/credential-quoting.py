@@ -53,8 +53,32 @@ def win32_only_lines(text):
             out.add(n)
     return out
 SITE = re.compile(r'"((?:timeout \d+ )?(?:/usr/bin/)?(?:%s)) (?:\\")?"\s*\+\s*' % "|".join(re.escape(c) for c in CREDENTIAL_COMMANDS))
-STATEMENT_END = re.compile(r';\s*\n')
 OPERAND = re.compile(r'\+\s*([A-Za-z_][\w:]*)\s*(\(?)')
+# The calls that make an operand safe: everything else spliced in -- a bare
+# name or any other call, SystemConf::getInstance()->get(...) included -- is a
+# value handed to the shell as typed. The first cut accepted any call, which
+# is how "--host --port " + SystemConf::getInstance()->get(...) read as quoted.
+QUOTING_CALLS = ("Utils::String::shellQuote", "cloudShellQuote", "std::to_string", "std::string")
+
+
+def statement_after(text, start):
+    """The statement from start to its first semicolon outside a string
+    literal -- a ';' inside a command string ("2>&1; echo") or after a
+    trailing comment must not end it early or late."""
+    i, n, in_str = start, len(text), False
+    while i < n:
+        c = text[i]
+        if in_str:
+            if c == "\\":
+                i += 2; continue
+            if c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == ";":
+            return text[start:i]
+        i += 1
+    return text[start:]
 
 
 def main():
@@ -72,10 +96,10 @@ def main():
                     if text.count("\n", 0, m.start()) + 1 in skip:
                         continue
                     sites += 1
-                    end = STATEMENT_END.search(text, m.end())
-                    statement = text[m.start():end.end() if end else len(text)]
+                    statement = statement_after(text, m.start())
                     line = text.count("\n", 0, m.start()) + 1
-                    bad = [o.group(1) for o in OPERAND.finditer(statement) if not o.group(2)]
+                    bad = [o.group(1) for o in OPERAND.finditer(statement)
+                           if not (o.group(2) and o.group(1) in QUOTING_CALLS)]
                     if bad:
                         bare.append("%s:%d  %s (bare: %s)" % (os.path.relpath(path, root), line, m.group(1), ", ".join(bad)))
     setrootpass = sum(1 for _ in re.finditer(r'"setrootpass "', "\n".join(
