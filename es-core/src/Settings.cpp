@@ -363,7 +363,13 @@ void Settings::setDefaults()
 
 	mBoolMap["ShowFilenames"] = false;
 
-#if defined(_WIN32) || defined(X86) || defined(X86_64)
+// ROCKNIX hides its window through a game on every architecture. With the
+// window kept (the desktop default on x86), the interface only raises it
+// once the game has quit, and under sway the game's last frame stayed on
+// the panel with the interface alive beneath it -- a minute and more on the
+// 640x480 QA guest, the carousel back the moment HideWindow was true. Real
+// x86 handhelds take the same path (fork #239).
+#if defined(_WIN32) || ((defined(X86) || defined(X86_64)) && !ROCKNIX)
 	mBoolMap["HideWindow"] = false;
 #else
 	mBoolMap["HideWindow"] = true;
