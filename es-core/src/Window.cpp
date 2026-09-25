@@ -292,10 +292,11 @@ void Window::input(InputConfig* config, Input input)
 // Notification messages
 static std::mutex mNotificationMessagesLock;
 
-void Window::displayNotificationMessage(std::string message, int duration)
+// The default duration of a toast, in ms: the "display titles" setting
+// within 2..120 s, else 10 s. Shared by displayNotificationMessage and the
+// re-queue in createAsyncNotificationComponent.
+static int notificationDuration(int duration)
 {
-	std::unique_lock<std::mutex> lock(mNotificationMessagesLock);
-
 	if (duration <= 0)
 	{
 		duration = Settings::getInstance()->getInt("audio.display_titles_time");
@@ -304,6 +305,14 @@ void Window::displayNotificationMessage(std::string message, int duration)
 
 		duration *= 1000;
 	}
+	return duration;
+}
+
+void Window::displayNotificationMessage(std::string message, int duration)
+{
+	std::unique_lock<std::mutex> lock(mNotificationMessagesLock);
+
+	duration = notificationDuration(duration);
 
 	NotificationMessage msg;
 	msg.first = message;
@@ -317,6 +326,14 @@ void Window::processNotificationMessages()
 	std::unique_lock<std::mutex> lock(mNotificationMessagesLock);
 
 	if (mNotificationMessages.empty())
+		return;
+
+	// One floating surface at a time (fork #283, D-UI-093): a toast waits
+	// while a progress card is up -- both sit at the top centre, and the
+	// SENT toast drew over the sync card on a handheld -- and shows once
+	// the card has gone. Nothing is dropped; the order is the order things
+	// happened.
+	if (!mAsyncNotificationComponent.empty())
 		return;
 	
 	NotificationMessage msg = mNotificationMessages.back();
@@ -1129,6 +1146,18 @@ void Window::renderScreenSaver()
 AsyncNotificationComponent* Window::createAsyncNotificationComponent(bool actionLine)
 {
 	std::unique_lock<std::mutex> lock(mNotificationMessagesLock);
+
+	// The other half of one-surface-at-a-time (fork #283, D-UI-093): a card
+	// created while a toast is up takes the toast's place, and the toast's
+	// words go back on the queue to show after the card -- a toast is short
+	// and the card's run would otherwise pass unseen behind it. The queue is
+	// read from its back, so a toast returned last shows first.
+	if (!mNotificationPopups.empty())
+	{
+		for (auto ip : mNotificationPopups)
+			mNotificationMessages.push_back(NotificationMessage(ip->getMessage(), notificationDuration(-1)));
+		stopNotificationPopups();
+	}
 
 	AsyncNotificationComponent* pc = new AsyncNotificationComponent(this, actionLine);
 	mAsyncNotificationComponent.push_back(pc);
