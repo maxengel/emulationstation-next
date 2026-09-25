@@ -6093,7 +6093,7 @@ static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& curr
 			{
 				std::string why, rc;
 				for (auto& line : Utils::Platform::GetShOutputLines(
-					"timeout 30 /usr/bin/cloud_setup --set-syncpath \"" + trimmed + "\" 2>&1; echo \"RC=$?\""))
+					"timeout 30 /usr/bin/cloud_setup --set-syncpath " + Utils::String::shellQuote(trimmed) + " 2>&1; echo \"RC=$?\"")) // fork #198
 				{
 					const std::string l = Utils::String::trim(line);
 					if (Utils::String::startsWith(l, "RC="))
