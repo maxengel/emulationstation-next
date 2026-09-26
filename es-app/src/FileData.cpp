@@ -1075,19 +1075,30 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	const unsigned generation = ++sExitGeneration;
 	std::thread([window, capture, exitSync, generation]
 	{
+		bool captureFailed = false;
 		if (!capture.empty())
 		{
 			const int captureCode = ApiSystem::executeScriptLegacy(capture, nullptr).second;
 			if (captureCode != 0)
+			{
 				LOG(LogWarning) << "cloud_capture exited " << captureCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
+				captureFailed = true;
+			}
 		}
-		window->postToUiThread([window, exitSync, generation]
+		window->postToUiThread([window, exitSync, generation, captureFailed]
 		{
 			if (generation != sExitGeneration.load() || mRunningGame != nullptr)
 			{
 				LOG(LogInfo) << "exit: another game was launched since; its exit syncs";
 				return;
 			}
+			// A capture that could not record says so once, as a toast, in
+			// the player's words (fork #293 item 3, D-UI-095): what did not
+			// happen and what is in place. Said before the sync card starts,
+			// so it shows after the card (D-UI-093 puts a toast's words back
+			// on the queue when a card takes the screen).
+			if (captureFailed)
+				window->displayNotificationMessage(_U("\uF0C2  ") + _("COULDN'T RECORD THIS SESSION'S SAVES. THEY'RE STILL ON THIS DEVICE."));
 			if (exitSync && !ThreadedCloudSync::isRunning())
 			{
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent --automatic",

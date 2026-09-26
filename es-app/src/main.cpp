@@ -516,6 +516,10 @@ void playVideo()
 	window.deinit(true);
 }
 
+// The startup game's capture could not record: said as a toast once the
+// window is up, in the words the exit after any game uses (fork #293).
+static bool sStartupCaptureFailed = false;
+
 void launchStartupGame()
 {
 	auto gamePath = SystemConf::getInstance()->get("global.bootgame.path");
@@ -553,7 +557,12 @@ void launchStartupGame()
 				+ " --exit "     + std::to_string(exitCode);
 			int captureCode = ApiSystem::executeScriptLegacy(capture, nullptr).second;
 			if (captureCode != 0)
+			{
 				LOG(LogWarning) << "cloud_capture exited " << captureCode << " after the startup game -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
+				// Said once the window exists (fork #293 item 3): this runs
+				// before the window is created.
+				sStartupCaptureFailed = true;
+			}
 		}
 	}
 }
@@ -1048,6 +1057,8 @@ int main(int argc, char* argv[])
 	// would turn the player's YES into "Another cloud sync is already
 	// running. Skipped." in a console. That restore brings the saves down
 	// anyway, so nothing is lost by sitting this boot out.
+	if (sStartupCaptureFailed)
+		window.displayNotificationMessage(_U("\uF0C2  ") + _("COULDN'T RECORD THIS SESSION'S SAVES. THEY'RE STILL ON THIS DEVICE."));
 	if (!journeyPending)
 		startStartupSavesSync(&window);
 
