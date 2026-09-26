@@ -82,6 +82,12 @@ FileData* FileData::mRunningGame = nullptr;
 // capture, then the exit sync -- fork #290) can tell whether another game
 // has been launched and left since it was posted. See launchGame.
 static std::atomic<unsigned> sExitGeneration{ 0 };
+// PLAY NOW through the offline achievements' send card: the launch it
+// leads to comes back through this function (launchNow goes through
+// ViewController::launch), so the answer is kept for that one launch or
+// the question would be asked again on the next frame, without end (the
+// #292 proof on the VM, 2026-09-26).
+static std::atomic<bool> sPlayThroughSend{ false };
 
 FileData::FileData(FileType type, const std::string& path, SystemData* system)
 	: mPath(path), mType(type), mSystem(system), mParent(nullptr), mDisplayName(nullptr), mMetadata(type == GAME ? GAME_METADATA : FOLDER_METADATA) // metadata is REALLY set in the constructor!
@@ -858,13 +864,14 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// stopped: STOP IT AND PLAY signals the ctl and waits for it to be
 	// gone, and the ctl runs again next time the device is connected. The
 	// safe verb is last in both (D-UI-096).
-	if (ProxyCards::sendRunning())
+	if (ProxyCards::sendRunning() && !sPlayThroughSend.exchange(false))
 	{
 		window->pushGui(new GuiMsgBox(window,
 			_("OFFLINE ACHIEVEMENTS ARE BEING SENT.") + "\n\n" + _("IT'LL BE A MOMENT."),
 			_("PLAY NOW"), [this, window, options]
 			{
 				LOG(LogInfo) << "launch: the player chose to play through the send";
+				sPlayThroughSend = true;
 				launchNow(window, this, options);
 			},
 			_("KEEP WAITING"), nullptr));
