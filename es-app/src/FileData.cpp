@@ -39,6 +39,7 @@
 #include "views/ViewController.h"
 #include <chrono>
 #include <thread>
+#include <atomic>
 #include "OfflineAchievements.h"
 #include "Paths.h"
 #include "resources/TextureData.h"
@@ -75,6 +76,11 @@ static std::map<std::string, std::function<BindableProperty(FileData*)>> propert
 };
 
 FileData* FileData::mRunningGame = nullptr;
+
+// Counts game exits, so the work an exit hands to a worker thread (the
+// capture, then the exit sync -- fork #290) can tell whether another game
+// has been launched and left since it was posted. See launchGame.
+static std::atomic<unsigned> sExitGeneration{ 0 };
 
 FileData::FileData(FileType type, const std::string& path, SystemData* system)
 	: mPath(path), mType(type), mSystem(system), mParent(nullptr), mDisplayName(nullptr), mMetadata(type == GAME ? GAME_METADATA : FOLDER_METADATA) // metadata is REALLY set in the constructor!
@@ -904,11 +910,15 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// Record what this session wrote (fork #21 R5). On every exit: whatever
 	// the exit code, whatever the cloud toggle says, whether or not another
 	// sync holds the lock -- a save written and not recorded is exactly what
-	// the reconciler cannot explain later. Synchronous, network-free, takes no
-	// lock and spawns no rclone, so it is a handful of stats and at most a few
-	// hundred KB of hashing while the window is still down; it has finished
-	// before the exit sync below starts, so the working copy the push carries
-	// is current. Placed after onGameEnded above, which renumbers slot files
+	// the reconciler cannot explain later. Network-free, takes no lock and
+	// spawns no rclone: a handful of stats and at most a few hundred KB of
+	// hashing. It ran here, synchronously, while the window was still down,
+	// and on the RG35XX SP that was three seconds of nothing on screen
+	// between the emulator's exit and the interface's first frame (fork
+	// #290); the command is built here and run below, on the worker that
+	// then starts the exit sync, so it still finishes before the sync
+	// starts and the manifest the push carries is current. The paths are
+	// read here, after onGameEnded above, which renumbers slot files
 	// and restores .state.auto -- the paths only settle there. The emulator
 	// and core are the ones the command carried (launchedEmulator/
 	// launchedCore), never getEmulator()/getCore() re-read now. --started is
@@ -918,18 +928,16 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// pair; nothing there writes a save, so there is nothing to record and
 	// no failure to stamp -- an empty --emulator would otherwise be a usage
 	// row in capture-failures on every run of such a system.
+	std::string capture;
 	if (Utils::FileSystem::exists("/usr/bin/cloud_capture") && !options.launchedEmulator.empty())
 	{
-		std::string capture = std::string("/usr/bin/cloud_capture")
+		capture = std::string("/usr/bin/cloud_capture")
 			+ " --system "   + Utils::String::shellQuote(system->getName())
 			+ " --rom "      + Utils::String::shellQuote(gameToUpdate->getPath())
 			+ " --emulator " + Utils::String::shellQuote(options.launchedEmulator)
 			+ " --core "     + Utils::String::shellQuote(options.launchedCore)
 			+ " --started "  + std::to_string(static_cast<long long>(tstart))
 			+ " --exit "     + std::to_string(exitCode);
-		int captureCode = ApiSystem::executeScriptLegacy(capture, nullptr).second;
-		if (captureCode != 0)
-			LOG(LogWarning) << "cloud_capture exited " << captureCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
 	}
 
 	// What the display did with this game's frame, for its captures (fork
@@ -1010,20 +1018,49 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// just played. With no network, cloud_backup answers
 	// CloudExit::NoNetwork at once rather than waiting for a probe to time
 	// out.
-	if (SystemConf::getInstance()->get("cloudsaves.gameexit") == "1"
-		&& Utils::FileSystem::exists("/usr/bin/cloud_backup")
-		&& !ThreadedCloudSync::isRunning())
+	//
+	// The capture first, then the sync, both off the interface thread (fork
+	// #290): the window is back and drawing before either starts, where the
+	// capture used to run before the window came back and the RG35XX SP
+	// showed nothing for its three seconds. The sync card is created on the
+	// interface thread, so the worker posts it there once the capture is
+	// done. A game launched and left in between owns the outcome: the loop
+	// that runs posted tasks does not turn while a game runs, so this task
+	// runs only after that game's exit, when that exit's own task is the
+	// one to act -- its --recent run carries this session's saves as well.
+	const bool exitSync = SystemConf::getInstance()->get("cloudsaves.gameexit") == "1"
+		&& Utils::FileSystem::exists("/usr/bin/cloud_backup");
+	const unsigned generation = ++sExitGeneration;
+	std::thread([window, capture, exitSync, generation]
 	{
-		ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent --automatic",
-			_("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
-	}
-	else
-	{
-		// No sync card to ride (fork #173, D-RA-004): the offline
-		// achievements still get their sentence, as a toast, when the proxy
-		// is holding awards for the next connection or has just sent some.
-		OfflineAchievements::sayAfterGame(window);
-	}
+		if (!capture.empty())
+		{
+			const int captureCode = ApiSystem::executeScriptLegacy(capture, nullptr).second;
+			if (captureCode != 0)
+				LOG(LogWarning) << "cloud_capture exited " << captureCode << " -- see /var/log/cloud_sync.log and /storage/.cache/cloud_sync/capture-failures";
+		}
+		window->postToUiThread([window, exitSync, generation]
+		{
+			if (generation != sExitGeneration.load() || mRunningGame != nullptr)
+			{
+				LOG(LogInfo) << "exit: another game was launched since; its exit syncs";
+				return;
+			}
+			if (exitSync && !ThreadedCloudSync::isRunning())
+			{
+				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent --automatic",
+					_("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
+			}
+			else
+			{
+				// No sync card to ride (fork #173, D-RA-004): the offline
+				// achievements still get their sentence, as a toast, when the
+				// proxy is holding awards for the next connection or has just
+				// sent some.
+				OfflineAchievements::sayAfterGame(window);
+			}
+		});
+	}).detach();
 
 	if (system != nullptr && system->getTheme() != nullptr)
 		AudioManager::getInstance()->changePlaylist(system->getTheme(), true);
