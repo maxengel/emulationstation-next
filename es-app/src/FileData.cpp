@@ -34,6 +34,7 @@
 #include "guis/GuiMsgBox.h"
 #include "ThreadedCloudSync.h"
 #include "CloudTransferJob.h"
+#include "ProxyCards.h"
 #include "guis/GuiCloudTransfer.h"
 #include "guis/GuiLoading.h"
 #include "views/ViewController.h"
@@ -850,6 +851,40 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 		return false;
 	}
 
+	// The offline achievements' two jobs ask the same question (fork #293,
+	// D-UI-095). The send is the proxy's and cannot be stopped from here,
+	// so its question offers to play through it: PLAY NOW launches at once
+	// and the proxy goes on sending behind the game. The top-up can be
+	// stopped: STOP IT AND PLAY signals the ctl and waits for it to be
+	// gone, and the ctl runs again next time the device is connected. The
+	// safe verb is last in both (D-UI-096).
+	if (ProxyCards::sendRunning())
+	{
+		window->pushGui(new GuiMsgBox(window,
+			_("OFFLINE ACHIEVEMENTS ARE BEING SENT.") + "\n\n" + _("IT'LL BE A MOMENT."),
+			_("PLAY NOW"), [this, window, options]
+			{
+				LOG(LogInfo) << "launch: the player chose to play through the send";
+				launchNow(window, this, options);
+			},
+			_("KEEP WAITING"), nullptr));
+		return false;
+	}
+
+	if (ProxyCards::topUpRunning())
+	{
+		window->pushGui(new GuiMsgBox(window,
+			_("YOUR OFFLINE ACHIEVEMENTS ARE BEING UPDATED.") + "\n\n" + _("IF YOU STOP IT, IT'LL TRY AGAIN NEXT TIME YOU'RE CONNECTED."),
+			_("STOP IT AND PLAY"), [this, window, options]
+			{
+				LOG(LogInfo) << "launch: the player chose to stop the top-up for a game";
+				ProxyCards::stopTopUp();
+				launchWhenGone(window, this, options, [] { return ProxyCards::topUpRunning(); }, nullptr);
+			},
+			_("KEEP WAITING"), nullptr));
+		return false;
+	}
+
 	FileData* gameToUpdate = getSourceFileData();
 	if (gameToUpdate == nullptr)
 		return false;
@@ -1051,14 +1086,9 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent --automatic",
 					_("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
 			}
-			else
-			{
-				// No sync card to ride (fork #173, D-RA-004): the offline
-				// achievements still get their sentence, as a toast, when the
-				// proxy is holding awards for the next connection or has just
-				// sent some.
-				OfflineAchievements::sayAfterGame(window);
-			}
+			// Nothing else is said at exit (fork #292, D-RA-030): the offline
+			// achievements go up when RetroAchievements answers, with a card
+			// of their own on the link's return (ProxyCards).
 		});
 	}).detach();
 

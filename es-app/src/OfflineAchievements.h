@@ -37,10 +37,10 @@ namespace OfflineAchievements
 	// such flush. Runs a process; call it off the interface thread.
 	bool takeFlushed();
 
-	// After a game with no sync card to ride -- SYNC SAVES WHEN EXITING A
-	// GAME off, or no cloud scripts on the image -- the same two sentences
-	// the card would carry, as a toast, from a thread of their own.
-	void sayAfterGame(Window* window);
+	// Whether the proxy has left a flush stamp nobody has taken yet: a batch
+	// went while no card was watching (fork #292). A file read, no process;
+	// takeFlushed is what consumes it.
+	bool flushStampPresent();
 
 	// How the last scan of the console's games went, or the last automatic
 	// top-up: the stamp raofflineproxy-ctl scan and topup write, read
@@ -66,18 +66,24 @@ namespace OfflineAchievements
 	std::string scanWhy(const std::string& token);
 
 	// The device has come online: raofflineproxy-ctl topup -- the client's
-	// recently-played pass -- from a thread of its own, with nothing on
-	// screen. Returns at once. The ctl refuses when the toggle is off, no
-	// account is signed in or RetroAchievements does not answer, and
-	// bounds how often it runs, so this is safe to call on every link.
-	void topUpWhenOnline();
-
+	// recently-played pass -- from a thread of its own, with a card once it
+	// has work (ProxyCards, fork #293; it was silent, D-RA-010, until then).
+	// Returns at once. The ctl refuses when the toggle is off, no account is
+	// signed in or RetroAchievements does not answer, and bounds how often
+	// it runs, so this is safe to call on every link.
+	void topUpWhenOnline(Window* window);
 	// The hasher has just identified games (INDEX NEW GAMES AT STARTUP,
 	// INDEX GAMES): raofflineproxy-ctl topup --after-index, the same run
-	// without the half-hour guard, from a thread of its own, nothing on
-	// screen (fork #184, D-RA-013). The ctl refuses as above; the toggle is
-	// read here too so a device with the feature off starts no process.
-	void topUpAfterIndex();
+	// without the half-hour guard (fork #184, D-RA-013). The ctl refuses as
+	// above; the toggle is read here too so a device with the feature off
+	// starts no process.
+	void topUpAfterIndex(Window* window);
+	// The ctl's run itself, blocking: its exit code. ProxyCards' worker.
+	int runTopUp(bool afterIndex);
+	// Ask a running scan or top-up to stop, through the pid in the ctl's
+	// lock file (its own TERM trap writes its stamp). True when a signal
+	// was sent.
+	bool stopRun();
 
 	// The achievements pages read the proxy's cache when the device is
 	// offline (fork #180, D-RA-009). The questions below are theirs.

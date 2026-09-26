@@ -1182,3 +1182,18 @@ TEST_CASE("parseRunningProgress on the shapes that are not a run")
 	CHECK(parseRunningProgress("route=topup at=1789586400", now).running);
 	CHECK_FALSE(parseRunningProgress("route=topup at=1789586401", now).running);
 }
+
+// The exit sync skipped for no network is owed until a sync after it ran
+// (fork #292, D-RA-030): the reconnect card runs it.
+TEST_CASE("exitSyncOwed: skipped for no network, and nothing has synced since")
+{
+	const std::string skipped = "1790440038 69 no-network";
+	CHECK(CloudText::exitSyncOwed(skipped, "", ""));
+	CHECK(CloudText::exitSyncOwed(skipped, "1790396323 0 completed", ""));           // a startup sync before it
+	CHECK_FALSE(CloudText::exitSyncOwed(skipped, "1790440100 0 completed", ""));     // a startup sync after it
+	CHECK(CloudText::exitSyncOwed(skipped, "1790440100 69 no-network", ""));         // one after it that also had no network
+	CHECK_FALSE(CloudText::exitSyncOwed(skipped, "", "1790440130 0"));               // the back up row, after it
+	CHECK(CloudText::exitSyncOwed(skipped, "", "1790440000 0"));                     // a back up before it
+	CHECK_FALSE(CloudText::exitSyncOwed("1790440038 0 completed", "", ""));          // the exit sync went
+	CHECK_FALSE(CloudText::exitSyncOwed("", "", ""));
+}

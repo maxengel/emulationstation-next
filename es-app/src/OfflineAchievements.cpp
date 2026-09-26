@@ -1,3 +1,6 @@
+#include "ProxyCards.h"
+#include <csignal>
+#include <cstdlib>
 #include "OfflineAchievements.h"
 #include "ApiSystem.h"
 #include "CloudText.h"
@@ -28,6 +31,10 @@ namespace
 	// The proxy's own answer to "can RetroAchievements be reached", written
 	// by its connectivity monitor (state.py save_online_state).
 	const char* ONLINE_STATE = "/storage/.config/raofflineproxy/online_state.json";
+	// The proxy's flush stamp (the ctl's FLUSH_STAMP): present until a
+	// reader takes it. And the ctl's lock, holding the running pid.
+	const char* FLUSH_STAMP = "/storage/.config/raofflineproxy/last-flush";
+	const char* SCAN_LOCK = "/var/run/raofflineproxy-scan.lock";
 
 	// How long one question to the proxy may take, in all. It answers from
 	// its store on the same device in milliseconds; anything longer is a
@@ -76,31 +83,9 @@ bool OfflineAchievements::takeFlushed()
 	return CloudText::parseFlushStamp(answer.first).ok;
 }
 
-void OfflineAchievements::sayAfterGame(Window* window)
+bool OfflineAchievements::flushStampPresent()
 {
-	if (!available())
-		return;
-
-	// Off the interface thread: each answer is a process, and a game has
-	// just exited on a handheld. The stamp is consumed first so a flush that
-	// already happened is not told after the awards that followed it; the
-	// waiting awards are the newer fact, so they win when both are true.
-	// The two sentences are the sync card's, verbatim (D-RA-017).
-	std::thread([window]
-	{
-		const bool sent = takeFlushed();
-		const int pending = pendingAwards();
-
-		std::string text;
-		if (pending > 0)
-			text = _("OFFLINE ACHIEVEMENTS WILL BE SENT NEXT TIME YOU'RE CONNECTED.");
-		else if (sent)
-			text = _("OFFLINE ACHIEVEMENTS HAVE BEEN SENT TO RETROACHIEVEMENTS.");
-		if (text.empty())
-			return;
-
-		window->postToUiThread([window, text] { window->displayNotificationMessage(text); });
-	}).detach();
+	return available() && Utils::FileSystem::exists(FLUSH_STAMP, false);
 }
 
 CloudText::ScanStamp OfflineAchievements::lastScan()
@@ -296,7 +281,7 @@ std::string OfflineAchievements::scanWhy(const std::string& token)
 	return _("SOMETHING WENT WRONG");
 }
 
-void OfflineAchievements::topUpWhenOnline()
+void OfflineAchievements::topUpWhenOnline(Window* window)
 {
 	if (!available())
 		return;
@@ -304,29 +289,30 @@ void OfflineAchievements::topUpWhenOnline()
 	// feature off never starts a process for it on every link.
 	if (!SystemConf::getInstance()->getBool("global.retroachievements.offlineproxy"))
 		return;
-
-	// Never on the interface thread, and never waited for: the ctl probes
-	// RetroAchievements, then runs the client's recently-played pass, and
-	// either can take minutes. Its outcome lands in the stamp the OFFLINE
-	// ACHIEVEMENTS page reads, and nowhere on screen (D-RA-010: silent).
-	std::thread([]
-	{
-		const auto answer = ask("topup");
-		LOG(LogInfo) << "OfflineAchievements: topup exited " << answer.second;
-	}).detach();
+	ProxyCards::topUp(window, false);
 }
 
-void OfflineAchievements::topUpAfterIndex()
+void OfflineAchievements::topUpAfterIndex(Window* window)
 {
 	if (!available() || !toggleOn())
 		return;
+	ProxyCards::topUp(window, true);
+}
 
-	// The index has just grown, so this run is not held to the half hour
-	// since the last attempt; the ctl still bounds it (its lock, its
-	// timeout) and stamps its outcome for the OFFLINE ACHIEVEMENTS page.
-	std::thread([]
-	{
-		const auto answer = ask("topup --after-index");
-		LOG(LogInfo) << "OfflineAchievements: topup --after-index exited " << answer.second;
-	}).detach();
+int OfflineAchievements::runTopUp(bool afterIndex)
+{
+	const auto answer = ask(afterIndex ? "topup --after-index" : "topup");
+	LOG(LogInfo) << "OfflineAchievements: topup" << (afterIndex ? " --after-index" : "") << " exited " << answer.second;
+	return answer.second;
+}
+
+bool OfflineAchievements::stopRun()
+{
+	if (!Utils::FileSystem::exists(SCAN_LOCK, false))
+		return false;
+	const std::string text = Utils::FileSystem::readAllText(SCAN_LOCK);
+	const long pid = atol(Utils::String::trim(text).c_str());
+	if (pid <= 1)
+		return false;
+	return ::kill((pid_t) pid, SIGTERM) == 0;
 }

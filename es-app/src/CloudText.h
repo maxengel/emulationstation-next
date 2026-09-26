@@ -113,6 +113,13 @@ namespace CloudText
 	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028), the whole file's text.
 	LastRun parseLastRun(const std::string& text);
 
+	// Whether the exit sync that was skipped for want of a network is still
+	// owed (fork #292, D-RA-030): last-sync-exit reads no-network, and
+	// neither a startup sync that completed nor a back up the player ran
+	// (the script's last-backup, "<epoch> 0") has run since. The stamps'
+	// whole texts; an absent stamp is "".
+	bool exitSyncOwed(const std::string& exitStamp, const std::string& startupStamp, const std::string& backupStamp);
+
 	// Which run a stamp describes. EmulationStation stamps last-sync-exit
 	// and last-sync-startup as each automatic run ends, within a second or
 	// two of the script writing its own last-backup or last-restore, so a

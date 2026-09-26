@@ -58,6 +58,7 @@ set(ES_HEADERS
 	${CMAKE_CURRENT_SOURCE_DIR}/src/WifiText.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievements.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievementsText.h
+	${CMAKE_CURRENT_SOURCE_DIR}/src/ProxyCards.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineScanJob.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudTransferJob.h
 	${CMAKE_CURRENT_SOURCE_DIR}/src/SystemRandomPlaylist.h
@@ -189,6 +190,7 @@ set(ES_SOURCES
 	${CMAKE_CURRENT_SOURCE_DIR}/src/WifiText.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievements.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineAchievementsText.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/src/ProxyCards.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/OfflineScanJob.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/CloudTransferJob.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/src/SystemRandomPlaylist.cpp

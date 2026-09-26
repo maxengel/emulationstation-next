@@ -3,7 +3,7 @@
 #include "CloudOffer.h"
 #include "CloudText.h"
 #include "CloudTransferJob.h"
-#include "OfflineAchievements.h"
+#include "ProxyCards.h"
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
 #include "guis/GuiMsgBox.h"
@@ -497,26 +497,10 @@ void ThreadedCloudSync::run()
 			writeStamp(std::string("/storage/.cache/cloud_sync/last-") + (verb == CloudText::Verb::Backup ? "backup" : "restore"), ret, token, "");
 	}
 
-	// Offline achievements ride this card (fork #173, D-RA-004): no monitor
-	// of their own, no mention of the link, only what happens next. As the
-	// exit card ends, the proxy is asked how many casual awards it is still
-	// holding; as any automatic card that reached the network ends, whether
-	// a batch of them has just gone (the proxy's flush stamp, read once and
-	// cleared). Each is a process, so both are asked here on the worker,
-	// after the stamp and before the card speaks. Not after a launch cancel:
-	// the player is on their way into a game.
-	int pendingAwards = -1;
-	bool awardsSent = false;
-	if (!cancelled && (mOrigin == Origin::Exit || mOrigin == Origin::Startup) && OfflineAchievements::available())
-	{
-		if (ret != CloudExit::NoNetwork)
-			awardsSent = OfflineAchievements::takeFlushed();
-		if (mOrigin == Origin::Exit)
-			pendingAwards = OfflineAchievements::pendingAwards();
-	}
-	// Said as a toast after the card when the card's action line is taken
-	// by a failure's own in-place and recovery clauses.
-	std::string sayAfter;
+	// Offline achievements no longer ride this card (fork #292, D-RA-030):
+	// the proxy sends them the moment RetroAchievements answers, and that
+	// send has a card of its own on the link's return (ProxyCards). The
+	// exit card says what happened to the saves and nothing else.
 
 	// One surface for the whole event.
 	//
@@ -536,58 +520,27 @@ void ThreadedCloudSync::run()
 		// clause names the surface that runs it again: for an automatic
 		// sync, when that is; for one the player pressed, the row.
 		std::vector<std::string> action;
-		// The wording is D-RA-017's -- D-RA-004's, settled as shipped: "sync"
-		// stays the saves' word and awards are "sent" (D-UI-022) -- one string
-		// each, verbatim as the register quotes them.
-		const std::string awardsWaiting = _("OFFLINE ACHIEVEMENTS WILL BE SENT NEXT TIME YOU'RE CONNECTED.");
-		const std::string awardsWent = _("OFFLINE ACHIEVEMENTS HAVE BEEN SENT TO RETROACHIEVEMENTS.");
 		if (completed)
 		{
-			// A completed sync has a blank action line; the achievements
-			// take it. The waiting awards are the newer fact when both are
-			// true.
-			if (pendingAwards > 0)
-				action.push_back(awardsWaiting);
-			else if (awardsSent)
-				action.push_back(awardsWent);
+			// A completed sync has a blank action line.
 		}
 		else if (mOrigin == Origin::Exit && ret == CloudExit::NoNetwork)
 		{
 			// The exit sync could not run for want of a connection: the
-			// action line says what happens next to the saves, and to the
-			// awards when any are waiting (CloudText::nextTime). Candidates
+			// action line says what happens next to the saves. Candidates
 			// longest first, as everywhere on this card: the in-place clause
-			// goes first when the line is short of room, and where the
-			// two-part sentence itself does not fit -- it does not, at
-			// 640x480 -- the awards sentence stands alone, because the
-			// outcome line above it has already said the saves did not go.
+			// goes first when the line is short of room. And there is a
+			// mechanism behind the sentence (D-RA-030): the link's return
+			// runs the sync that is owed, with a card (ProxyCards).
 			const std::string inPlace = inPlaceClause(CloudText::verbOf(mCommand), mMoved);
 			const std::string savesWaiting = _("SAVES WILL BE SYNCED NEXT TIME YOU'RE CONNECTED.");
-			const std::string bothWaiting = _("OFFLINE ACHIEVEMENTS WILL BE SENT AND SAVES SYNCED NEXT TIME YOU'RE CONNECTED.");
-			switch (CloudText::nextTime(pendingAwards > 0, true))
-			{
-			case CloudText::NextTime::AwardsAndSaves:
-				action.push_back(inPlace + " " + bothWaiting);
-				action.push_back(bothWaiting);
-				action.push_back(awardsWaiting);
-				break;
-			default:
-				action.push_back(inPlace + " " + savesWaiting);
-				action.push_back(savesWaiting);
-				break;
-			}
+			action.push_back(inPlace + " " + savesWaiting);
+			action.push_back(savesWaiting);
 		}
 		else
 		{
 			const CloudText::Verb verb = CloudText::verbOf(mCommand);
 			const std::string inPlace = inPlaceClause(verb, mMoved);
-
-			// A failure's own two clauses hold the line; the achievements
-			// follow as a toast once the card has had its say.
-			if (pendingAwards > 0)
-				sayAfter = awardsWaiting;
-			else if (awardsSent)
-				sayAfter = awardsWent;
 
 			std::string recover;
 			if (cancelled && mGameExitSync)
@@ -655,17 +608,8 @@ void ThreadedCloudSync::run()
 		// lingered -- maintainer, 2026-09-07); anything else is two lines to
 		// act on, so five. Five for everything dated from when a sync took
 		// 18 seconds -- once the exit sync came down to about five, the card
-		// spent as long saying it was done as it had spent working. A
-		// completed sync whose action line carries the achievements is two
-		// lines to read too.
+		// spent as long saying it was done as it had spent working.
 		std::this_thread::sleep_for(std::chrono::milliseconds(completed && action.empty() ? 1500 : 5000));
-
-		if (!sayAfter.empty())
-		{
-			Window* window = mWindow;
-			const std::string text = sayAfter;
-			window->postToUiThread([window, text] { window->displayNotificationMessage(text); });
-		}
 	}
 
 	// A question the run asked us to put to the player, once its card has
@@ -676,6 +620,14 @@ void ThreadedCloudSync::run()
 	// (#145). It pushes on the interface thread itself.
 	if (completed)
 		CloudOffer::present(mWindow, mOffer, mOfferArgs);
+
+	// The offline achievements' send card follows an automatic sync's
+	// (fork #292, D-RA-030): the proxy sends the moment RetroAchievements
+	// answers, and the link's own card stands aside while a sync card is
+	// up, so this end is where a batch that went during the sync is said.
+	// Not after a launch cancel: the player is on their way into a game.
+	if (!cancelled && (mOrigin == Origin::Exit || mOrigin == Origin::Startup))
+		ProxyCards::afterSync(mWindow);
 
 	delete this;
 }

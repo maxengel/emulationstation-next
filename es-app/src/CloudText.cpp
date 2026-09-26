@@ -152,6 +152,20 @@ bool isOutcomeToken(const std::string& token)
 	return ourTokens.find(token) != ourTokens.cend();
 }
 
+bool exitSyncOwed(const std::string& exitStamp, const std::string& startupStamp, const std::string& backupStamp)
+{
+	const LastRun e = parseLastRun(exitStamp);
+	if (!e.ran || e.token != "no-network")
+		return false;
+	const LastRun s = parseLastRun(startupStamp);
+	if (s.ran && s.when >= e.when && s.outcome == Outcome::Completed)
+		return false;
+	const LastRun b = parseLastRun(backupStamp);
+	if (b.ran && b.when >= e.when && b.code == 0)
+		return false;
+	return true;
+}
+
 LastRun parseLastRun(const std::string& text)
 {
 	LastRun r;

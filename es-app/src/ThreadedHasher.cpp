@@ -115,10 +115,11 @@ ThreadedHasher::~ThreadedHasher()
 		// (the hash library just came from RetroAchievements), the games not
 		// yet cached for offline play are cached from the ids and hashes
 		// written above -- raofflineproxy-ctl topup --after-index, from a
-		// thread of its own, nothing on screen. Not after a run the player
-		// stopped, and not after one that identified nothing.
+		// thread of its own, with a card once it has work (fork #293). Not
+		// after a run the player stopped, and not after one that identified
+		// nothing.
 		if (!mExit && mCheevosIndexed)
-			OfflineAchievements::topUpAfterIndex();
+			OfflineAchievements::topUpAfterIndex(mWindow);
 	}
 
 	if (mWndNotification != nullptr)
