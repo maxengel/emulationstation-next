@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <ctime>
 #include <future>
 #include <memory>
 #include <thread>
@@ -120,6 +121,7 @@ namespace
 	{
 		std::atomic<bool> finished{ false };
 		int rc = -1;
+		const time_t startedAt = time(nullptr);
 		std::thread ctl([&rc, &finished, afterIndex]
 		{
 			rc = OfflineAchievements::runTopUp(afterIndex);
@@ -127,46 +129,72 @@ namespace
 		});
 
 		AsyncNotificationComponent* card = nullptr;
+		bool sawWork = false;
+		// A card is made on the interface thread and handed back here. When
+		// the loop that runs posted tasks is not turning -- a game has the
+		// screen -- the run goes on without a card, and the lambda, run
+		// later, makes none.
+		auto attach = [window]() -> AsyncNotificationComponent*
+		{
+			// `wanted` is flipped once, by whichever side gets there
+			// first: the lambda, which then makes the card and hands it
+			// over; or this thread on giving up, after which the lambda
+			// makes nothing. A card is never made for nobody.
+			auto made = std::make_shared<std::promise<AsyncNotificationComponent*>>();
+			auto wanted = std::make_shared<std::atomic<bool>>(true);
+			auto got = made->get_future();
+			window->postToUiThread([window, made, wanted]
+			{
+				if (!wanted->exchange(false))
+					return;
+				AsyncNotificationComponent* c = window->createAsyncNotificationComponent(true);
+				c->updateTitle(TROPHY + _("UPDATING OFFLINE ACHIEVEMENTS..."));
+				c->updateText(_("STARTING..."));
+				c->updatePercent(-1);
+				made->set_value(c);
+			});
+			if (got.wait_for(std::chrono::seconds(3)) == std::future_status::ready || !wanted->exchange(false))
+				return got.get();
+			return nullptr;
+		};
+		auto screenFree = []
+		{
+			return !sSendRunning && !ThreadedCloudSync::isRunning() && FileData::GetRunningGame() == nullptr;
+		};
 		while (!finished)
 		{
 			std::this_thread::sleep_for(std::chrono::milliseconds(500));
 			const CloudText::RunningProgress p = OfflineAchievements::runningProgress();
 			if (!p.running)
 				continue;
-			if (card == nullptr && !sSendRunning && !ThreadedCloudSync::isRunning() && FileData::GetRunningGame() == nullptr)
-			{
-				// Made on the interface thread, handed back here. When the
-				// loop that runs posted tasks is not turning -- a game has the
-				// screen -- the run goes on without a card, and the lambda,
-				// run later, makes none.
-				// `wanted` is flipped once, by whichever side gets there
-				// first: the lambda, which then makes the card and hands it
-				// over; or this thread on giving up, after which the lambda
-				// makes nothing. A card is never made for nobody.
-				auto made = std::make_shared<std::promise<AsyncNotificationComponent*>>();
-				auto wanted = std::make_shared<std::atomic<bool>>(true);
-				auto got = made->get_future();
-				window->postToUiThread([window, made, wanted]
-				{
-					if (!wanted->exchange(false))
-						return;
-					AsyncNotificationComponent* c = window->createAsyncNotificationComponent(true);
-					c->updateTitle(TROPHY + _("UPDATING OFFLINE ACHIEVEMENTS..."));
-					c->updateText(_("STARTING..."));
-					c->updatePercent(-1);
-					made->set_value(c);
-				});
-				if (got.wait_for(std::chrono::seconds(3)) == std::future_status::ready || !wanted->exchange(false))
-					card = got.get();
-			}
+			sawWork = true;
+			if (card == nullptr && screenFree())
+				card = attach();
 			if (card != nullptr && p.total > 0)
 				card->updateText(Utils::String::format(_("%d OF %d").c_str(), p.index, p.total));
 		}
 		ctl.join();
-		if (card == nullptr)
-			return;   // a run with no work, or one that ran behind a game: nothing was shown
-
+		// A run too quick for the poll to have seen its progress file still
+		// left its stamp: work was done when the stamp is this run's and
+		// counts a game added or a fetch failed.
 		const CloudText::ScanStamp s = OfflineAchievements::lastScan();
+		if (!sawWork && s.ran && s.when >= startedAt && (s.cached > 0 || s.errors > 0))
+			sawWork = true;
+		if (!sawWork)
+			return;   // a run with no work: nothing to show
+		// A run that had work and ended before a card could be attached --
+		// quick, or behind the send card -- still gets its outcome said,
+		// once the screen is free (bounded: a game may have it).
+		const auto waited = std::chrono::steady_clock::now();
+		while (card == nullptr && std::chrono::steady_clock::now() - waited < std::chrono::seconds(90))
+		{
+			if (screenFree())
+				card = attach();
+			else
+				std::this_thread::sleep_for(std::chrono::seconds(1));
+		}
+		if (card == nullptr)
+			return;   // the screen stayed taken: the ctl's stamp keeps the outcome for the achievements page
 		std::vector<std::string> action;
 		std::string outcome;
 		const bool ok = rc == 0;
