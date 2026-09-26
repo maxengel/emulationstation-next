@@ -12,7 +12,8 @@ class FileData;
 // was never played here, which has no captures either, simply has none.
 namespace CaptureRotation
 {
-	// Quarter turns counter-clockwise, 0-3: the record when there is one,
+	// Quarter turns counter-clockwise, 0-3: the record when there is one
+	// and it says its turn came from the game's own launch (fork #288),
 	// else the core's own table (fork #248) for the game's ROM name, else 0.
 	int read(FileData* game);
 

@@ -109,8 +109,20 @@ namespace CaptureRotation
 		}
 		// Uncached exists: the record is written while the interface runs.
 		int turns = 0;
+		std::string record;
 		if (mtime != 0 && Utils::FileSystem::exists(path, false))
-			turns = CaptureRotationText::parseRecord(Utils::FileSystem::readAllText(path));
+			record = Utils::FileSystem::readAllText(path);
+		// A record that does not say its turn came from the game's own
+		// launch was written by the reader that took the last rotation line
+		// of a log holding every launch since it was last removed (fork
+		// #280), and may carry another game's turn: the maintainer's Dr.
+		// Mario, F-Zero and Aladdin all read Ms. Pac-Man's 3 after the
+		// launcher was fixed, because nothing rewrites a record until the
+		// game exits again. So the core's table stands in for such a record
+		// until then (fork #288). Nothing is migrated and nothing removed:
+		// read both, write the new one.
+		if (!record.empty() && CaptureRotationText::recordFromOwnLaunch(record))
+			turns = CaptureRotationText::parseRecord(record);
 		else
 			turns = fromTable(game);
 		std::unique_lock<std::mutex> lock(sLock);
@@ -143,8 +155,15 @@ namespace CaptureRotation
 		const bool had = Utils::FileSystem::exists(path, false);
 		if (!had && turns == 0)
 			return;
-		if (had && CaptureRotationText::parseRecord(Utils::FileSystem::readAllText(path)) == turns)
-			return;
+		if (had)
+		{
+			// A record from before fork #288 is rewritten even when its turn
+			// agrees, so that it says where the turn came from and is
+			// trusted from then on.
+			const std::string record = Utils::FileSystem::readAllText(path);
+			if (CaptureRotationText::recordFromOwnLaunch(record) && CaptureRotationText::parseRecord(record) == turns)
+				return;
+		}
 
 		Utils::FileSystem::createDirectory(Utils::FileSystem::getParent(path));
 		Utils::FileSystem::writeAllText(path, CaptureRotationText::recordText(turns));

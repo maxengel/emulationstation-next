@@ -4,6 +4,10 @@
 
 namespace
 {
+	// The record's second line since fork #288: the turn was read from a
+	// log that held this game's launch alone.
+	const char* OWN_LAUNCH_LINE = "from=own-launch";
+
 	// The value of `key = "value"` in a RetroArch config, or "" when absent.
 	std::string configValue(const std::string& config, const std::string& key)
 	{
@@ -98,7 +102,32 @@ namespace CaptureRotationText
 	std::string recordText(int turns)
 	{
 		turns = ((turns % 4) + 4) % 4;
-		return "turns=" + std::string(1, (char)('0' + turns)) + "\n";
+		return "turns=" + std::string(1, (char)('0' + turns)) + "\n" + OWN_LAUNCH_LINE + "\n";
+	}
+
+	bool recordFromOwnLaunch(const std::string& text)
+	{
+		// A line of its own, anywhere in the record, spaces and a carriage
+		// return around it allowed; never a substring of a longer line.
+		const std::string line(OWN_LAUNCH_LINE);
+		size_t pos = 0;
+		while (pos <= text.size())
+		{
+			size_t end = text.find('\n', pos);
+			if (end == std::string::npos)
+				end = text.size();
+			size_t from = pos, to = end;
+			while (from < to && (text[from] == ' ' || text[from] == '\t' || text[from] == '\r'))
+				from++;
+			while (to > from && (text[to - 1] == ' ' || text[to - 1] == '\t' || text[to - 1] == '\r'))
+				to--;
+			if (to - from == line.size() && text.compare(from, line.size(), line) == 0)
+				return true;
+			if (end >= text.size())
+				break;
+			pos = end + 1;
+		}
+		return false;
 	}
 
 	int parseRecord(const std::string& text)

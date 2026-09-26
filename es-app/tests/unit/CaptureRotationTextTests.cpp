@@ -61,9 +61,10 @@ TEST_CASE("the display's turn is the core's, unless rotation is forbidden, plus 
 
 TEST_CASE("the record is one digit and reads back, and anything else reads as none")
 {
-	CHECK(CaptureRotationText::recordText(1) == "turns=1\n");
-	CHECK(CaptureRotationText::recordText(5) == "turns=1\n");
-	CHECK(CaptureRotationText::recordText(-1) == "turns=3\n");
+	CHECK(CaptureRotationText::recordText(1) == "turns=1\nfrom=own-launch\n");
+	CHECK(CaptureRotationText::recordText(5) == "turns=1\nfrom=own-launch\n");
+	CHECK(CaptureRotationText::recordText(-1) == "turns=3\nfrom=own-launch\n");
+	CHECK(CaptureRotationText::parseRecord("turns=2\nfrom=own-launch\n") == 2);
 	// longer than the three bytes readAllText's byte-order-mark check reads
 	CHECK(CaptureRotationText::recordText(0).size() > 3);
 	CHECK(CaptureRotationText::parseRecord("turns=1\n") == 1);
@@ -74,6 +75,26 @@ TEST_CASE("the record is one digit and reads back, and anything else reads as no
 	CHECK(CaptureRotationText::parseRecord("") == 0);
 	CHECK(CaptureRotationText::parseRecord("9") == 0);
 	CHECK(CaptureRotationText::parseRecord("north") == 0);
+}
+
+// A record says whether its turn came from the game's own launch (fork
+// #288): the reader before it took the last rotation line of a log holding
+// every launch, so a record without the line may carry another game's turn.
+TEST_CASE("a record says its turn came from the game's own launch, and one that does not say so is not trusted")
+{
+	CHECK(CaptureRotationText::recordFromOwnLaunch(CaptureRotationText::recordText(0)));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=own-launch\n"));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("from=own-launch\nturns=3\n"));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\r\nfrom=own-launch\r\n"));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\n  from=own-launch"));
+	// the records every build before fork #288 wrote
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\n"));
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("1\n"));
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch(""));
+	// a line of its own, never a substring of a longer one
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\n# from=own-launch\n"));
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=own-launch-maybe\n"));
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=own-launchfrom=own-launch\n"));
 }
 
 TEST_CASE("the core's table gives a game its turn by ROM name, and nothing to the rest")

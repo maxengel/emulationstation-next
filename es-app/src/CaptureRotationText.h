@@ -29,13 +29,23 @@ namespace CaptureRotationText
 	// game: the turns, or 0 when the game is not in it.
 	int turnsFromTable(const std::string& table, const std::string& romName);
 
-	// The record's text, "turns=N" and a newline, and reading it back:
-	// N is 0-3 and anything else reads as 0. A bare digit reads too. The
-	// line is longer than three bytes on purpose -- readAllText skips a
-	// UTF-8 byte-order mark by reading three bytes first, and a shorter
-	// file comes back empty.
+	// The record's text -- "turns=N", then "from=own-launch" -- and reading
+	// it back: N is 0-3 and anything else reads as 0. A bare digit reads
+	// too. The first line is longer than three bytes on purpose --
+	// readAllText skips a UTF-8 byte-order mark by reading three bytes
+	// first, and a shorter file comes back empty.
 	std::string recordText(int turns);
 	int parseRecord(const std::string& text);
+
+	// Whether the record says its turn was read from the game's own launch:
+	// a line "from=own-launch" of its own. The reader before fork #288 took
+	// the last rotation line of a log that held every launch since the file
+	// was last removed (fork #280), so a record it wrote may carry another
+	// game's turn -- Ms. Pac-Man's 3 on Dr. Mario -- and it wrote no such
+	// line. A record without one is not trusted: the core's table stands in
+	// until the game's next exit rewrites it. The line is the writer's claim
+	// about what it read, which is the one thing a migration could not know.
+	bool recordFromOwnLaunch(const std::string& text);
 }
 
 #endif // ES_APP_CAPTURE_ROTATION_TEXT_H
