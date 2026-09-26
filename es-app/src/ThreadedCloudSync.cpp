@@ -626,7 +626,13 @@ void ThreadedCloudSync::run()
 	// answers, and the link's own card stands aside while a sync card is
 	// up, so this end is where a batch that went during the sync is said.
 	// Not after a launch cancel: the player is on their way into a game.
-	if (!cancelled && (mOrigin == Origin::Exit || mOrigin == Origin::Startup))
+	// And not after a sync that found no network: the proxy is holding
+	// its awards for the link, and a card following a queue that cannot
+	// empty would say COULDN'T FINISH over an exit the maintainer asked to
+	// leave quiet (the v2 proof, 2026-09-26: the exit card's end started
+	// the send card offline, and the link's own card, finding one up,
+	// dropped the sync it owed).
+	if (!cancelled && ret != CloudExit::NoNetwork && (mOrigin == Origin::Exit || mOrigin == Origin::Startup))
 		ProxyCards::afterSync(mWindow);
 
 	delete this;
