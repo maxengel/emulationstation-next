@@ -67,6 +67,7 @@ namespace
 	{
 		if (ThreadedCloudSync::isRunning() || FileData::GetRunningGame() != nullptr)
 			return;
+		LOG(LogInfo) << "ProxyCards: the owed saves sync starts";
 		ThreadedCloudSync::start(window, EXIT_SYNC, _("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
 	}
 
