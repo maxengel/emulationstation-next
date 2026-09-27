@@ -851,6 +851,14 @@ std::map<std::string, std::string> RetroAchievements::getCheevosHashes()
 		std::map<int, std::string> officialGames;
 
 		auto options = getHttpOptions();
+		// Long is allowed (the library is megabytes, and #190 keeps its total
+		// unbounded); silent is not. With the link gone, a pooled connection
+		// to RetroAchievements sends nothing and TCP retries it for a quarter
+		// of an hour, and this fetch runs on the interface thread: the game
+		// list update with the Wi-Fi down held the screen for twelve minutes
+		// on the VM before the link's return failed it (ROCKNIX fork #299).
+		// Thirty seconds without a byte ends it, and the hasher then says so.
+		options.stallTimeout = 30L;
 
 		HttpReq hashLibrary("https://retroachievements.org/dorequest.php?r=hashlibrary", &options);
 		HttpReq officialGamesList("https://retroachievements.org/dorequest.php?r=officialgameslist", &options);

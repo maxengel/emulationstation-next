@@ -51,6 +51,7 @@ public:
 		useCookieManager = true;
 		connectTimeout = 10000L;
 		timeout = 0L;
+		stallTimeout = 0L;
 	}
 
 	HttpReqOptions(const std::string& filename)
@@ -60,6 +61,7 @@ public:
 		useCookieManager = true;
 		connectTimeout = 10000L;
 		timeout = 0L;
+		stallTimeout = 0L;
 	}
 
 	std::string outputFilename;
@@ -74,6 +76,14 @@ public:
 	// leaves it unbounded, as every request was before. A caller asking a
 	// local service sets it, so a service that hangs cannot hold a page.
 	long timeout;
+	// Seconds a transfer may move no byte before it ends with an error; 0
+	// (the default) leaves a silent connection to TCP, which retries a
+	// dead peer for a quarter of an hour. For a request that may be long
+	// but must never be silent: the hash library's fetch on a pooled
+	// connection whose link had gone held the interface thread for twelve
+	// minutes on the VM (ROCKNIX fork #299), while a total bound would cut
+	// a slow but moving download.
+	long stallTimeout;
 	bool useCookieManager;
 };
 

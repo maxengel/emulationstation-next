@@ -306,6 +306,13 @@ int OfflineAchievements::runTopUp(bool afterIndex)
 	return answer.second;
 }
 
+int OfflineAchievements::markIndexOffline()
+{
+	const auto answer = ask("index-offline");
+	LOG(LogInfo) << "OfflineAchievements: index-offline exited " << answer.second;
+	return answer.second;
+}
+
 bool OfflineAchievements::stopRun()
 {
 	if (!Utils::FileSystem::exists(SCAN_LOCK, false))

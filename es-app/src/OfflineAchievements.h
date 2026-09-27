@@ -80,6 +80,11 @@ namespace OfflineAchievements
 	void topUpAfterIndex(Window* window);
 	// The ctl's run itself, blocking: its exit code. ProxyCards' worker.
 	int runTopUp(bool afterIndex);
+	// The hasher's index ran with games to identify and no hash library:
+	// raofflineproxy-ctl index-offline, the marker the link's return lists
+	// the library once for (fork #299, D-UI-104). Blocking, quick; its exit
+	// code. ProxyCards::indexRanOffline's worker.
+	int markIndexOffline();
 	// Ask a running scan or top-up to stop, through the pid in the ctl's
 	// lock file (its own TERM trap writes its stamp). True when a signal
 	// was sent.

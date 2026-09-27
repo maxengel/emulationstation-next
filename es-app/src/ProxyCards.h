@@ -44,6 +44,14 @@ namespace ProxyCards
 	// Ask the run to stop, through the pid in its lock file; the ctl's own
 	// TERM trap writes its stamp. True when a signal was sent.
 	bool stopTopUp();
+
+	// The hasher had games to identify and RetroAchievements' hash library
+	// did not come (fork #299, D-UI-104): with the toggle on, the toast --
+	// the new games get their offline achievements next time the device is
+	// connected -- and the ctl's index-pending marker, written from a thread
+	// of its own, so the link's return lists the library once for them.
+	// Nothing when the toggle is off. Call from any thread.
+	void indexRanOffline(Window* window, int games);
 }
 
 #endif // ES_APP_PROXY_CARDS_H

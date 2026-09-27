@@ -10,6 +10,7 @@
 #include "FileData.h"
 #include "ApiSystem.h"
 #include "OfflineAchievements.h"
+#include "ProxyCards.h"
 #include "CheevosIndex.h"
 #include "utils/StringUtil.h"
 #include "Log.h"
@@ -51,6 +52,11 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 				// once, so a boot that indexed nothing can be told apart from one
 				// that never tried (fork #183); the link-up run tries again.
 				LOG(LogWarning) << "ThreadedHasher: RetroAchievements' hash library did not come; nothing is indexed this run";
+				// The games that waited for it are said to be waiting (fork
+				// #299, D-UI-104): the toast, and the control script's marker
+				// so the link's return looks them up.
+				if (!mSearchQueue.empty())
+					ProxyCards::indexRanOffline(mWindow, (int) mSearchQueue.size());
 				while (!mSearchQueue.empty())
 					mSearchQueue.pop();
 			}
@@ -78,6 +84,10 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 		}
 		catch (const std::exception& e)
 		{
+			// The fetch failed outright -- offline, nearly always -- with the
+			// same games waiting: the same word to the player (fork #299).
+			if (!mSearchQueue.empty())
+				ProxyCards::indexRanOffline(mWindow, (int) mSearchQueue.size());
 			mType = (HasherType)0;
 			throw e;
 		}

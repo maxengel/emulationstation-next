@@ -147,6 +147,16 @@ namespace
 		~TopUpEnd() { sTopUpRunning = false; handOff(window); }
 	};
 
+	// One sentence for both ways an index can end offline (D-UI-104): the
+	// ctl's probe refused, or the hash library never came.
+	static void offlineIndexToast(Window* window)
+	{
+		window->postToUiThread([window]
+		{
+			window->displayNotificationMessage(TROPHY + _("YOU'RE NOT ONLINE. NEW GAMES GET THEIR OFFLINE ACHIEVEMENTS NEXT TIME YOU'RE CONNECTED."));
+		});
+	}
+
 	void runTopUp(Window* window, bool afterIndex)
 	{
 		TopUpEnd ending{ window };
@@ -217,10 +227,7 @@ namespace
 		if (afterIndex && rc == 69)
 		{
 			LOG(LogInfo) << "ProxyCards: the index's top-up was refused offline; the toast says the new games' achievements come when connected";
-			window->postToUiThread([window]
-			{
-				window->displayNotificationMessage(TROPHY + _("YOU'RE NOT ONLINE. NEW GAMES GET THEIR OFFLINE ACHIEVEMENTS NEXT TIME YOU'RE CONNECTED."));
-			});
+			offlineIndexToast(window);
 		}
 		// A run too quick for the poll to have seen its progress file still
 		// left its stamp: work was done when the stamp is this run's and
@@ -384,5 +391,14 @@ namespace ProxyCards
 	bool stopTopUp()
 	{
 		return OfflineAchievements::stopRun();
+	}
+
+	void indexRanOffline(Window* window, int games)
+	{
+		if (!OfflineAchievements::available() || !OfflineAchievements::toggleOn())
+			return;
+		LOG(LogInfo) << "ProxyCards: the index ran offline with " << games << " game(s) to identify; the toast says the new games' achievements come when connected, and the ctl is told (index-offline)";
+		offlineIndexToast(window);
+		std::thread([] { OfflineAchievements::markIndexOffline(); }).detach();
 	}
 }
