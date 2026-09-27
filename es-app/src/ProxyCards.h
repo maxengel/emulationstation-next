@@ -16,18 +16,19 @@ class Window;
 // connected" without anything behind the promise.
 namespace ProxyCards
 {
-	// On the link's return: when the proxy holds awards, or its flush stamp
-	// says a batch has just gone, the send card follows the proxy's queue
-	// and ends with the outcome; then, when the last exit sync was skipped
-	// for no network and nothing has synced since, the exit sync that is
-	// owed runs with its own card. Probes on a thread of its own; shows
-	// nothing when nothing is owed. Call on the interface thread.
-	void startIfOwed(Window* window);
+	// On the link's return (#305, the maintainer: saves first, then the
+	// RetroAchievements work as one batch): when the last exit sync was
+	// skipped for no network and nothing has synced since, the owed saves
+	// sync runs first with its card, and the batch -- the send card when the
+	// proxy holds awards or its stamp says a batch went, and the top-up --
+	// follows when that card ends; with no saves owed the batch runs at
+	// once. Probes on a thread of its own; shows nothing when nothing is
+	// owed. Call on the interface thread.
+	void linkReturned(Window* window);
 	// As an automatic sync card ends (ThreadedCloudSync, startup and exit):
-	// the send card, when the proxy holds awards or its stamp says a batch
-	// has just gone -- the link's own card may have stood aside for the
-	// sync -- and never the saves, which that card has just handled or
-	// could not. Call on any thread.
+	// the batch the link left owed, or else the send card alone when the
+	// proxy holds awards or its stamp says a batch went that no card
+	// reported. Never the saves. Call on any thread.
 	void afterSync(Window* window);
 	// The send card is up: a launch asks PLAY NOW / KEEP WAITING.
 	bool sendRunning();

@@ -36,14 +36,19 @@ namespace
 	const int SEND_BOUND_SECONDS = 45;
 
 	std::atomic<bool> sSendRunning{ false };
-	// #298: the saves that are owed follow every RetroAchievements card. The
-	// send card is showing from its making to its close (the gate above lets
-	// go earlier, as the outcome shows); the top-up is running from topUp()
-	// to runTopUp's end; the saves are owed from the probe until whichever
-	// of the two ends last starts them (handOff).
+	// #305 (the maintainer: saves first, then the RetroAchievements work as
+	// one batch): at the link's return the owed saves sync goes first when
+	// one is owed, and the batch -- the send card, the top-up -- starts when
+	// its card ends (afterSync); with no saves owed the batch runs at once.
+	// It was the other way round (#298), and the send card's stamp, written
+	// by the proxy seconds after its queue empties, was found by the probe
+	// at the saves card's end and shown as a second card for the same batch.
 	static std::atomic<bool> sSendShowing{ false };
 	static std::atomic<bool> sTopUpRunning{ false };
-	static std::atomic<bool> sSavesOwed{ false };
+	static std::atomic<bool> sBatchOwed{ false };
+	// A stamp the proxy writes after the queue has emptied is the send
+	// card's to take: it waits this long for it before saying the outcome.
+	const int STAMP_WAIT_SECONDS = 10;
 
 	std::string readText(const char* path)
 	{
@@ -71,17 +76,17 @@ namespace
 		ThreadedCloudSync::start(window, EXIT_SYNC, _("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
 	}
 
-	// The saves that are owed follow every RetroAchievements card (#298): the
-	// send card and the top-up each ask on ending, and whichever finds the
-	// other gone starts the saves. Before, the send's end started them and the
-	// top-up's outcome landed after the saves card, between the achievements'
-	// two cards; the maintainer asked for one batch.
-	void handOff(Window* window)
+	static void probe(Window* window, bool saves);
+
+	// The RetroAchievements batch of a link's return (#305): the send card
+	// when the proxy holds awards or its stamp says a batch went, and the
+	// top-up (the ctl decides whether it has anything to do). After the
+	// owed saves when there were any, at once otherwise.
+	static void batch(Window* window)
 	{
-		if (sSendShowing || sTopUpRunning)
-			return;
-		if (sSavesOwed.exchange(false))
-			window->postToUiThread([window] { startOwedSaves(window); });
+		LOG(LogInfo) << "ProxyCards: the link's RetroAchievements batch starts";
+		probe(window, false);
+		OfflineAchievements::topUpWhenOnline(window);
 	}
 
 	// The send card's worker: follows the proxy's queue to its end, says the
@@ -97,7 +102,19 @@ namespace
 			std::this_thread::sleep_for(std::chrono::seconds(1));
 			pending = OfflineAchievements::pendingAwards();
 		}
-		const bool sent = OfflineAchievements::takeFlushed();
+		// The proxy writes its flush stamp at "Flush complete", seconds after
+		// its queue has emptied; the card that reports the batch takes it,
+		// or the probe at the next sync card's end would (#305: a second
+		// card for the same three awards on the RG35XX SP, 2026-09-27).
+		bool sent = OfflineAchievements::takeFlushed();
+		if (!sent && pending == 0)
+		{
+			const auto waited = std::chrono::steady_clock::now();
+			while (!OfflineAchievements::flushStampPresent()
+				&& std::chrono::steady_clock::now() - waited < std::chrono::seconds(STAMP_WAIT_SECONDS))
+				std::this_thread::sleep_for(std::chrono::milliseconds(500));
+			sent = OfflineAchievements::takeFlushed();
+		}
 		// -1 is the ctl not answering: with the proxy's stamp in hand the
 		// batch went and the card says so; without it, nothing can be said
 		// to have been sent.
@@ -133,18 +150,16 @@ namespace
 		std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 		card->close();
 		sSendShowing = false;
-		handOff(window);
 	}
 
 	// The top-up's watcher: the ctl on a thread of its own, this one attaching
 	// a card once the ctl's progress file says it has work and no other card
 	// holds the screen, and ending it with the ctl's stamp.
-	// Every way out of runTopUp clears the running flag and asks whether the
-	// saves that are owed may start (#298).
+	// Every way out of runTopUp clears the running flag.
 	struct TopUpEnd
 	{
 		Window* window;
-		~TopUpEnd() { sTopUpRunning = false; handOff(window); }
+		~TopUpEnd() { sTopUpRunning = false; }
 	};
 
 	// One card for both ways an index can end offline (D-UI-104): the ctl's
@@ -320,17 +335,27 @@ namespace ProxyCards
 			const bool toggle = OfflineAchievements::toggleOn();
 			const int pending = toggle ? OfflineAchievements::pendingAwards() : 0;
 			const bool flushed = toggle && OfflineAchievements::flushStampPresent();
-			const bool owed = saves && savesOwed();
-			if (pending <= 0 && !flushed)
+			if (saves && savesOwed())
 			{
-				// Nothing to send: the saves wait only for a top-up in flight (#298).
-				if (owed)
-				{
-					sSavesOwed = true;
-					handOff(window);
-				}
+				// Saves first (#305): the owed sync now, when the screen is free
+				// of a game and another sync (it waits for those as the send
+				// card would); the batch follows from its card's end.
+				sBatchOwed = true;
+				const auto started = std::chrono::steady_clock::now();
+				while ((ThreadedCloudSync::isRunning() || FileData::GetRunningGame() != nullptr)
+					&& std::chrono::steady_clock::now() - started < std::chrono::seconds(120))
+					std::this_thread::sleep_for(std::chrono::seconds(1));
+				window->postToUiThread([window] { startOwedSaves(window); });
 				return;
 			}
+			if (saves)
+			{
+				// No saves owed: the batch at once -- this probe goes on as the
+				// send's, and the top-up beside it.
+				OfflineAchievements::topUpWhenOnline(window);
+			}
+			if (pending <= 0 && !flushed)
+				return;
 			// One floating surface at a time (D-UI-093): a sync card that is
 			// up -- the startup sync, waiting for this very link -- finishes
 			// and fades first. The proxy sends meanwhile, so what this card
@@ -345,20 +370,13 @@ namespace ProxyCards
 				return;
 			if (sSendRunning.exchange(true))
 				return;   // another probe got there first
-			window->postToUiThread([window, owed]
+			window->postToUiThread([window]
 			{
 				if (FileData::GetRunningGame() != nullptr || ThreadedCloudSync::isRunning())
 				{
 					sSendRunning = false;   // the proxy sends anyway; the screen is taken
-					if (owed)
-					{
-						sSavesOwed = true;
-						handOff(window);
-					}
 					return;
 				}
-				if (owed)
-					sSavesOwed = true;
 				sSendShowing = true;
 				AsyncNotificationComponent* card = window->createAsyncNotificationComponent(true);
 				card->updateTitle(TROPHY + _("RETROACHIEVEMENTS"));
@@ -369,7 +387,7 @@ namespace ProxyCards
 		}).detach();
 	}
 
-	void startIfOwed(Window* window)
+	void linkReturned(Window* window)
 	{
 		if (!OfflineAchievements::available() || sSendRunning)
 			return;
@@ -380,7 +398,10 @@ namespace ProxyCards
 	{
 		if (!OfflineAchievements::available() || sSendRunning)
 			return;
-		probe(window, false);
+		if (sBatchOwed.exchange(false))
+			batch(window);
+		else
+			probe(window, false);
 	}
 
 	bool sendRunning()

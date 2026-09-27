@@ -211,21 +211,21 @@ void NetworkThread::OnWatcherChanged(IWatcher* component)
 		bool online = mNetworkStateWatcher->isConnected();
 		mCheckCheevosTokenComponent.setOnline(online);
 
-		// The device has come online. Two things follow, each shown while it
-		// runs (fork #292, #293; D-UI-095, D-RA-030): the awards the proxy
-		// held while offline go up now, with a card that follows the queue
-		// and then runs the exit sync that was skipped for no network; and
-		// the recently played games' achievement data is cached so they earn
-		// offline too, the ctl's top-up (fork #179), with a card once it has
-		// work. The ctl decides whether the toggle is on, an account is
+		// The device has come online (fork #292, #293, #305; D-UI-095,
+		// D-RA-030, D-UI-109): the exit sync that was skipped for no network
+		// runs first, with its card; then the RetroAchievements batch -- the
+		// awards the proxy held while offline go up with a card that follows
+		// the queue, and the recently played games' achievement data is
+		// cached so they earn offline too (the ctl's top-up, fork #179, with
+		// a card once it has work). With no saves owed the batch runs at
+		// once. The ctl decides whether the toggle is on, an account is
 		// signed in and RetroAchievements answers, and bounds how often it
-		// runs. Both are posted to the interface thread: this runs on the
-		// watchers' thread.
+		// runs. Posted to the interface thread: this runs on the watchers'
+		// thread.
 		if (online)
 		{
 			Window* window = mWindow;
-			mWindow->postToUiThread([window]() { ProxyCards::startIfOwed(window); });
-			OfflineAchievements::topUpWhenOnline(mWindow);
+			mWindow->postToUiThread([window]() { ProxyCards::linkReturned(window); });
 		}
 
 		// The startup index asks RetroAchievements for its hash library as the
