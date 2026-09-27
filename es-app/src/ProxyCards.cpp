@@ -76,18 +76,6 @@ namespace
 		ThreadedCloudSync::start(window, EXIT_SYNC, _("SYNC SAVES"), _("SYNCING SAVES TO THE CLOUD"), ThreadedCloudSync::Origin::Exit);
 	}
 
-	static void probe(Window* window, bool saves);
-
-	// The RetroAchievements batch of a link's return (#305): the send card
-	// when the proxy holds awards or its stamp says a batch went, and the
-	// top-up (the ctl decides whether it has anything to do). After the
-	// owed saves when there were any, at once otherwise.
-	static void batch(Window* window)
-	{
-		LOG(LogInfo) << "ProxyCards: the link's RetroAchievements batch starts";
-		probe(window, false);
-		OfflineAchievements::topUpWhenOnline(window);
-	}
 
 	// The send card's worker: follows the proxy's queue to its end, says the
 	// outcome in the sync card's words, stamps it, and hands over to the
@@ -385,6 +373,19 @@ namespace ProxyCards
 				std::thread(runSend, window, card).detach();
 			});
 		}).detach();
+	}
+
+	// The RetroAchievements batch of a link's return (#305): the send card
+	// when the proxy holds awards or its stamp says a batch went, and the
+	// top-up (the ctl decides whether it has anything to do). After the
+	// owed saves when there were any, at once otherwise. Beside probe(),
+	// which it calls: the first cut declared it in the file's anonymous
+	// namespace and the link found no such function (x64 run 84).
+	static void batch(Window* window)
+	{
+		LOG(LogInfo) << "ProxyCards: the link's RetroAchievements batch starts";
+		probe(window, false);
+		OfflineAchievements::topUpWhenOnline(window);
 	}
 
 	void linkReturned(Window* window)
