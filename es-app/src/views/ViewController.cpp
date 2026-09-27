@@ -1464,14 +1464,17 @@ void ViewController::reloadAllGames(Window* window, bool deleteCurrentGui, bool 
 		Settings::setRemoveMultiDiskContent(removeMultiDiskContent);		
 		Settings::setPackGamelists(false);
 		Settings::setBuildMultiDiskContentCache(false);
-
-		// ROCKNIX fork #299 (D-RA-035): UPDATE GAMELISTS is where new games are
-		// found, so it is where they are indexed for achievements too, as at
-		// startup -- and the index's end runs the offline achievements' full
-		// top-up when it hashed any, its card stacked under this update's.
-		if (Settings::CheevosCheckIndexesAtStart() && !ThreadedHasher::isRunning())
-			ThreadedHasher::start(window, ThreadedHasher::HASH_CHEEVOS_MD5, false, true);
 	}
+
+	// ROCKNIX fork #299 (D-RA-035): UPDATE GAMELISTS is where new games are
+	// found, so it is where they are indexed for achievements too, as at
+	// startup -- and the index's end runs the offline achievements' full
+	// top-up when it hashed any, its card stacked under this update's. The
+	// start is SystemData::loadConfig's, above, which runs the startup index
+	// whenever it is handed a window (fork #183). A second start here, guarded
+	// only by isRunning(), fired exactly when that one had failed -- offline --
+	// and fetched the hash library again at once: twice the wait on the
+	// LOADING screen and two toasts (fork #300). One attempt per reload.
 }
 
 void ViewController::setActiveView(std::shared_ptr<GuiComponent> view)
