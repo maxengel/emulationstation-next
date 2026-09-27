@@ -237,15 +237,20 @@ namespace
 			// "if it's just doing an update, it can say X number of games
 			// ready for offline play"). A stamp an older ctl wrote has no
 			// added=, and cached stood for it.
-			const int added = s.added >= 0 ? s.added : s.cached;
+			// A run with nothing new writes no stamp (the row's line keeps the
+			// last scan that said something), so its count is the ready file's;
+			// a stamp from before this run says nothing about it.
+			const bool stamped = s.ran && s.when >= startedAt;
+			const int added = stamped ? (s.added >= 0 ? s.added : s.cached) : 0;
+			const int ready = stamped ? s.ready : OfflineAchievements::readyCount();
 			if (added == 1)
 				action.push_back(_("1 GAME ADDED FOR OFFLINE PLAY."));
 			else if (added > 1)
 				action.push_back(Utils::String::format(_("%d GAMES ADDED FOR OFFLINE PLAY.").c_str(), added));
-			else if (s.ready == 1)
+			else if (ready == 1)
 				action.push_back(_("1 GAME READY FOR OFFLINE PLAY."));
-			else if (s.ready > 1)
-				action.push_back(Utils::String::format(_("%d GAMES READY FOR OFFLINE PLAY.").c_str(), s.ready));
+			else if (ready > 1)
+				action.push_back(Utils::String::format(_("%d GAMES READY FOR OFFLINE PLAY.").c_str(), ready));
 			else
 				action.push_back(_("YOUR OFFLINE ACHIEVEMENTS ARE UP TO DATE."));
 		}
@@ -257,7 +262,9 @@ namespace
 		card->updateTitle(TROPHY + _("UPDATE OFFLINE ACHIEVEMENTS"));
 		card->updateText(CloudText::outcomeCandidates(outcome), action);
 		card->updatePercent(ok ? 100 : -1);
-		LOG(LogInfo) << "ProxyCards: the top-up card ended rc " << rc << " cached " << s.cached << " added " << s.added << " ready " << s.ready;
+		LOG(LogInfo) << "ProxyCards: the top-up card ended rc " << rc << " cached " << s.cached << " added " << s.added << " ready " << s.ready
+			<< " says added " << (ok && s.ran && s.when >= startedAt ? (s.added >= 0 ? s.added : s.cached) : 0)
+			<< " ready " << (ok && s.ran && s.when >= startedAt ? s.ready : OfflineAchievements::readyCount());
 		std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 		card->close();
 	}
