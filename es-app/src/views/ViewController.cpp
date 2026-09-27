@@ -16,6 +16,7 @@
 #include "Log.h"
 #include "Scripting.h"
 #include "Settings.h"
+#include "ThreadedHasher.h"
 #include "SystemData.h"
 #include "Window.h"
 #include "guis/GuiDetectDevice.h"
@@ -1463,6 +1464,13 @@ void ViewController::reloadAllGames(Window* window, bool deleteCurrentGui, bool 
 		Settings::setRemoveMultiDiskContent(removeMultiDiskContent);		
 		Settings::setPackGamelists(false);
 		Settings::setBuildMultiDiskContentCache(false);
+
+		// ROCKNIX fork #299 (D-RA-035): UPDATE GAMELISTS is where new games are
+		// found, so it is where they are indexed for achievements too, as at
+		// startup -- and the index's end runs the offline achievements' full
+		// top-up when it hashed any, its card stacked under this update's.
+		if (Settings::CheevosCheckIndexesAtStart() && !ThreadedHasher::isRunning())
+			ThreadedHasher::start(window, ThreadedHasher::HASH_CHEEVOS_MD5, false, true);
 	}
 }
 

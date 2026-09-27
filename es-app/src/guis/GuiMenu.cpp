@@ -7689,7 +7689,9 @@ void GuiMenu::updateGameLists(Window* window, bool confirm)
 	
 	if (!confirm)
 	{
-		ViewController::reloadAllGames(window, true, true);
+		// The same update without the question (the API, the collections page): the
+		// same rescan, and the same index of new games after it (fork #299).
+		ViewController::reloadAllGames(window, true, true, true);
 		return;
 	}
 

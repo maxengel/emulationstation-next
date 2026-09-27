@@ -179,7 +179,7 @@ namespace
 				if (!wanted->exchange(false))
 					return;
 				AsyncNotificationComponent* c = window->createAsyncNotificationComponent(true);
-				c->updateTitle(TROPHY + _("UPDATING OFFLINE ACHIEVEMENTS..."));
+				c->updateTitle(TROPHY + _("UPDATING YOUR OFFLINE ACHIEVEMENTS..."));
 				c->updateText(_("STARTING..."));
 				c->updatePercent(-1);
 				made->set_value(c);
@@ -198,14 +198,13 @@ namespace
 			const CloudText::RunningProgress p = OfflineAchievements::runningProgress();
 			if (!p.running)
 				continue;
-			// Work worth a card is games to add (the indexed pass writes index and
-			// total); the recently played re-read runs with neither and says
-			// nothing (fork #299: the maintainer met the card at wake, over a run
-			// with nothing to add -- "it should only happen when we know that
-			// there are achievements or other items to be done").
-			if (p.total > 0)
-				sawWork = true;
-			if (card == nullptr && sawWork && screenFree())
+			// Every run the ctl makes is worth its card (fork #299, D-UI-103): the
+			// link's return runs only when a game was played since the last
+			// attempt, and the index's run only when it found new games, so a run
+			// that shows is a run with something to look for -- and the card's
+			// words say what it is doing.
+			sawWork = true;
+			if (card == nullptr && screenFree())
 				card = attach();
 			if (card != nullptr && p.total > 0)
 				card->updateText(Utils::String::format(_("%d OF %d").c_str(), p.index, p.total));
