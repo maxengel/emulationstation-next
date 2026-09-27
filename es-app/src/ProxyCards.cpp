@@ -93,7 +93,7 @@ namespace
 		const auto started = std::chrono::steady_clock::now();
 		while (pending > 0 && std::chrono::steady_clock::now() - started < std::chrono::seconds(SEND_BOUND_SECONDS))
 		{
-			card->updateText(Utils::String::format(_("%d TO SEND").c_str(), pending));
+			card->updateText(Utils::String::format(_("SENDING %d EARNED OFFLINE...").c_str(), pending));
 			std::this_thread::sleep_for(std::chrono::seconds(1));
 			pending = OfflineAchievements::pendingAwards();
 		}
@@ -109,19 +109,19 @@ namespace
 		{
 			outcome = _("COMPLETED");
 			token = sent ? "sent" : "completed";
-			// Longest first; the destination is implied, and named only
-			// where the line has room for it (D-UI-096).
-			action.push_back(_("OFFLINE ACHIEVEMENTS HAVE BEEN SENT TO RETROACHIEVEMENTS."));
-			action.push_back(_("OFFLINE ACHIEVEMENTS HAVE BEEN SENT."));
+			// Longest first (D-UI-096); the title names RetroAchievements, so
+			// the line says what happened and nothing the title said (D-UI-107).
+			action.push_back(_("WHAT YOU EARNED OFFLINE IS NOW ON YOUR ACCOUNT."));
+			action.push_back(_("NOW ON YOUR ACCOUNT."));
 		}
 		else
 		{
-			why = pending < 0 ? _("THE OFFLINE ACHIEVEMENTS SERVICE DIDN'T ANSWER") : _("RETROACHIEVEMENTS STOPPED ANSWERING");
+			why = pending < 0 ? _("THIS DEVICE'S OFFLINE SERVICE DIDN'T ANSWER") : _("IT STOPPED ANSWERING");
 			outcome = std::string(_("COULDN'T FINISH")) + " - " + why;
 			token = "not-sent";
 			action.push_back(_("IT'LL TRY AGAIN WHEN YOU'RE CONNECTED."));
 		}
-		card->updateTitle(TROPHY + _("SEND OFFLINE ACHIEVEMENTS"));
+		card->updateTitle(TROPHY + _("RETROACHIEVEMENTS"));
 		card->updateText(CloudText::outcomeCandidates(outcome), action);
 		card->updatePercent(done ? 100 : -1);
 		ThreadedCloudSync::writeStamp(LINK_STAMP, done ? 0 : 5, token, why);
@@ -200,7 +200,7 @@ namespace
 				if (!wanted->exchange(false))
 					return;
 				AsyncNotificationComponent* c = window->createAsyncNotificationComponent(true);
-				c->updateTitle(TROPHY + _("UPDATING YOUR OFFLINE ACHIEVEMENTS..."));
+				c->updateTitle(TROPHY + _("RETROACHIEVEMENTS (OFFLINE)"));
 				c->updateText(_("STARTING..."));
 				c->updatePercent(-1);
 				made->set_value(c);
@@ -228,7 +228,7 @@ namespace
 			if (card == nullptr && screenFree())
 				card = attach();
 			if (card != nullptr && p.total > 0)
-				card->updateText(Utils::String::format(_("%d OF %d").c_str(), p.index, p.total));
+				card->updateText(Utils::String::format(_("GETTING GAME %d OF %d READY...").c_str(), p.index, p.total));
 		}
 		ctl.join();
 		// A game list updated offline (fork #299, D-UI-104): the index found
@@ -278,23 +278,25 @@ namespace
 			const bool stamped = s.ran && s.when >= startedAt;
 			const int added = stamped ? (s.added >= 0 ? s.added : s.cached) : 0;
 			const int ready = stamped ? s.ready : OfflineAchievements::readyCount();
+			// The title says RETROACHIEVEMENTS (OFFLINE); the line says only
+			// what changed (D-UI-107, the maintainer's rule for every card).
 			if (added == 1)
-				action.push_back(_("1 GAME ADDED FOR OFFLINE PLAY."));
+				action.push_back(_("1 MORE GAME IS READY."));
 			else if (added > 1)
-				action.push_back(Utils::String::format(_("%d GAMES ADDED FOR OFFLINE PLAY.").c_str(), added));
+				action.push_back(Utils::String::format(_("%d MORE GAMES ARE READY.").c_str(), added));
 			else if (ready == 1)
-				action.push_back(_("1 GAME READY FOR OFFLINE PLAY."));
+				action.push_back(_("1 GAME IS READY."));
 			else if (ready > 1)
-				action.push_back(Utils::String::format(_("%d GAMES READY FOR OFFLINE PLAY.").c_str(), ready));
+				action.push_back(Utils::String::format(_("%d GAMES ARE READY.").c_str(), ready));
 			else
-				action.push_back(_("YOUR OFFLINE ACHIEVEMENTS ARE UP TO DATE."));
+				action.push_back(_("EVERYTHING'S UP TO DATE."));
 		}
 		else
 		{
 			outcome = std::string(_("COULDN'T FINISH")) + " - " + OfflineAchievements::scanWhy(s.why);
 			action.push_back(_("IT'LL TRY AGAIN NEXT TIME YOU'RE CONNECTED."));
 		}
-		card->updateTitle(TROPHY + _("UPDATE OFFLINE ACHIEVEMENTS"));
+		card->updateTitle(TROPHY + _("RETROACHIEVEMENTS (OFFLINE)"));
 		card->updateText(CloudText::outcomeCandidates(outcome), action);
 		card->updatePercent(ok ? 100 : -1);
 		LOG(LogInfo) << "ProxyCards: the top-up card ended rc " << rc << " cached " << s.cached << " added " << s.added << " ready " << s.ready
@@ -359,7 +361,7 @@ namespace ProxyCards
 					sSavesOwed = true;
 				sSendShowing = true;
 				AsyncNotificationComponent* card = window->createAsyncNotificationComponent(true);
-				card->updateTitle(TROPHY + _("SENDING OFFLINE ACHIEVEMENTS..."));
+				card->updateTitle(TROPHY + _("RETROACHIEVEMENTS"));
 				card->updateText(_("STARTING..."));
 				card->updatePercent(-1);
 				std::thread(runSend, window, card).detach();

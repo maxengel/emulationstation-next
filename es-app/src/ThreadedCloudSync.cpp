@@ -543,13 +543,15 @@ void ThreadedCloudSync::run()
 				&& OfflineAchievements::pendingAwards() > 0;
 			if (awardsWaiting)
 				LOG(LogInfo) << "ThreadedCloudSync: the exit card names the achievements waiting to be sent";
+			// The title already says SYNCING SAVES; the line says when, and
+			// nothing the title said (D-UI-107).
 			const std::string savesWaiting = awardsWaiting
-				? _("SAVES WILL BE SYNCED AND ACHIEVEMENTS SENT NEXT TIME YOU'RE CONNECTED.")
-				: _("SAVES WILL BE SYNCED NEXT TIME YOU'RE CONNECTED.");
+				? _("THEY'LL GO UP NEXT TIME YOU'RE CONNECTED, WITH YOUR ACHIEVEMENTS.")
+				: _("THEY'LL GO UP NEXT TIME YOU'RE CONNECTED.");
 			action.push_back(inPlace + " " + savesWaiting);
 			action.push_back(savesWaiting);
 			if (awardsWaiting)
-				action.push_back(_("SAVES AND ACHIEVEMENTS GO UP NEXT TIME YOU'RE CONNECTED."));
+				action.push_back(_("THEY GO UP WITH YOUR ACHIEVEMENTS WHEN YOU'RE BACK."));
 		}
 		else
 		{
@@ -558,7 +560,7 @@ void ThreadedCloudSync::run()
 
 			std::string recover;
 			if (cancelled && mGameExitSync)
-				recover = _("YOUR SAVES GO UP WHEN YOU EXIT THE GAME.");
+				recover = _("THEY GO UP WHEN YOU EXIT THE GAME.");
 			else if (mOrigin == Origin::Startup)
 				recover = _("IT'LL TRY AGAIN AT STARTUP, OR SYNC NOW FROM GAME SETTINGS.");
 			else if (mOrigin == Origin::Exit)
