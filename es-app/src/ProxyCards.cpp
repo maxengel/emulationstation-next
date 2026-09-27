@@ -210,6 +210,18 @@ namespace
 				card->updateText(Utils::String::format(_("%d OF %d").c_str(), p.index, p.total));
 		}
 		ctl.join();
+		// A game list updated offline (fork #299, D-UI-104): the index found
+		// games and the ctl could not reach RetroAchievements (69). It left
+		// its marker, and the link's return lists the library once for it,
+		// so the toast's promise is the ctl's to keep.
+		if (afterIndex && rc == 69)
+		{
+			LOG(LogInfo) << "ProxyCards: the index's top-up was refused offline; the toast says the new games' achievements come when connected";
+			window->postToUiThread([window]
+			{
+				window->displayNotificationMessage(TROPHY + _("YOU'RE NOT ONLINE. NEW GAMES GET THEIR OFFLINE ACHIEVEMENTS NEXT TIME YOU'RE CONNECTED."));
+			});
+		}
 		// A run too quick for the poll to have seen its progress file still
 		// left its stamp: work was done when the stamp is this run's and
 		// counts a game added or a fetch failed.
