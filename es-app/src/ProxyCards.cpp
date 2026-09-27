@@ -148,12 +148,14 @@ namespace
 	};
 
 	// One sentence for both ways an index can end offline (D-UI-104): the
-	// ctl's probe refused, or the hash library never came.
+	// ctl's probe refused, or the hash library never came. Sized to the 640x480
+	// toast (D-UI-105): the first cut's "...GET THEIR OFFLINE ACHIEVEMENTS NEXT
+	// TIME YOU'RE CONNECTED." clipped after NEXT TIME Y on the guest's frame.
 	static void offlineIndexToast(Window* window)
 	{
 		window->postToUiThread([window]
 		{
-			window->displayNotificationMessage(TROPHY + _("YOU'RE NOT ONLINE. NEW GAMES GET THEIR OFFLINE ACHIEVEMENTS NEXT TIME YOU'RE CONNECTED."));
+			window->displayNotificationMessage(TROPHY + _("YOU'RE NOT ONLINE. NEW GAMES GET OFFLINE ACHIEVEMENTS ONCE YOU ARE."));
 		});
 	}
 
