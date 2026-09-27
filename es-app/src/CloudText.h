@@ -411,7 +411,9 @@ namespace CloudText
 		time_t when = 0;
 		int code = 0;
 		bool topup = false;   // the automatic run, not one the player pressed
-		int cached = 0;       // games this run added
+		int cached = 0;       // games this run cached, new and re-read alike
+		int added = -1;       // games new to the store this run (the ctl's added=, fork #298); -1 when the
+		                      // stamp does not say -- an older ctl's, where cached stood for it
 		int skipped = 0;      // ROMs RetroAchievements does not know
 		int ready = 0;        // games cached in all, after the run
 		bool limit = false;   // the proxy's cap was reached

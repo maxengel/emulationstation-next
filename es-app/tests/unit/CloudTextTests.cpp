@@ -1038,6 +1038,17 @@ TEST_CASE("parseScanStamp reads raofflineproxy-ctl's last-scan line")
 	CHECK(s.ready == 3);
 	CHECK(s.why == "RETROACHIEVEMENTS_STOPPED_ANSWERING");
 
+	// A stamp from before the ctl wrote added= (fork #298) says nothing about it: -1, and the card falls back to cached.
+	CHECK(s.added == -1);
+
+	// A top-up that re-read five games and added none: the card says the games are ready, not added.
+	s = parseScanStamp("1789400150 0 topup cached=5 added=0 skipped=0 ready=12 limit=0 indexed=0 errors=0");
+	CHECK(s.cached == 5);
+	CHECK(s.added == 0);
+	CHECK(s.ready == 12);
+	s = parseScanStamp("1789400160 0 topup cached=5 added=2 skipped=0 ready=14 limit=0");
+	CHECK(s.added == 2);
+
 	// The cap.
 	s = parseScanStamp("  1789400200 0 scan cached=100 skipped=40 ready=100 limit=1  ");
 	CHECK(s.ran);

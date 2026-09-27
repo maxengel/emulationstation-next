@@ -3,6 +3,8 @@
 #include "CloudOffer.h"
 #include "CloudText.h"
 #include "CloudTransferJob.h"
+#include "Log.h"
+#include "OfflineAchievements.h"
 #include "ProxyCards.h"
 #include "Window.h"
 #include "components/AsyncNotificationComponent.h"
@@ -533,9 +535,21 @@ void ThreadedCloudSync::run()
 			// mechanism behind the sentence (D-RA-030): the link's return
 			// runs the sync that is owed, with a card (ProxyCards).
 			const std::string inPlace = inPlaceClause(CloudText::verbOf(mCommand), mMoved);
-			const std::string savesWaiting = _("SAVES WILL BE SYNCED NEXT TIME YOU'RE CONNECTED.");
+			// When awards earned offline wait in the proxy's queue, the line
+			// names them too (fork #298): they go with the saves at the link's
+			// return (ProxyCards). The ctl is asked here, off the interface
+			// thread; a device without the proxy has no awards to name.
+			const bool awardsWaiting = OfflineAchievements::available() && OfflineAchievements::toggleOn()
+				&& OfflineAchievements::pendingAwards() > 0;
+			if (awardsWaiting)
+				LOG(LogInfo) << "ThreadedCloudSync: the exit card names the achievements waiting to be sent";
+			const std::string savesWaiting = awardsWaiting
+				? _("SAVES WILL BE SYNCED AND ACHIEVEMENTS SENT NEXT TIME YOU'RE CONNECTED.")
+				: _("SAVES WILL BE SYNCED NEXT TIME YOU'RE CONNECTED.");
 			action.push_back(inPlace + " " + savesWaiting);
 			action.push_back(savesWaiting);
+			if (awardsWaiting)
+				action.push_back(_("SAVES AND ACHIEVEMENTS GO UP NEXT TIME YOU'RE CONNECTED."));
 		}
 		else
 		{

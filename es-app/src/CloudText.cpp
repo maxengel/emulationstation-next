@@ -799,6 +799,7 @@ CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 		if (!number(value, n) || n > 1000000)
 			continue;
 		if (key == "cached")       stamp.cached = (int) n;
+		else if (key == "added")   stamp.added = (int) n;
 		else if (key == "skipped") stamp.skipped = (int) n;
 		else if (key == "ready")   stamp.ready = (int) n;
 		else if (key == "limit")   stamp.limit = n != 0;
