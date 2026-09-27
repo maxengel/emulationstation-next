@@ -291,6 +291,8 @@ void ThreadedCloudSync::run()
 						mPhase = phase;
 						mBytesMoving = false;
 						mCountShown = false;
+						mFilesDone = -1;
+						mFilesTotal = -1;
 						say(_("STARTING..."));
 						bar(-1);
 					}
@@ -364,6 +366,13 @@ void ThreadedCloudSync::run()
 				if (live.total > 0)
 					mBytesMoving = true;
 			}
+			// The count line names no words of its own (liveWords keeps them),
+			// but the byte line's words say which file is moving from it.
+			if (live.kind == CloudText::LiveLine::Kind::Files)
+			{
+				mFilesDone = live.sent;
+				mFilesTotal = live.total;
+			}
 			std::string shown;
 			switch (CloudText::liveWords(live, mBytesMoving, mCountShown))
 			{
@@ -376,10 +385,37 @@ void ThreadedCloudSync::run()
 				mCountShown = true;
 				break;
 			case CloudText::LiveWords::Bytes:
-				shown = Utils::String::format(_("%s OF %s").c_str(),
-					CloudText::sizeLabel((unsigned long) live.sent).c_str(),
-					CloudText::sizeLabel((unsigned long) live.total).c_str());
-				break;
+			{
+				// The transfer says that it is one, which file of how many, and
+				// how many bytes of how many, beside the bar (fork #304,
+				// D-UI-108; the maintainer: "transferring: file 1 of n (x KB/y
+				// KB)"). The half's verb stands in for TRANSFERRING where the
+				// sync has halves; the shorter candidates follow, longest first,
+				// and the card shows the first that fits (D-UI-035).
+				const std::string x = CloudText::sizeLabel((unsigned long) live.sent);
+				const std::string y = CloudText::sizeLabel((unsigned long) live.total);
+				const long file = CloudText::fileInFlight(mFilesDone, mFilesTotal);
+				const bool sending = mPhase == CloudText::Phase::Sending;
+				const bool receiving = mPhase == CloudText::Phase::Receiving;
+				std::vector<std::string> lines;
+				if (file > 0)
+				{
+					const std::string verbed = sending ? _("SENDING FILE %d OF %d (%s OF %s)")
+						: receiving ? _("RECEIVING FILE %d OF %d (%s OF %s)") : _("TRANSFERRING FILE %d OF %d (%s OF %s)");
+					lines.push_back(Utils::String::format(verbed.c_str(), (int) file, (int) mFilesTotal, x.c_str(), y.c_str()));
+					lines.push_back(Utils::String::format(_("FILE %d OF %d (%s OF %s)").c_str(), (int) file, (int) mFilesTotal, x.c_str(), y.c_str()));
+				}
+				else
+				{
+					const std::string verbed = sending ? _("SENDING %s OF %s")
+						: receiving ? _("RECEIVING %s OF %s") : _("TRANSFERRING %s OF %s");
+					lines.push_back(Utils::String::format(verbed.c_str(), x.c_str(), y.c_str()));
+				}
+				lines.push_back(Utils::String::format(_("%s OF %s").c_str(), x.c_str(), y.c_str()));
+				if (mWndNotification != nullptr)
+					mWndNotification->updateText(lines, std::vector<std::string>());
+				break;   // said here with the half in the verb, not through say()
+			}
 			case CloudText::LiveWords::Other:
 				shown = live.text;
 				break;

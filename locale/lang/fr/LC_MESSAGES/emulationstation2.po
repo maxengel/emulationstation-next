@@ -6265,3 +6265,24 @@ msgstr "ELLES PARTIRONT AVEC VOS SUCCÈS À VOTRE RETOUR."
 
 msgid "THEY GO UP WHEN YOU EXIT THE GAME."
 msgstr "ELLES PARTIRONT QUAND VOUS QUITTEREZ LE JEU."
+
+msgid "TRANSFERRING FILE %d OF %d (%s OF %s)"
+msgstr "TRANSFERT DU FICHIER %d SUR %d (%s SUR %s)"
+
+msgid "SENDING FILE %d OF %d (%s OF %s)"
+msgstr "ENVOI DU FICHIER %d SUR %d (%s SUR %s)"
+
+msgid "RECEIVING FILE %d OF %d (%s OF %s)"
+msgstr "RÉCEPTION DU FICHIER %d SUR %d (%s SUR %s)"
+
+msgid "FILE %d OF %d (%s OF %s)"
+msgstr "FICHIER %d SUR %d (%s SUR %s)"
+
+msgid "TRANSFERRING %s OF %s"
+msgstr "TRANSFERT DE %s SUR %s"
+
+msgid "SENDING %s OF %s"
+msgstr "ENVOI DE %s SUR %s"
+
+msgid "RECEIVING %s OF %s"
+msgstr "RÉCEPTION DE %s SUR %s"

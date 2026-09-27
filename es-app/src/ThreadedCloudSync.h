@@ -160,6 +160,10 @@ private:
 	int							mBar{-1};
 	bool						mBytesMoving{false};
 	bool						mCountShown{false};
+	// rclone's file count for this half (done / of), from its count line;
+	// the byte line's words name the file in flight from it (fork #304).
+	long						mFilesDone{-1};
+	long						mFilesTotal{-1};
 
 	Window*						mWindow;
 	AsyncNotificationComponent* mWndNotification;

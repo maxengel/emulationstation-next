@@ -635,6 +635,14 @@ LiveWords liveWords(const LiveLine& live, bool bytesMoving, bool countShown)
 	}
 }
 
+long fileInFlight(long filesDone, long filesTotal)
+{
+	if (filesTotal <= 0)
+		return 0;
+	const long next = (filesDone < 0 ? 0 : filesDone) + 1;
+	return next > filesTotal ? filesTotal : next;
+}
+
 Phase phaseOf(const std::string& doingWord)
 {
 	const std::string word = Utils::String::toLower(Utils::String::trim(doingWord));

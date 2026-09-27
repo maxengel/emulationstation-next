@@ -309,6 +309,13 @@ namespace CloudText
 	enum class LiveWords { Keep, Comparing, ComparingCount, Bytes, Other };
 	LiveWords liveWords(const LiveLine& live, bool bytesMoving, bool countShown);
 
+	// The file the transfer is on, for the card's line (fork #304, D-UI-108):
+	// rclone's count line says how many files are done, and the player is
+	// told which one is moving -- done + 1, never past the total. 0 when
+	// rclone has not counted yet (no total), so the line falls back to the
+	// bytes alone.
+	long fileInFlight(long filesDone, long filesTotal);
+
 	// The halves of a composed sync, for the card's bar (D-UI-052, #157).
 	//
 	// A startup sync is two rclone runs back to back -- a restore, then a

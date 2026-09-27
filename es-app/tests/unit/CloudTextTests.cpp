@@ -1208,3 +1208,13 @@ TEST_CASE("exitSyncOwed: skipped for no network, and nothing has synced since")
 	CHECK_FALSE(CloudText::exitSyncOwed("1790440038 0 completed", "", ""));          // the exit sync went
 	CHECK_FALSE(CloudText::exitSyncOwed("", "", ""));
 }
+
+TEST_CASE("fileInFlight names the file that is moving from rclone's done count")
+{
+	CHECK(CloudText::fileInFlight(0, 7) == 1);     // none done yet: the first is moving
+	CHECK(CloudText::fileInFlight(3, 7) == 4);     // three done: the fourth
+	CHECK(CloudText::fileInFlight(7, 7) == 7);     // all done: never past the total
+	CHECK(CloudText::fileInFlight(-1, 7) == 1);    // a count not seen yet reads as none done
+	CHECK(CloudText::fileInFlight(0, 0) == 0);     // rclone has not counted: the bytes alone
+	CHECK(CloudText::fileInFlight(2, -1) == 0);
+}
