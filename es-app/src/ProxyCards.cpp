@@ -198,8 +198,14 @@ namespace
 			const CloudText::RunningProgress p = OfflineAchievements::runningProgress();
 			if (!p.running)
 				continue;
-			sawWork = true;
-			if (card == nullptr && screenFree())
+			// Work worth a card is games to add (the indexed pass writes index and
+			// total); the recently played re-read runs with neither and says
+			// nothing (fork #299: the maintainer met the card at wake, over a run
+			// with nothing to add -- "it should only happen when we know that
+			// there are achievements or other items to be done").
+			if (p.total > 0)
+				sawWork = true;
+			if (card == nullptr && sawWork && screenFree())
 				card = attach();
 			if (card != nullptr && p.total > 0)
 				card->updateText(Utils::String::format(_("%d OF %d").c_str(), p.index, p.total));
