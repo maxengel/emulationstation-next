@@ -147,15 +147,24 @@ namespace
 		~TopUpEnd() { sTopUpRunning = false; handOff(window); }
 	};
 
-	// One sentence for both ways an index can end offline (D-UI-104): the
-	// ctl's probe refused, or the hash library never came. Sized to the 640x480
-	// toast (D-UI-105): the first cut's "...GET THEIR OFFLINE ACHIEVEMENTS NEXT
-	// TIME YOU'RE CONNECTED." clipped after NEXT TIME Y on the guest's frame.
-	static void offlineIndexToast(Window* window)
+	// One card for both ways an index can end offline (D-UI-104): the ctl's
+	// probe refused, or the hash library never came. The maintainer's shape
+	// and words (D-UI-106, 2026-09-27): the trophy and a title, the sentence
+	// under it, as the other RetroAchievements cards are drawn -- a one-line
+	// toast clipped the first sentence at 640x480 and had no room for a
+	// second (D-UI-105). Five seconds, as those cards' outcomes stand.
+	static void offlineIndexCard(Window* window)
 	{
 		window->postToUiThread([window]
 		{
-			window->displayNotificationMessage(TROPHY + _("YOU'RE NOT ONLINE. NEW GAMES GET OFFLINE ACHIEVEMENTS ONCE YOU ARE."));
+			AsyncNotificationComponent* card = window->createAsyncNotificationComponent();
+			card->updateTitle(TROPHY + _("RETROACHIEVEMENTS (OFFLINE)"));
+			card->updateText(_("NEWLY ADDED GAMES WILL BE ENABLED ONCE YOU RECONNECT."));
+			std::thread([card]
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+				card->close();
+			}).detach();
 		});
 	}
 
@@ -228,8 +237,8 @@ namespace
 		// so the toast's promise is the ctl's to keep.
 		if (afterIndex && rc == 69)
 		{
-			LOG(LogInfo) << "ProxyCards: the index's top-up was refused offline; the toast says the new games' achievements come when connected";
-			offlineIndexToast(window);
+			LOG(LogInfo) << "ProxyCards: the index's top-up was refused offline; the card says the new games are enabled once reconnected";
+			offlineIndexCard(window);
 		}
 		// A run too quick for the poll to have seen its progress file still
 		// left its stamp: work was done when the stamp is this run's and
@@ -399,8 +408,8 @@ namespace ProxyCards
 	{
 		if (!OfflineAchievements::available() || !OfflineAchievements::toggleOn())
 			return;
-		LOG(LogInfo) << "ProxyCards: the index ran offline with " << games << " game(s) to identify; the toast says the new games' achievements come when connected, and the ctl is told (index-offline)";
-		offlineIndexToast(window);
+		LOG(LogInfo) << "ProxyCards: the index ran offline with " << games << " game(s) to identify; the card says the new games are enabled once reconnected, and the ctl is told (index-offline)";
+		offlineIndexCard(window);
 		std::thread([] { OfflineAchievements::markIndexOffline(); }).detach();
 	}
 }
