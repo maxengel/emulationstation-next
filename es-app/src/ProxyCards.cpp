@@ -36,14 +36,6 @@ namespace
 	const int SEND_BOUND_SECONDS = 45;
 
 	std::atomic<bool> sSendRunning{ false };
-	// #305 (the maintainer: saves first, then the RetroAchievements work as
-	// one batch): at the link's return the owed saves sync goes first when
-	// one is owed, and the batch -- the send card, the top-up -- starts when
-	// its card ends (afterSync); with no saves owed the batch runs at once.
-	// It was the other way round (#298), and the send card's stamp, written
-	// by the proxy seconds after its queue empties, was found by the probe
-	// at the saves card's end and shown as a second card for the same batch.
-	static std::atomic<bool> sSendShowing{ false };
 	// One top-up watcher at a time (audit #307 PL-056): a second one read
 	// the same progress file and raised a second card beside the first,
 	// whose ctl had refused it (75) and whose card then said COULDN'T
@@ -58,6 +50,13 @@ namespace
 	// the player's choice, said in the sync card's words for the same
 	// choice, not a failure (#308 1-raoffline F-RA-09 / F-RA-17).
 	static std::atomic<bool> sTopUpStoppedForGame{ false };
+	// #305 (the maintainer: saves first, then the RetroAchievements work as
+	// one batch): at the link's return the owed saves sync goes first when
+	// one is owed, and the batch -- the send card, the top-up -- starts when
+	// its card ends (afterSync); with no saves owed the batch runs at once.
+	// It was the other way round (#298), and the send card's stamp, written
+	// by the proxy seconds after its queue empties, was found by the probe
+	// at the saves card's end and shown as a second card for the same batch.
 	static std::atomic<bool> sBatchOwed{ false };
 	// A stamp the proxy writes after the queue has emptied is the send
 	// card's to take: it waits this long for it before saying the outcome.
@@ -158,7 +157,6 @@ namespace
 		sSendRunning = false;
 		std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 		card->close();
-		sSendShowing = false;
 	}
 
 	// The top-up card's why: the scan's words, except where the scan's
@@ -447,7 +445,6 @@ namespace ProxyCards
 					sSendRunning = false;   // the proxy sends anyway; the screen is taken
 					return;
 				}
-				sSendShowing = true;
 				AsyncNotificationComponent* card = window->createAsyncNotificationComponent(true);
 				card->updateTitle(TROPHY + _("RETROACHIEVEMENTS"));
 				card->updateText(_("STARTING..."));
