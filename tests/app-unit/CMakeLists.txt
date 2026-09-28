@@ -7,7 +7,8 @@
 #
 # app-unit-tests: header-only pure code the application calls (the journey
 # tiers a settings-first restore carries across its restart; the folder
-# merge a rescan uses to keep every holder's FileData alive).
+# merge a rescan uses to keep every holder's FileData alive; who holds the
+# offline achievements' run lock, with real files and processes).
 #
 # proxycards-tests: the shipped es-app/src/ProxyCards.cpp itself, compiled
 # against the small doubles under fakes/ -- the window, the card, the cloud
@@ -31,6 +32,7 @@ add_executable(app-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/JourneyTiersTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/FolderMergeTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/RunLockTests.cpp
 )
 target_include_directories(app-unit-tests PRIVATE
 	${ES_ROOT}/es-app/src
