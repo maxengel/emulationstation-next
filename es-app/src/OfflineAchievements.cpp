@@ -14,8 +14,11 @@
 #include "utils/OfflineProxyUrl.h"
 #include "utils/Platform.h"
 #include "utils/StringUtil.h"
+#include <chrono>
 #include <ctime>
+#include <dirent.h>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
 
 namespace
@@ -51,6 +54,41 @@ namespace
 		auto result = ApiSystem::executeScriptLegacy(std::string(CTL) + " " + verb + " 2>/dev/null",
 			[&last](const std::string line) { last = line; });
 		return std::make_pair(last, result.second);
+	}
+
+	// Whether process `pid` has `path` open (audit of the fix round,
+	// G2-E-app-05 gpt / G2-E-app-06 claude). RunLock::holder names the pid
+	// in the lock file when the lock is held and that pid's command line
+	// mentions the ctl -- a mention, not an identity. The ctl writes its pid
+	// just after it takes the lock, so for that moment, and after a run
+	// killed -9, the file names an earlier run's pid, which may by now be
+	// anything whose arguments say raofflineproxy-ctl: a tail of its log, a
+	// grep. The run that holds an flock holds the file open, so a pid is
+	// signalled only when one of its descriptors is that file (the same
+	// device and inode).
+	bool holdsOpen(long pid, const std::string& path)
+	{
+		struct stat want;
+		if (::stat(path.c_str(), &want) != 0)
+			return false;
+		const std::string fds = "/proc/" + std::to_string(pid) + "/fd";
+		DIR* dir = ::opendir(fds.c_str());
+		if (dir == nullptr)
+			return false;
+		bool found = false;
+		while (struct dirent* entry = ::readdir(dir))
+		{
+			if (entry->d_name[0] == '.')
+				continue;
+			struct stat got;
+			if (::stat((fds + "/" + entry->d_name).c_str(), &got) == 0 && got.st_dev == want.st_dev && got.st_ino == want.st_ino)
+			{
+				found = true;
+				break;
+			}
+		}
+		::closedir(dir);
+		return found;
 	}
 }
 
@@ -293,9 +331,23 @@ bool OfflineAchievements::stopRun()
 {
 	// The pid in the lock file names a run only while the lock is held, and
 	// only as the ctl (RunLock): a file a finished or killed run left names a
-	// pid that may belong to anything by now.
-	const long pid = RunLock::holder(SCAN_LOCK, "raofflineproxy-ctl");
-	if (pid <= 1)
-		return false;
-	return ::kill((pid_t) pid, SIGTERM) == 0;
+	// pid that may belong to anything by now. And only a pid that holds the
+	// file open is the run (holdsOpen); while the lock is held by a run that
+	// has not yet written its pid, the file is asked again for half a
+	// second, then nothing is signalled and the launch waits for the run to
+	// end on its own (FileData's launchWhenGone).
+	for (int attempt = 0; ; attempt++)
+	{
+		const long pid = RunLock::holder(SCAN_LOCK, "raofflineproxy-ctl");
+		if (pid > 1 && holdsOpen(pid, SCAN_LOCK))
+			return ::kill((pid_t) pid, SIGTERM) == 0;
+		if (!RunLock::held(SCAN_LOCK))
+			return false;
+		if (attempt >= 10)
+		{
+			LOG(LogWarning) << "OfflineAchievements: the run lock is held, and the pid it names (" << pid << ") does not hold it; nothing was signalled";
+			return false;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
 }
