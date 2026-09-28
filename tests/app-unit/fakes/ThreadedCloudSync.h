@@ -12,4 +12,5 @@ public:
 	                  Origin origin = Origin::None);
 	static bool isRunning();
 	static void writeStamp(const std::string& path, int rc, const std::string& token, const std::string& why);
+	static std::string whyForCode(int rc);
 };

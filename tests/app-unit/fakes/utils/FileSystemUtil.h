@@ -6,4 +6,5 @@ namespace Utils { namespace FileSystem {
 	bool exists(const std::string& path, bool useCache = true);
 	std::string readAllText(const std::string& path);
 	bool removeFile(const std::string& path);
+	std::string getFileName(const std::string& path);
 }}

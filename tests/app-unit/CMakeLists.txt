@@ -4,7 +4,7 @@
 #
 #   cmake -S tests/app-unit -B build-app-unit && cmake --build build-app-unit
 #   ./build-app-unit/app-unit-tests && ./build-app-unit/proxycards-tests
-#   ./build-app-unit/bookkeeper-tests
+#   ./build-app-unit/bookkeeper-tests && ./build-app-unit/jobs-tests
 #
 # app-unit-tests: header-only pure code the application calls (the journey
 # tiers a settings-first restore carries across its restart; the folder
@@ -61,6 +61,26 @@ target_include_directories(proxycards-tests PRIVATE
 	${ES_ROOT}/external
 )
 target_link_libraries(proxycards-tests Threads::Threads)
+
+# jobs-tests: the shipped es-app/src/CloudTransferJob.cpp and
+# OfflineScanJob.cpp -- the transfer and scan pages' runners -- against the
+# doubles, running real commands in real process groups, so a stop, a
+# cancel and a post are the ones a device makes.
+configure_file(${ES_ROOT}/es-app/src/CloudTransferJob.cpp ${CMAKE_BINARY_DIR}/under-test/CloudTransferJob.cpp COPYONLY)
+add_executable(jobs-tests
+	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/JobsTests.cpp
+	${CMAKE_BINARY_DIR}/under-test/CloudTransferJob.cpp
+	${ES_ROOT}/es-app/src/CloudText.cpp
+	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
+)
+target_include_directories(jobs-tests BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/fakes)
+target_include_directories(jobs-tests PRIVATE
+	${ES_ROOT}/es-app/src
+	${ES_ROOT}/es-core/src
+	${ES_ROOT}/external
+)
+target_link_libraries(jobs-tests Threads::Threads)
 
 # bookkeeper-tests: the shipped es-app/src/SaveStateBookkeeper.cpp with its
 # pure queue, against doubles for the script runner and the log, and the

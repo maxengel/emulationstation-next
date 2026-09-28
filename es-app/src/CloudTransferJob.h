@@ -190,6 +190,12 @@ private:
 	std::atomic<pid_t> mPid{0};
 	std::atomic<bool> mStoppedForGame{false};
 	std::atomic<bool> mStoppedByPlayer{false};
+	// The signal a stop asked for (0 for none), and the last one sent: a
+	// stop before the pid line is kept and sent when the line arrives.
+	std::atomic<int> mStopSignal{0};
+	std::atomic<int> mSignalSent{0};
+	void requestStop(int sig);
+	void deliverStop();
 
 	static std::mutex sMutex;
 	static std::shared_ptr<CloudTransferJob> sCurrent;

@@ -82,10 +82,10 @@ bool CloudTransferJob::stopForLaunch(bool hard)
 	if (job == nullptr || job->finished())
 		return false;
 	job->mStoppedForGame = true;
+	job->requestStop(hard ? SIGKILL : SIGTERM);
 	const pid_t pid = job->mPid;
-	if (pid > 0)
-		::kill(-pid, hard ? SIGKILL : SIGTERM);
-	LOG(LogInfo) << "CloudTransferJob: stopped for a game (" << (hard ? "SIGKILL" : "SIGTERM") << ", group " << pid << ")";
+	LOG(LogInfo) << "CloudTransferJob: stopped for a game (" << (hard ? "SIGKILL" : "SIGTERM") << ", group " << pid
+		<< (pid > 0 ? ")" : "; sent when the run says its pid)");
 	return true;
 }
 
@@ -95,11 +95,46 @@ bool CloudTransferJob::stopByPlayer()
 	if (job == nullptr || job->finished())
 		return false;
 	job->mStoppedByPlayer = true;
+	job->requestStop(SIGTERM);
 	const pid_t pid = job->mPid;
-	if (pid > 0)
-		::kill(-pid, SIGTERM);
-	LOG(LogInfo) << "CloudTransferJob: cancelled by the player (SIGTERM, group " << pid << ")";
+	LOG(LogInfo) << "CloudTransferJob: cancelled by the player (SIGTERM, group " << pid
+		<< (pid > 0 ? ")" : "; sent when the run says its pid)");
 	return true;
+}
+
+// A stop is a request the run keeps, not a signal sent once (#308
+// 5-cloud-sync-and-saves gpt F-CS-24, claude F-CS-26). The run's pid
+// arrives on its first line; a stop that came before it used to set the
+// flag and signal nothing, and the command ran to its end under a page
+// that then called it stopped. Now the stop and the reader both call
+// deliverStop, and whichever sees the request and the pid together sends
+// it: the stop sets the request before it reads the pid, the reader the
+// pid before it reads the request, so at least one of them sees both.
+// A SIGKILL replaces a SIGTERM that has not got through; nothing replaces
+// a SIGKILL.
+void CloudTransferJob::requestStop(int sig)
+{
+	if (sig == SIGKILL)
+		mStopSignal = SIGKILL;
+	else
+	{
+		int none = 0;
+		mStopSignal.compare_exchange_strong(none, sig);
+	}
+	deliverStop();
+}
+
+// Each signal once: the stop and the reader can both arrive here with the
+// same request, and the second finds it sent.
+void CloudTransferJob::deliverStop()
+{
+	const int sig = mStopSignal;
+	const pid_t pid = mPid;
+	if (sig == 0 || pid <= 0)
+		return;
+	if (mSignalSent.exchange(sig) == sig)
+		return;
+	::kill(-pid, sig);
 }
 
 bool CloudTransferJob::finished() const
@@ -208,8 +243,12 @@ void CloudTransferJob::handleLine(const std::string& line)
 		switch (protocol.kind)
 		{
 		case CloudText::ProtocolKind::Pid:
-			// run()'s own first line: the group stopForLaunch signals.
+			// run()'s own first line: the group a stop signals -- and a
+			// stop that came before it is sent now (requestStop).
 			mPid = protocol.number;
+			if (mStopSignal != 0)
+				LOG(LogInfo) << "CloudTransferJob: the run said its pid (" << protocol.number << "); sending the stop that came before it";
+			deliverStop();
 			break;
 		case CloudText::ProtocolKind::Why:
 		{
@@ -610,6 +649,17 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 
 	std::unique_lock<std::mutex> lock(mMutex);
 	foldUnit();   // the last unit: no ">>> unit" follows it
+	// A stop that came as the command was ending, and found it done: the
+	// command's own 0 (or rclone's 9, nothing to move) says it completed,
+	// and a completed run is not called stopped (#308 gpt F-CS-24). A run
+	// the stop did end exits by the signal or by the scripts' trap, 130 --
+	// never 0.
+	if ((mStoppedForGame || mStoppedByPlayer) && (ret == 0 || ret == 9))
+	{
+		LOG(LogInfo) << "CloudTransferJob: the stop came after the command had finished; it completed";
+		mStoppedForGame = false;
+		mStoppedByPlayer = false;
+	}
 	// Stopped for a game, or by the player (D-UI-078): SIGTERM shows up as
 	// a signal or as 143, and neither is what happened. CloudExit::Stopped
 	// is the scripts' own word for being stopped, whoever did the stopping
