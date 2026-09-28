@@ -736,9 +736,50 @@ std::string FileData::getMessageFromExitCode(int exitCode)
 // The launch a STOP IT AND PLAY leads to, on the next frame: the dialog or
 // spinner that asked is off the stack first, and the launch effect and the
 // emulator take the screen from the view, as a press on the game would.
+//
+// A save state chosen in the manager is carried by its file (options.
+// saveStateFile, rememberSaveState) and found again here, when the launch
+// runs: the repository's refresh -- the manager's jobs call it as they land
+// -- deletes every state object, and a launch deferred behind a gate held a
+// copy of the pointer for as long as the gate took (#308 8-es-menus-and-
+// core claude F-ES-11). A state gone by then is not handed over: the game
+// starts as it would with none chosen, and the log says so.
 static void launchNow(Window* window, FileData* game, const LaunchGameOptions& options)
 {
-	window->postToUiThread([game, options] { ViewController::get()->launch(game, options); });
+	window->postToUiThread([game, options]
+	{
+		LaunchGameOptions now = options;
+		if (!now.saveStateFile.empty())
+		{
+			now.saveStateInfo = nullptr;
+			if (SaveStateRepository::isEnabled(game))
+				for (auto* state : game->getSourceFileData()->getSystem()->getSaveStateRepository()->getSaveStates(game))
+					if (state->fileName == now.saveStateFile)
+					{
+						now.saveStateInfo = state;
+						break;
+					}
+			if (now.saveStateInfo == nullptr)
+				LOG(LogWarning) << "launch: the save state chosen before the wait is gone (" << now.saveStateFile << "); the game starts without it";
+		}
+		ViewController::get()->launch(game, now);
+	});
+}
+
+// The save state the launch was handed, by its file, while the pointer is
+// the repository's live object (launchNow finds it again by it). The three
+// shared states -- none, the auto-save, a new game -- are never deleted and
+// need no name.
+static void rememberSaveState(FileData* game, LaunchGameOptions& options)
+{
+	options.saveStateFile.clear();
+	SaveState* state = options.saveStateInfo;
+	if (state == nullptr || !SaveStateRepository::isEnabled(game))
+		return;
+	SaveStateRepository* repo = game->getSourceFileData()->getSystem()->getSaveStateRepository();
+	if (state == SaveStateRepository::getEmptySaveState() || state == repo->getDefaultAutoSaveSaveState() || state == repo->getDefaultNewGameSaveState())
+		return;
+	options.saveStateFile = state->fileName;
 }
 
 // Wait behind a spinner for a sync or transfer that has been told to stop,
@@ -841,6 +882,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// it set, and a later launch over a later send asked nothing. A relaunch
 	// that meets another question first asks the send's again after it.
 	const bool playThroughSend = sPlayThroughSend.exchange(false);
+	rememberSaveState(this, options);
 
 	// Not while saves are moving -- unless the sync is one EmulationStation
 	// started on its own. A cloud sync reads and writes the same save files

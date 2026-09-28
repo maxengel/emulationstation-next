@@ -70,6 +70,11 @@ struct LaunchGameOptions
 
 	SaveState*	saveStateInfo;
 	bool isSaveStateInfoTemporary;
+	// saveStateInfo by its file, when it is one of its repository's objects
+	// (launchGame records it on the way in): a launch deferred behind a gate
+	// finds the state again by it, since a refresh of the repository deletes
+	// the object (#308 8-es-menus-and-core claude F-ES-11). Empty otherwise.
+	std::string saveStateFile;
 
 	// What the launch command actually carried, read after every rewrite of it
 	// (fork #21 R5). The capture step at exit records these. getEmulator() and
