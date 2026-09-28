@@ -53,7 +53,7 @@ PERSONAL_PATTERNS=(
   '.githooks/'
   'build-tests/'   # the unit tests' build directory and the binary a build leaves there (#308 F-PB-19)
 )
-SECRET_PATTERNS='devpassword=[A-Za-z0-9._%-]{4,}|[?&]y=[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|"(access|refresh)_token" *: *"[A-Za-z0-9._-]{16,}|sk-[A-Za-z0-9_-]{24,}|(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z_]* *[:=] *["'"'"']?[A-Za-z0-9+/=_-]{16,}'
+. "$(dirname "$(readlink -f "$0")")/secret-patterns"
 
 remote_name="${1:-}"
 hooks_path="$(git config --get core.hooksPath || true)"

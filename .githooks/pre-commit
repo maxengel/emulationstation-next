@@ -1,0 +1,20 @@
+#!/bin/bash
+# pre-commit: refuse a commit that would ADD a credential-shaped line, so the
+# push guard (.githooks/pre-push) never meets one in history; the same
+# patterns (.githooks/secret-patterns) and the same two exemptions -- a unit
+# test's maskSecrets( fixture, and this guard's own test's FAKE= value.
+# Written 2026-09-28 (#307 PL-078): a guard that refuses at commit time costs
+# one edit; at push time it costs a history rewrite.
+. "$(dirname "$(readlink -f "$0")")/secret-patterns"
+hits="$(git diff --cached -U0 --no-color --diff-filter=ACMRT \
+  | awk '/^\+\+\+ b\//{f=substr($0,7); next} /^\+\+\+ /{next} /^\+/{print f ": " $0}' \
+  | grep -v -E '^es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp: \+.*maskSecrets\(' \
+  | grep -v -E '^\.githooks/pre-push-test: \+FAKE="' \
+  | grep -E "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -5 || true)"
+if [ -n "${hits}" ]; then
+  echo "pre-commit: this commit would add a credential-shaped line:" >&2
+  echo "${hits}" | sed 's/^/    /' >&2
+  echo "  A placeholder belongs in <angle brackets>; a scanner's test fixture is built at run time, never written as a literal." >&2
+  exit 1
+fi
+exit 0
