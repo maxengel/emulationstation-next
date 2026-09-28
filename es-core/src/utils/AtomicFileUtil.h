@@ -49,15 +49,22 @@ namespace Utils
 		bool copy(const std::string& src, const std::string& dst);
 
 		// The settings lock the shell takes around every get_setting and
-		// set_setting (wait_lock in profile.d/001-functions): a file created
-		// with O_EXCL holding the owner's pid. Same rules, so both sides can
-		// wait on each other: a lock whose pid is alive is waited for; one
-		// whose pid is gone, or that names no pid, is stale and removed --
-		// after a re-read, so a lock released and retaken by another process
-		// between the read and the remove is not stolen from it. Released
-		// only while it still carries this process's pid, for the same
-		// reason. The shell waits forever; acquire() takes a budget, because
-		// it runs on the interface thread.
+		// set_setting (wait_lock in profile.d/001-functions): a file holding
+		// the owner's pid, whose creation fails when it is already there.
+		// Same rules, so both sides can wait on each other: a lock whose pid
+		// is alive is waited for; one whose pid is gone, or that names no pid,
+		// is stale and removed. Released only while it still carries this
+		// process's pid.
+		//
+		// This side's lock is linked into place already holding the pid, so
+		// no waiter ever sees it empty (PL-041); and a stale lock is removed
+		// under an flock on `path`.reap, re-read first, so two waiters that
+		// both judged one dead holder's lock stale cannot remove each other's
+		// new one. The shell's wait_lock removes a stale lock without that
+		// guard (its own half of PL-041); until it takes the same flock, a
+		// shell waiter and this one can still meet in that window. The shell
+		// waits forever; acquire() takes a budget, because it runs on the
+		// interface thread.
 		class PidLock
 		{
 		public:

@@ -238,3 +238,101 @@ TEST_CASE("replacing a file keeps its mode (#308 8b gpt F-ES-08)")
 	CHECK(modeOf(dir / "missing", 0640) == 0640);
 	umask(before);
 }
+
+// ------------------------------------------------------------------ PL-041
+
+TEST_CASE("the lock carries its holder's pid from the moment it exists (PL-041)")
+{
+	// The lock was created empty (O_EXCL) and the pid written after, and the
+	// write's result was thrown away. A waiter that read it in between saw
+	// an empty lock -- which both sides treat as nobody's, and remove. A
+	// reader spinning beside a thousand acquire/release pairs must never
+	// see the file there and empty.
+	ScratchDir dir;
+	const std::string path = dir / ".system.cfg.lock";
+	std::atomic<bool> stop(false);
+	std::atomic<int> emptySeen(0);
+	std::thread reader([&] {
+		while (!stop)
+		{
+			int fd = ::open(path.c_str(), O_RDONLY);
+			if (fd < 0)
+				continue;
+			char buf[32];
+			const ssize_t n = ::read(fd, buf, sizeof(buf));
+			::close(fd);
+			if (n == 0)
+				emptySeen++;
+		}
+	});
+	for (int i = 0; i < 3000; i++)
+	{
+		PidLock lock(path);
+		REQUIRE(lock.acquire(2000));
+		lock.release();
+	}
+	stop = true;
+	reader.join();
+	CHECK(emptySeen.load() == 0);
+}
+
+TEST_CASE("two waiters on a stale lock never both hold it (PL-041)")
+{
+	// Both read the dead holder's pid, both decide the lock is stale; the
+	// first removes it and takes it, and the second's remove -- two steps
+	// after its read -- could take the first one's new lock with it. Forked
+	// waiters, released together at a stale lock, each marking the inside of
+	// its hold with an O_EXCL file: a second mark while one is there is two
+	// holders.
+	ScratchDir dir;
+	const std::string lockPath = dir / ".system.cfg.lock";
+	const std::string inside = dir / "inside";
+	int overlaps = 0;
+	int failures = 0;
+
+	for (int round = 0; round < 200; round++)
+	{
+		put(lockPath, std::to_string((long long) deadPid()) + "\n");
+		int gate[2];
+		REQUIRE(pipe(gate) == 0);
+		std::vector<pid_t> waiters;
+		for (int w = 0; w < 3; w++)
+		{
+			pid_t pid = fork();
+			if (pid == 0)
+			{
+				::close(gate[1]);
+				char c;
+				if (::read(gate[0], &c, 1) < 0)
+					_exit(4);
+				PidLock lock(lockPath);
+				if (!lock.acquire(3000))
+					_exit(2);
+				int fd = ::open(inside.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+				if (fd < 0)
+					_exit(3);
+				::close(fd);
+				usleep(1000);
+				::unlink(inside.c_str());
+				lock.release();
+				_exit(0);
+			}
+			waiters.push_back(pid);
+		}
+		::close(gate[0]);
+		::close(gate[1]);   // everyone goes at once
+		for (pid_t pid : waiters)
+		{
+			int status = 0;
+			waitpid(pid, &status, 0);
+			if (WIFEXITED(status) && WEXITSTATUS(status) == 3)
+				overlaps++;
+			else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+				failures++;
+		}
+		::unlink(inside.c_str());
+		::unlink(lockPath.c_str());
+	}
+	CHECK(overlaps == 0);
+	CHECK(failures == 0);
+}
