@@ -86,7 +86,7 @@ void GuiScraperStart::loadScrapPage()
 	// remembered (#67). They used to be rebuilt with hard-coded defaults on every
 	// visit and on every tab switch, so a choice made before stepping to OPTIONS
 	// was gone on the way back. Each is written by a save function, which runs
-	// when the tab changes and when the page closes — the path the OPTIONS rows
+	// when the tab changes and when the page closes -- the path the OPTIONS rows
 	// already use.
 
 	// Media Filter
@@ -161,7 +161,7 @@ void GuiScraperStart::loadScrapPage()
 
 	// Opened from a game list, the page pre-selects that system ("scrape this
 	// one"). Opened from the main menu, it restores the set used last time, and
-	// falls back to today's default — every system with a platform id — when
+	// falls back to today's default -- every system with a platform id -- when
 	// nothing was remembered or the remembered names match no listed system.
 	std::set<std::string> remembered;
 	for (auto& name : Utils::String::split(Settings::getInstance()->getString("ScraperSystems"), ','))
