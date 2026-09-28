@@ -309,6 +309,7 @@ TEST_CASE("parseStoreGame reads one line of raofflineproxy-ctl summary")
 	CHECK(g.points == 110);
 	CHECK(g.unlocked == 1);
 	CHECK(g.unlockedPoints == 5);
+	CHECK(g.unlockedKnown);
 	CHECK(g.pending == 1);
 
 	// The counts the ctl might leave out read as 0; the icon may be empty.
@@ -318,6 +319,24 @@ TEST_CASE("parseStoreGame reads one line of raofflineproxy-ctl summary")
 	CHECK(bare.points == 0);
 	CHECK(bare.unlocked == 0);
 	CHECK(bare.pending == 0);
+}
+
+// The ctl writes unlocked and unlockedPoints as null when the store's unlock
+// row for the game is missing or cannot be read (#307 PL-057). Read as 0,
+// that was "nothing earned" on the summary for a damaged cache row -- the
+// seat's own complaint. A null is unknown; a 0 is a count.
+TEST_CASE("parseStoreGame reads a null unlock count as unknown, not as none")
+{
+	auto g = parseStoreGame(R"({"id":4902,"title":"Bobl","icon":"","achievements":12,"points":110,"unlocked":null,"unlockedPoints":null,"pending":0})");
+	CHECK(g.ok);   // still a game the store holds
+	CHECK_FALSE(g.unlockedKnown);
+	CHECK(g.achievements == 12);
+	CHECK(g.points == 110);
+
+	auto none = parseStoreGame(R"({"id":4902,"title":"Bobl","icon":"","achievements":12,"points":110,"unlocked":0,"unlockedPoints":0,"pending":0})");
+	CHECK(none.ok);
+	CHECK(none.unlockedKnown);
+	CHECK(none.unlocked == 0);
 }
 
 TEST_CASE("parseStoreGame refuses what is not a game")

@@ -131,6 +131,11 @@ struct Award
 
 	int ScoreAchieved;	
 	int ScoreAchievedHardcore;
+
+	// The device's summary could not read what was earned (the store's
+	// unlock row missing or unreadable, #307 PL-057): NumAchieved and
+	// ScoreAchieved are 0 and mean nothing.
+	bool AchievedUnknown = false;
 };
 
 struct RecentGame
@@ -221,6 +226,8 @@ struct RetroAchievementGame
 	int wonAchievementsSoftcore;
 	int wonAchievementsHardcore;
 	int totalAchievements;
+
+	bool progressUnknown = false;   // Award::AchievedUnknown: what was earned could not be read
 };
 
 struct RetroAchievementInfo

@@ -216,10 +216,15 @@ public:
 		
 		std::string desc; // = mGameInfo.points + " points";
 		
-		if (mGameInfo.scoreHardcore != mGameInfo.scoreSoftcore || mGameInfo.scoreHardcore == 0)
+		// The device's summary could not read what was earned for this game
+		// (#307 PL-057): say so, and draw no bar -- 0 OF 12 and an empty
+		// bar would read as nothing earned.
+		if (mGameInfo.progressUnknown)
+			desc = _("YOUR PROGRESS COULDN'T BE READ");
+		else if (mGameInfo.scoreHardcore != mGameInfo.scoreSoftcore || mGameInfo.scoreHardcore == 0)
 			desc = Utils::String::format(_("%d of %d softcore points").c_str(), mGameInfo.scoreSoftcore, mGameInfo.possibleScore);
 
-		if (mGameInfo.scoreHardcore != 0)
+		if (mGameInfo.scoreHardcore != 0 && !mGameInfo.progressUnknown)
 		{
 			if (!desc.empty())
 				desc = desc + " - ";
@@ -237,13 +242,16 @@ public:
 		setEntry(mItemTemplate, Vector2i(2, 1), false, true); // mText
 		setEntry(mSubstring, Vector2i(2, 2), false, true);
 
-		int percent = mGameInfo.totalAchievements == 0 ? 0 : Math::round(mGameInfo.wonAchievementsSoftcore * 100.0f / mGameInfo.totalAchievements);
-		
-		char trstring[256];
-		snprintf(trstring, 256, _("%d%% (%d of %d)").c_str(), percent, mGameInfo.wonAchievementsSoftcore, mGameInfo.totalAchievements);
-		mProgress = std::make_shared<RetroAchievementProgress>(mWindow, mGameInfo.wonAchievementsSoftcore, mGameInfo.wonAchievementsHardcore, mGameInfo.totalAchievements, Utils::String::trim(trstring));
+		if (!mGameInfo.progressUnknown)
+		{
+			int percent = mGameInfo.totalAchievements == 0 ? 0 : Math::round(mGameInfo.wonAchievementsSoftcore * 100.0f / mGameInfo.totalAchievements);
 
-		setEntry(mProgress, Vector2i(3, 0), false, true, Vector2i(1, 4));
+			char trstring[256];
+			snprintf(trstring, 256, _("%d%% (%d of %d)").c_str(), percent, mGameInfo.wonAchievementsSoftcore, mGameInfo.totalAchievements);
+			mProgress = std::make_shared<RetroAchievementProgress>(mWindow, mGameInfo.wonAchievementsSoftcore, mGameInfo.wonAchievementsHardcore, mGameInfo.totalAchievements, Utils::String::trim(trstring));
+
+			setEntry(mProgress, Vector2i(3, 0), false, true, Vector2i(1, 4));
+		}
 
 		float textHeight = theme->Text.font->getHeight();
 		int height = Math::max(IMAGESIZE + IMAGESPACER, textHeight + mSubstring->getSize().y());
@@ -270,7 +278,8 @@ public:
 			mImage->setColorShift(0x80808080);
 			mImage->setOpacity(120);
 			mSubstring->setOpacity(120);
-			mProgress->setOpacity(120);
+			if (mProgress)
+				mProgress->setOpacity(120);
 		}
 
 		setSize(0, height);
@@ -297,7 +306,8 @@ public:
 	virtual void setColor(unsigned int color)
 	{
 		mSubstring->setColor(color);
-		mProgress->setColor(color);
+		if (mProgress)
+			mProgress->setColor(color);
 	}
 
 	std::string gameId()

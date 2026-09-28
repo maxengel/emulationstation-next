@@ -446,6 +446,7 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 		award.NumAchievedHardcore = 0;
 		award.ScoreAchieved = game.unlockedPoints;
 		award.ScoreAchievedHardcore = 0;
+		award.AchievedUnknown = !game.unlockedKnown;
 		ret.Awarded[recent.GameID] = award;
 		games.push_back(std::make_pair(Utils::String::toUpper(game.title), recent));
 	}
@@ -834,6 +835,7 @@ RetroAchievementInfo RetroAchievements::toRetroAchivementInfo(UserSummary& ret)
 			rg.scoreSoftcore = aw->second.ScoreAchieved;
 			rg.scoreHardcore = aw->second.ScoreAchievedHardcore;
 			rg.possibleScore = aw->second.PossibleScore;
+			rg.progressUnknown = aw->second.AchievedUnknown;
 		}
 
 		info.games.push_back(rg);

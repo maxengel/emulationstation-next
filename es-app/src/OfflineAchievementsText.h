@@ -127,6 +127,11 @@ namespace OfflineAchievementsText
 		int points = 0;
 		int unlocked = 0;
 		int unlockedPoints = 0;
+		// False when the ctl said null: the store's unlock row for the game
+		// is missing or cannot be read, and unlocked is not a count of none
+		// (#307 PL-057). unlocked and unlockedPoints read 0 then, and mean
+		// nothing.
+		bool unlockedKnown = true;
 		int pending = 0;
 	};
 	StoreGame parseStoreGame(const std::string& line);

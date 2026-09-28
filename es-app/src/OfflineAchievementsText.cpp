@@ -162,8 +162,15 @@ OfflineAchievementsText::StoreGame OfflineAchievementsText::parseStoreGame(const
 	game.title = jsonString(doc, "title");
 	game.icon = jsonString(doc, "icon");
 	game.points = jsonInt(doc, "points");
-	game.unlocked = jsonInt(doc, "unlocked");
-	game.unlockedPoints = jsonInt(doc, "unlockedPoints");
+	// null is the ctl's "the unlock row could not be read" (#307 PL-057):
+	// unknown, not none. A count left out altogether still reads 0.
+	if (doc.HasMember("unlocked") && doc["unlocked"].IsNull())
+		game.unlockedKnown = false;
+	else
+	{
+		game.unlocked = jsonInt(doc, "unlocked");
+		game.unlockedPoints = jsonInt(doc, "unlockedPoints");
+	}
 	game.pending = jsonInt(doc, "pending");
 	game.ok = true;
 	return game;
