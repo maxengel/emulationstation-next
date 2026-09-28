@@ -176,3 +176,19 @@ TEST_CASE("a value is the whole shell word, however it is quoted (#308 8b gpt F-
 		== "curl \"https://h/dorequest.php?r=login&u=bob&p=<redacted>\" -o out");
 	CHECK(maskSecrets("sh -c 'tool --password hunter2 && x'") == "sh -c 'tool --password <redacted> && x'");
 }
+
+TEST_CASE("a value quoted inside a quoted command is masked whole (audit of the fixes, gpt coverage 6)")
+{
+	// Inside a quoted string the value ended at the first quote or space of
+	// any kind, so the inner shell's own quoting -- sh -c 'tool --password
+	// "front back"' -- ended it before it began, and the password went to
+	// the log as it was. The first mask stopped at the quote's close; the
+	// F-ES-09 rewrite made it worse. An inner quoted word is one value.
+	CHECK(maskSecrets("sh -c 'tool --password \"front back\"'") == "sh -c 'tool --password <redacted>'");
+	CHECK(maskSecrets("sh -c \"tool --password 'front back'\"") == "sh -c \"tool --password <redacted>\"");
+	CHECK(maskSecrets("sh -c \"tool --password \\\"front back\\\"\"") == "sh -c \"tool --password <redacted>\"");
+	CHECK(maskSecrets("sh -c 'tool --password front\"mid dle\"back && x'") == "sh -c 'tool --password <redacted> && x'");
+	// The enclosing string still ends the value where it ends.
+	CHECK(maskSecrets("sh -c 'x --password hunter2' next") == "sh -c 'x --password <redacted>' next");
+	CHECK(maskSecrets("curl \"https://h/?u=bob&p=hunter2\" -o out") == "curl \"https://h/?u=bob&p=<redacted>\" -o out");
+}

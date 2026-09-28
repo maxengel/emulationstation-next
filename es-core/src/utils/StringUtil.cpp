@@ -564,17 +564,50 @@ namespace Utils
 			if (pos >= s.size())
 				return pos;
 
+			// Inside a quoted string -- the command of an sh -c, a URL -- the
+			// value is a word of the command the string holds: the string's
+			// own closing quote ends it, and so does the inner command's
+			// unquoted whitespace, &, ; or |, but the inner command's own quotes
+			// keep a word whole. They used to end it before it began, and
+			// `sh -c 'tool --password "front back"'` logged the password
+			// (audit of the fixes of #307, gpt's coverage note on F-ES-09).
+			// In a double-quoted string the inner double quote is written \".
 			const char enclosing = maskQuoteAt(s, pos);
 			if (enclosing != 0)
 			{
+				char inner = 0;
 				size_t i = pos;
-				while (i < s.size() && !maskEndsValue(s[i]))
+				while (i < s.size())
 				{
-					if (enclosing == '"' && s[i] == '\\')
+					const char c = s[i];
+					if (enclosing == '"' && c == '\\' && i + 1 < s.size())
+					{
+						if (s[i + 1] == '"' && inner != '\'')
+							inner = inner == '"' ? 0 : '"';
+						i += 2;
+						continue;
+					}
+					if (c == enclosing)
+						return i; // the string itself ends
+					if (inner != 0)
+					{
+						if (c == inner)
+							inner = 0;
 						++i;
+						continue;
+					}
+					if (enclosing == '\'' && c == '\\')
+					{
+						i += 2; // the inner command's escaped character
+						continue;
+					}
+					if (c == '\'' || c == '"')
+						inner = c;
+					else if (maskIsSpace(c) || c == '&' || c == ';' || c == '|')
+						return i;
 					++i;
 				}
-				return i < s.size() ? i : s.size();
+				return s.size();
 			}
 
 			char quote = 0;
