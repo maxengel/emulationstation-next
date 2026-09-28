@@ -4010,6 +4010,23 @@ void GuiMenu::openCloudFolderEditor(Window* window, const std::string& current)
 static std::map<std::string, std::string> cloudSetupInfo();
 
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
+static std::string cloudShellQuote(const std::string& value);
+
+// The picker's selection, handed to the content script as it closes. The
+// names are folder names in the player's cloud (--scan's first field) --
+// the owner's own, or another of their devices', and still data: inside
+// double quotes $(, backticks and " stayed live for the shell
+// executeScriptLegacy runs, so a folder named a$(reboot)b ran (audit #307
+// PL-030). One single-quoted argument, as the script has always taken
+// them (it splits on the spaces itself); what it accepts as a name is the
+// script's to refuse.
+static std::string cloudSetSystemsCommand(const std::vector<std::string>& names)
+{
+	std::string picked;
+	for (auto& name : names)
+		picked += (picked.empty() ? "" : " ") + name;
+	return "/usr/bin/cloud_content_restore --set-systems " + cloudShellQuote(picked);
+}
 // Horizontal padding matching what ComponentList applies to selectable
 // rows, so informational text lines up with the actionable rows.
 #define CLOUD_SETUP_ROW_PADDING Vector4f(10, 0, 10, 0)
@@ -4229,11 +4246,11 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			}
 			s->addSaveFunc([switches]
 			{
-				std::string picked;
+				std::vector<std::string> picked;
 				for (auto& entry : *switches)
 					if (entry.second->getState())
-						picked += (picked.empty() ? "" : " ") + entry.first;
-				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --set-systems \"" + picked + "\"");
+						picked.push_back(entry.first);
+				ApiSystem::executeScriptLegacy(cloudSetSystemsCommand(picked));
 			});
 			// SELECT ALL / SELECT NONE is one button that reads as the thing it
 			// would do next, in the bar with BACK and the verb -- rows in the
