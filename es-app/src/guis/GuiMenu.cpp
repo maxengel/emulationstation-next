@@ -5105,24 +5105,14 @@ static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 // chose for these rows (2026-09-06: a stamp on MATCH read as a third kind of
 // row beside two submenus); it changes only while there is a run to report.
 
-// A hub row that can be dimmed while another row's run is in flight. The
-// dim has to be applied by the entry itself: ComponentList::render sets
-// every element's colour every frame from the theme, so a colour set once
-// is gone by the first frame (the same class the offline scan row uses in
-// GuiRetroAchievementsSettings.cpp; a shared home is for the day a third
-// page needs it).
-class CloudDimmableEntry : public MultiLineMenuEntry
-{
-public:
-	using MultiLineMenuEntry::MultiLineMenuEntry;
-	void setDimmed(bool dimmed) { mDimmed = dimmed; }
-	void setColor(unsigned int color) override
-	{
-		MultiLineMenuEntry::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
-	}
-private:
-	bool mDimmed = false;
-};
+// A hub row is dimmed while another row's run is in flight, by the entry
+// itself: ComponentList::render sets every element's colour every frame
+// from the theme, so a colour set once is gone by the first frame.
+// MultiLineMenuEntry::setDimmed does that (ComponentListFlags::dimmed, the
+// same 0x50), as the offline scan row in GuiRetroAchievementsSettings.cpp
+// uses it; the page's own subclass for it went (#308 8-es claude F-ES-25).
+// It applied the dim at the next frame, where setDimmed applies it at once;
+// nothing else differed.
 
 // The three rows, held weakly as every row on a page is, each with the line
 // it returns to.
@@ -5130,7 +5120,7 @@ struct CloudHubRows
 {
 	struct Row
 	{
-		std::weak_ptr<CloudDimmableEntry> entry;
+		std::weak_ptr<MultiLineMenuEntry> entry;
 		std::string idle;
 	};
 	Row backup, restore, match;
@@ -5262,7 +5252,7 @@ static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured,
 		cloudAddGatedEntry(s, window, false, label, description, press);
 		return;
 	}
-	auto entry = std::make_shared<CloudDimmableEntry>(window, Utils::String::toUpper(label), description, true);
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
 	slot.entry = entry;
 	ComponentListRow row;
 	row.addElement(entry, true);
