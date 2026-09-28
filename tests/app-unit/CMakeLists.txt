@@ -10,7 +10,8 @@
 # tiers a settings-first restore carries across its restart; the folder
 # merge a rescan uses to keep every holder's FileData alive; who holds the
 # offline achievements' run lock, with real files and processes; the long-job
-# pages' one-line fitting; a worker's post to a window main() is letting go).
+# pages' one-line fitting; a worker's post to a window main() is letting go;
+# what a finished launch command says it launched).
 #
 # proxycards-tests: the shipped es-app/src/ProxyCards.cpp itself, compiled
 # against the small doubles under fakes/ -- the window, the card, the cloud
@@ -37,6 +38,7 @@ add_executable(app-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/RunLockTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/TextFitTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/AppWindowTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/LaunchCommandTests.cpp
 )
 target_link_libraries(app-unit-tests Threads::Threads)
 target_include_directories(app-unit-tests PRIVATE
