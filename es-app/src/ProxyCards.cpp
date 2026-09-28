@@ -114,10 +114,18 @@ namespace
 		{
 			outcome = _("COMPLETED");
 			token = sent ? "sent" : "completed";
+			// The sentence says the awards reached the account, and only the
+			// proxy's flush stamp is evidence of that (audit #307 PL-054). A
+			// queue that emptied with no stamp after the wait above was not
+			// shown to have gone anywhere -- the toggle turned off, the store
+			// replaced -- so the card says COMPLETED and nothing more.
 			// Longest first (D-UI-096); the title names RetroAchievements, so
 			// the line says what happened and nothing the title said (D-UI-107).
-			action.push_back(_("WHAT YOU EARNED OFFLINE IS NOW ON YOUR ACCOUNT."));
-			action.push_back(_("NOW ON YOUR ACCOUNT."));
+			if (sent)
+			{
+				action.push_back(_("WHAT YOU EARNED OFFLINE IS NOW ON YOUR ACCOUNT."));
+				action.push_back(_("NOW ON YOUR ACCOUNT."));
+			}
 		}
 		else
 		{
