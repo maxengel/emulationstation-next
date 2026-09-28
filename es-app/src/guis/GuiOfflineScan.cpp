@@ -98,12 +98,15 @@ GuiOfflineScan::~GuiOfflineScan()
 {
 }
 
-// While the scan runs, B asks whether to cancel it (D-UI-078: the page is
+// While the scan runs, back asks whether to cancel it (D-UI-078: the page is
 // sat in, and CANCEL is the one way out); every other press is refused,
 // since there is nothing to choose and a stray press should not dismiss a
 // page somebody is waiting on. Once it has finished, any button dismisses
-// it, and when the run did not complete, A runs it again from here: the
-// surface that reported the failure carries the retry (D-UI-028).
+// it, and when the run did not complete, OK runs it again from here: the
+// surface that reported the failure carries the retry (D-UI-028). OK and
+// back are the player's mapping, which may be swapped; the literal "a" the
+// retry was bound to was back's own button then (#308 1-raoffline claude
+// F-RA-14, gpt F-RA-22).
 bool GuiOfflineScan::input(InputConfig* config, Input input)
 {
 	if (!input.value)
@@ -116,7 +119,7 @@ bool GuiOfflineScan::input(InputConfig* config, Input input)
 		return true;
 	}
 	const Outcome o = outcome(s);
-	if (!o.completed && config->isMappedTo("a", input))
+	if (!o.completed && config->isMappedTo(BUTTON_OK, input))
 	{
 		// A new run; the finished one is let go. The page shows the run
 		// from its first line again.
@@ -168,7 +171,7 @@ std::vector<HelpPrompt> GuiOfflineScan::getHelpPrompts()
 	}
 	const Outcome o = outcome(s);
 	if (!o.completed)
-		prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
+		prompts.push_back(HelpPrompt(BUTTON_OK, _("TRY AGAIN")));
 	prompts.push_back(HelpPrompt(BUTTON_BACK, _("CLOSE")));
 	return prompts;
 }
@@ -216,6 +219,14 @@ void GuiOfflineScan::render(const Transform4x4f& parentTrans)
 	// position (es-native-ui.md: a bar only where a real percentage exists).
 	if (!mShownFinished)
 		mBusyAnim.render(trans);
+
+	// The keys are the help bar's, drawn here: with full-screen menus on
+	// (every handheld) Window draws no help while a second page is open, so
+	// the footer spelled them out as A and B -- the wrong buttons on a
+	// swapped mapping (es-ui-style-guide.md, Interaction rules; the save
+	// state manager draws its bar the same way).
+	if (mWindow->peekGui() == this && Renderer::ScreenSettings::fullScreenMenus())
+		mWindow->renderHelpPromptsEarly(parentTrans);
 }
 
 // Clip to one line: a long game name gets an ellipsis, never a second line.
@@ -316,7 +327,9 @@ void GuiOfflineScan::update(int deltaTime)
 		mNote->setText(fitOneLine(mSmallFont, note, mLineWidth));
 
 		mElapsed->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		mFooter ->setText(!o.completed ? _("A  TRY AGAIN     B  CLOSE") : _("PRESS ANY BUTTON TO CLOSE"));
+		// A run that did not complete: TRY AGAIN and CLOSE are the help bar's,
+		// on the player's own buttons.
+		mFooter ->setText(!o.completed ? std::string() : _("PRESS ANY BUTTON TO CLOSE"));
 	}
 	else
 	{
@@ -342,11 +355,8 @@ void GuiOfflineScan::update(int deltaTime)
 		mDetail  ->setText(s.index > 0 ? fitOneLine(mSmallFont, countsLine(s.cached, s.skipped, s.errors), mLineWidth) : "");
 		mNote    ->setText("");
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		// 7. That the page can be cancelled: the longest form that fits the
-		// line (D-UI-035), so a 640x480 panel keeps the sentence to one row.
-		std::shared_ptr<Font> font = mSmallFont;
-		mFooter  ->setText(CloudText::chooseThatFits(
-			{ _("THIS CAN TAKE A WHILE. PRESS B TO CANCEL."), _("PRESS B TO CANCEL.") },
-			mLineWidth, [font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; }));
+		// 7. That it takes a while; how to cancel is the help bar's, on the
+		// player's own back button.
+		mFooter  ->setText(fitOneLine(mSmallFont, _("THIS CAN TAKE A WHILE."), mLineWidth));
 	}
 }
