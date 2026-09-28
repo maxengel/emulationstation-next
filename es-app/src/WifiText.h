@@ -60,6 +60,9 @@ namespace WifiText
 		// not be asked (#308 F-WF-03/06), and the row is then neither saved
 		// nor unsaved, only unknown.
 		bool savedKnown = true;
+		// The saved profile a press joins by, as `wifictl join` takes it;
+		// empty when the row has none known.
+		std::string profile;
 	};
 
 	// The rows in the order the list shows them: the network joined now
@@ -94,6 +97,12 @@ namespace WifiText
 	};
 	PressAction pressAction(const PickerRow& row);
 	PressAction manualAction(const std::string& name, const std::string& current, const std::vector<SavedNetwork>& saved, bool savedKnown);
+
+	// The name `wifictl join` is handed for a row's press, and for a typed
+	// name (current is the connected row's name, currentProfile its
+	// profile).
+	std::string joinName(const PickerRow& row);
+	std::string manualJoinName(const std::string& name, const std::string& current, const std::string& currentProfile);
 
 	// The toast when the picker has joined a network, in the toast's shape
 	// (es-ui-style-guide.md: <glyph> <subject> : <outcome>): the name as

@@ -42,10 +42,12 @@ private:
 	void load(const std::vector<WifiText::PickerRow>& rows);
 	void addRow(const WifiText::PickerRow& row);
 	void onSelect(const WifiText::PickerRow& row);
-	void act(WifiText::PressAction action, const std::string& name);
+	// name is the network as the player sees it; joinAs the name `wifictl
+	// join` takes (WifiText::joinName, manualJoinName).
+	void act(WifiText::PressAction action, const std::string& name, const std::string& joinAs);
 	void onManualInput();
 	void onRefresh(bool rescan = true);
-	void join(const std::string& name);
+	void join(const std::string& name, const std::string& profile);
 	void askKeyAndConnect(const std::string& name);
 	void connect(const std::string& name, const std::string& key);
 	void joined(const std::string& name);
@@ -55,6 +57,7 @@ private:
 	std::function<void()> mOnJoined;
 	std::vector<WifiText::SavedNetwork> mSaved;
 	std::string mCurrent;
+	std::string mCurrentProfile;   // the connected row's profile, for a typed name
 	bool mSavedKnown;
 	bool mWaitingLoad;
 };

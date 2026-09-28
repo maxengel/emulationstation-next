@@ -228,3 +228,47 @@ TEST_CASE("a join that did not happen: NetworkManager not answering is not a key
 	// join; nothing in it points away from the key either.
 	CHECK(joinFailure(0) == JoinFailure::MayBeKey);
 }
+
+// wifictl speaks two names (#308 2-wifi claude F-WF-12, gpt F-WF-03): current
+// and list the SSID, saved and join the profile's name -- which need not be
+// the SSID (a renamed profile, or NetworkManager's "Home 1"). Stream B's
+// join now writes the SSID to wifi.ssid and is judged on this device's
+// adapter; the picker still handed join the SSID for the network the device
+// is on, which is no profile's name, and said COULDN'T CONNECT TO HOME with
+// forget-and-rejoin advice about the network the player was on.
+TEST_CASE("the connected row joins by the profile that is up, not by its SSID (#308 2 claude F-WF-12, gpt F-WF-03)")
+{
+	const std::vector<SavedNetwork> profiles = { { "Home 1", true }, { "Cafe", false } };
+	auto rows = pickerRows({ "Home", "Cafe", "Library" }, profiles, "Home", true, true);
+	REQUIRE(rows.size() == 3);
+	CHECK(rows[0].name == "Home");        // the SSID, as the player knows it
+	CHECK(rows[0].connected);
+	CHECK(rows[0].saved);                 // joined through a profile: it has one
+	CHECK(rows[0].profile == "Home 1");
+	CHECK(joinName(rows[0]) == "Home 1");
+	CHECK(rows[1].name == "Cafe");
+	CHECK(joinName(rows[1]) == "Cafe");   // a profile named as its SSID
+	CHECK(joinName(rows[2]) == "Library");
+
+	// Typed: the current network's name joins by its profile too.
+	CHECK(manualJoinName("Home", "Home", "Home 1") == "Home 1");
+	CHECK(manualJoinName("Cafe", "Home", "Home 1") == "Cafe");
+	CHECK(manualJoinName("Hidden", "Home", "") == "Hidden");
+
+	// A profile named as the SSID is the one, even with another up (a second
+	// adapter): the name decides before the active flag.
+	auto two = pickerRows({ "Home" }, { { "Work", true }, { "Home", true } }, "Home", true, true);
+	REQUIRE(two.size() == 1);
+	CHECK(two[0].profile == "Home");
+	// Two up and neither named as the SSID: no guess; the row joins by its name.
+	auto ambiguous = pickerRows({ "Home" }, { { "Work", true }, { "Home 1", true } }, "Home", true, true);
+	REQUIRE(ambiguous.size() == 1);
+	CHECK(ambiguous[0].profile.empty());
+	CHECK(joinName(ambiguous[0]) == "Home");
+
+	// Could not ask which are saved: no profile is claimed.
+	auto unknown = pickerRows({ "Home" }, {}, "Home", false, true);
+	REQUIRE(unknown.size() == 1);
+	CHECK(unknown[0].profile.empty());
+	CHECK_FALSE(unknown[0].saved);
+}

@@ -100,15 +100,20 @@ void GuiWifi::onSelect(const WifiText::PickerRow& row)
 	if (mWaitingLoad)
 		return;
 
-	act(WifiText::pressAction(row), row.name);
+	act(WifiText::pressAction(row), row.name, WifiText::joinName(row));
 }
 
-void GuiWifi::act(WifiText::PressAction action, const std::string& name)
+// A join goes by the profile's name, which need not be the SSID the row
+// shows (#308 claude F-WF-12, gpt F-WF-03): the connected row joined by its
+// SSID, which is no profile's name for a renamed one, and the player read
+// COULDN'T CONNECT, with forget-and-rejoin advice, about the network they
+// were on.
+void GuiWifi::act(WifiText::PressAction action, const std::string& name, const std::string& joinAs)
 {
 	switch (action)
 	{
 	case WifiText::PressAction::Join:
-		join(name);
+		join(name, joinAs);
 		break;
 	case WifiText::PressAction::AskKey:
 		askKeyAndConnect(name);
@@ -134,7 +139,8 @@ void GuiWifi::onManualInput()
 	{
 		if (name.empty())
 			return;
-		act(WifiText::manualAction(name, mCurrent, mSaved, mSavedKnown), name);
+		act(WifiText::manualAction(name, mCurrent, mSaved, mSavedKnown), name,
+			WifiText::manualJoinName(name, mCurrent, mCurrentProfile));
 	};
 
 	if (Settings::getInstance()->getBool("UseOSK"))
@@ -150,19 +156,19 @@ void GuiWifi::onManualInput()
 // so the paths that connect from the settings (the WI-FI KEY row, the
 // restore wizard, the ENABLE WI-FI switch) still name the network the
 // player is on; SystemConf is re-read so the interface sees the same file.
-void GuiWifi::join(const std::string& name)
+void GuiWifi::join(const std::string& name, const std::string& profile)
 {
 	Window* window = mWindow;
 	mWaitingLoad = true;
-	LOG(LogInfo) << "wifi picker: joining the saved network " << name;
+	LOG(LogInfo) << "wifi picker: joining the saved network " << name << " (profile " << profile << ")";
 	window->pushGui(new GuiLoading<int>(window, _("CONNECTING TO WI-FI"),
-		[name](IGuiLoadingHandler*) { return ApiSystem::getInstance()->joinWifiNetwork(name); },
-		[this, window, name](int code)
+		[profile](IGuiLoadingHandler*) { return ApiSystem::getInstance()->joinWifiNetwork(profile); },
+		[this, window, name, profile](int code)
 		{
 			mWaitingLoad = false;
 			if (code != 0)
 			{
-				LOG(LogWarning) << "wifi picker: could not join the saved network " << name << " (wifictl join exited " << code << ")";
+				LOG(LogWarning) << "wifi picker: could not join the saved network " << name << " (profile " << profile << ", wifictl join exited " << code << ")";
 				// The advice by what happened (WifiText::joinFailure, #308
 				// F-WF-03/06): NetworkManager not answering is not a key that
 				// changed, and forgetting the network on that advice would
@@ -298,9 +304,13 @@ void GuiWifi::onRefresh(bool rescan)
 			// The network the device is on, as the rows have it: from the
 			// saved list's active profile when current could not say.
 			mCurrent.clear();
+			mCurrentProfile.clear();
 			for (const auto& row : rows)
 				if (row.connected)
+				{
 					mCurrent = row.name;
+					mCurrentProfile = row.profile;
+				}
 			load(rows);
 		}));
 }

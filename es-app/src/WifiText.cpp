@@ -85,15 +85,49 @@ std::vector<WifiText::PickerRow> WifiText::pickerRows(const std::vector<std::str
 		return false;
 	};
 
+	// The profile the device is on (#308 claude F-WF-12, gpt F-WF-03).
+	// wifictl speaks two names: current the SSID, saved and join a profile's
+	// name, and the two differ for a renamed profile or NetworkManager's
+	// "Home 1". So the connected row joins by a profile: the one named as
+	// its SSID when there is one, else the one profile that is up. Two up
+	// and neither named so (a second adapter; saved's ACTIVE is any
+	// adapter's, where current is this device's) is not guessed at: the row
+	// joins by its name, as before.
+	std::string joinedProfile;
+	if (!joinedNow.empty() && savedKnown)
+	{
+		if (isSaved(joinedNow))
+			joinedProfile = joinedNow;
+		else
+		{
+			int up = 0;
+			for (const auto& network : saved)
+				if (network.inUse)
+				{
+					up++;
+					joinedProfile = network.name;
+				}
+			if (up != 1)
+				joinedProfile.clear();
+		}
+	}
+
 	if (!joinedNow.empty())
-		rows.push_back({ joinedNow, savedKnown && isSaved(joinedNow), true, savedKnown });
+	{
+		PickerRow row{ joinedNow, !joinedProfile.empty(), true, savedKnown };
+		row.profile = joinedProfile;
+		rows.push_back(row);
+	}
 
 	for (const auto& rawName : inRange)
 	{
 		const std::string name = withoutCR(rawName);
 		if (name.empty() || listed(name))
 			continue;
-		rows.push_back({ name, savedKnown && isSaved(name), false, savedKnown });
+		PickerRow row{ name, savedKnown && isSaved(name), false, savedKnown };
+		if (row.saved)
+			row.profile = name;
+		rows.push_back(row);
 	}
 	return rows;
 }
@@ -144,6 +178,23 @@ WifiText::PressAction WifiText::manualAction(const std::string& name, const std:
 	if (!savedKnown)
 		return PressAction::CheckAgain;
 	return PressAction::AskKey;
+}
+
+// A row joins by its profile when it has one, and by its name when not --
+// the connected row whose profile could not be told, which join then
+// answers for itself.
+std::string WifiText::joinName(const PickerRow& row)
+{
+	return row.profile.empty() ? row.name : row.profile;
+}
+
+// A typed name is taken as a row would be: the network the device is on
+// joins by its profile, anything else by the name as typed.
+std::string WifiText::manualJoinName(const std::string& name, const std::string& current, const std::string& currentProfile)
+{
+	if (!name.empty() && name == current && !currentProfile.empty())
+		return currentProfile;
+	return name;
 }
 
 std::string WifiText::joinedNotice(const std::string& name, const std::string& connectedWord)
