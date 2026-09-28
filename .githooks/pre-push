@@ -40,6 +40,10 @@
 #     pre-push: feature/y -> pr/y: no upstream/master to compare against; git fetch upstream first
 #              git push r2 feature/y                     -> pushed (not pr/*, no secret)
 #   Each refusal ends: pre-push: refused. ...   and exits 1.
+# Its own test is .githooks/pre-push-test (#307 PL-078): a scratch repository,
+# the stdin lines git would send, and a case for each shape above plus a root
+# commit, a rename that adds a line, a remote tip this clone lacks and a first
+# push to a second remote. Run it after any change here; PASS or FAIL.
 set -u
 PERSONAL_PATTERNS=(
   'CLAUDE.md'
@@ -49,6 +53,7 @@ PERSONAL_PATTERNS=(
 )
 SECRET_PATTERNS='devpassword=[A-Za-z0-9._%-]{4,}|[?&]y=[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|"(access|refresh)_token" *: *"[A-Za-z0-9._-]{16,}|sk-[A-Za-z0-9_-]{24,}|(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z_]* *[:=] *["'"'"']?[A-Za-z0-9+/=_-]{16,}'
 
+remote_name="${1:-}"
 hooks_path="$(git config --get core.hooksPath || true)"
 case "${hooks_path}" in
   /*) ;;
@@ -68,13 +73,20 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   dest="${remote_ref#refs/heads/}"
   where="${branch} -> ${dest}"
 
-  # The commits this push adds. A first push has no remote tip, so the range
-  # starts at the oldest commit no remote has.
-  if [ "${remote_sha}" = "${zero}" ]; then
-    oldest="$(git rev-list "${local_sha}" --not --remotes 2>/dev/null | tail -1)"
-    if [ -n "${oldest}" ] && git rev-parse --verify --quiet "${oldest}^" >/dev/null; then range="${oldest}^..${local_sha}"; else range="${local_sha}^..${local_sha}"; fi
+  # The commits this push sends (#307 PL-078, F-PB-11). Over a remote tip
+  # this clone has, remote..local. Otherwise -- a first push, or a tip
+  # somebody else pushed that this clone has never fetched -- everything the
+  # DESTINATION is not known to hold: every commit not on one of its own
+  # remote-tracking refs ("$1" is the remote's name; a bare URL names none,
+  # and the whole history is read). This used to be the commits no remote
+  # at all had, from the oldest one's parent: a root commit has no parent,
+  # so the range did not exist, git log failed into /dev/null and the push
+  # went through unread; a tip this clone lacked did the same; and history
+  # already on origin went to a second remote unread.
+  if [ "${remote_sha}" != "${zero}" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    revs=("${remote_sha}..${local_sha}")
   else
-    range="${remote_sha}..${local_sha}"
+    revs=("${local_sha}" --not "--remotes=${remote_name:-.}")
   fi
 
   # 2. credential-shaped lines, every branch: every line ADDED by every
@@ -87,7 +99,16 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #    its string to maskSecrets( is a fixture for the credential mask itself
   #    (fork #177) and is credential-shaped on purpose; anything else in a
   #    test file is still scanned.
-  hits="$(git log --format='@@commit %h' -p --no-color --diff-merges=first-parent --diff-filter=AM "${range}" -- 2>/dev/null \
+  #    Every class of change that can add a line is read -- a rename with a
+  #    line added is R, not M, and --diff-filter=AM let it through unread
+  #    (F-PB-12). And a list of commits that cannot be made is a refusal,
+  #    not an empty scan: git log's failure used to vanish into /dev/null.
+  if ! added="$(git log --format='@@commit %h' -p --no-color --diff-merges=first-parent --diff-filter=ACMRT "${revs[@]}" -- 2>/dev/null)"; then
+    echo "pre-push: ${where}: could not list the commits this push sends (git log ${revs[*]} failed); nothing was scanned" >&2
+    status=1
+    continue
+  fi
+  hits="$(printf '%s\n' "${added}" \
     | awk 'BEGIN { c = ""; f = "" }
            /^@@commit / { c = substr($0, 10); next }
            /^\+\+\+ b\// { f = substr($0, 7); next }

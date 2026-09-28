@@ -1,0 +1,114 @@
+#!/bin/bash
+# pre-push-test -- the fork guard's own test (#307 PL-078).
+#
+#   .githooks/pre-push-test [path/to/pre-push]     # default: the one beside this file
+#
+# Builds a scratch repository in a temporary directory, commits the shapes
+# the guard has to catch, and hands the hook the lines git would hand it on
+# a push -- "<local ref> <local sha> <remote ref> <remote sha>" on stdin, the
+# remote's name and URL as arguments -- without pushing anywhere. Each case
+# says what it expects; the run ends PASS or FAIL and exits 0 or 1. The
+# "secrets" are sixteen letters after devpassword=, credential-shaped and
+# meaningless; nothing leaves the scratch directory, which is removed.
+set -u
+HOOK="$(readlink -f "${1:-$(dirname "$0")/pre-push}")"
+[ -x "${HOOK}" ] || { echo "pre-push-test: no executable hook at ${HOOK}" >&2; exit 2; }
+
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/pre-push-test.XXXXXX")" || exit 2
+trap 'rm -rf "${SCRATCH}"' EXIT
+cd "${SCRATCH}" || exit 2
+
+FAKE="devpassword=QwErTyUiOpAsDfGh"   # credential-shaped, means nothing
+ZERO=0000000000000000000000000000000000000000
+fail=0
+
+g() { git -c user.name=t -c user.email=t@t -c commit.gpgsign=false "$@"; }
+
+# expect <refused|allowed> <case> <stdin line> [remote name]
+expect() {
+  local want="$1" name="$2" line="$3" remote="${4:-origin}" rc
+  printf '%s\n' "${line}" | "${HOOK}" "${remote}" "file://${SCRATCH}/remote.git" >"${SCRATCH}/out" 2>&1
+  rc=$?
+  if { [ "${want}" = refused ] && [ "${rc}" -ne 0 ]; } || { [ "${want}" = allowed ] && [ "${rc}" -eq 0 ]; }; then
+    echo "  ok    ${name}: ${want}"
+  else
+    echo "  FAIL  ${name}: expected ${want}, hook exited ${rc}"
+    sed 's/^/          /' "${SCRATCH}/out"
+    fail=1
+  fi
+}
+
+git init -q -b main work && cd work || exit 2
+git init -q --bare "${SCRATCH}/remote.git"
+git remote add origin "${SCRATCH}/remote.git"
+
+# 1. A root commit that carries the secret, pushed for the first time. The
+#    range used to be <sha>^..<sha>, which does not exist for a root; git
+#    log failed, its error went to /dev/null, and the push was allowed.
+printf 'line %s\n' $(seq 1 30) > notes.txt
+echo "${FAKE}" >> notes.txt
+g add notes.txt && g commit -q -m root
+root="$(git rev-parse HEAD)"
+expect refused "a root commit with a secret, first push" "refs/heads/main ${root} refs/heads/main ${ZERO}"
+
+# A clean history, pushed, for the cases that need a remote tip.
+git checkout -q --orphan clean && git rm -q -rf . >/dev/null
+printf 'line %s\n' $(seq 1 30) > notes.txt
+g add notes.txt && g commit -q -m base
+base="$(git rev-parse HEAD)"
+git update-ref refs/remotes/origin/clean "${base}"   # as if pushed there already
+expect allowed "a clean root commit, first push" "refs/heads/clean ${base} refs/heads/clean ${ZERO}"
+
+# 2. A rename with a line added. --diff-filter=AM read A and M only, so a
+#    file git scores as renamed (R) was never read, whatever it added.
+git mv notes.txt renamed.txt
+echo "${FAKE}" >> renamed.txt
+g add renamed.txt && g commit -q -m rename
+[ "$(git diff --name-status HEAD^ HEAD | cut -c1)" = R ] || { echo "pre-push-test: the rename case is not a rename" >&2; exit 2; }
+renamed="$(git rev-parse HEAD)"
+expect refused "a rename that adds a secret" "refs/heads/clean ${renamed} refs/heads/clean ${base}"
+git reset -q --hard "${base}"
+
+# 3. A remote tip this clone does not have (somebody else pushed there). The
+#    range remote..local fails to resolve; the error went to /dev/null and
+#    the scan read nothing.
+echo "${FAKE}" >> notes.txt
+g commit -q -am added
+added="$(git rev-parse HEAD)"
+expect refused "a secret over a remote tip this clone lacks" "refs/heads/clean ${added} refs/heads/clean 1234567890123456789012345678901234567890"
+git reset -q --hard "${base}"
+
+# 4. A first push to a second remote of history the first one already has.
+#    The range excluded commits on ANY remote, which says nothing about what
+#    this destination holds: a secret already on origin went to the new
+#    remote unread.
+echo "${FAKE}" >> notes.txt
+g commit -q -am "already on origin"
+g commit -q --allow-empty -m "clean tip"
+leak="$(git rev-parse HEAD)"                        # a clean tip over the secret
+git update-ref refs/remotes/origin/leak "${leak}"   # as if pushed to origin earlier
+git init -q --bare "${SCRATCH}/other.git"
+git remote add other "${SCRATCH}/other.git"
+expect refused "history holding a secret, first push to another remote" "refs/heads/clean ${leak} refs/heads/clean ${ZERO}" other
+git reset -q --hard "${base}"
+g commit -q --allow-empty -m "clean on top"
+top="$(git rev-parse HEAD)"
+expect allowed "a clean commit over a tip this clone has" "refs/heads/clean ${top} refs/heads/clean ${base}"
+
+# 5. What was always right stays right: a pr/* push carrying a personal path.
+git checkout -q clean
+git update-ref refs/remotes/upstream/master "${base}"
+echo "# agent" > CLAUDE.md
+g add CLAUDE.md && g commit -q -m personal
+personal="$(git rev-parse HEAD)"
+expect refused "a pr/* push with CLAUDE.md" "refs/heads/clean ${personal} refs/heads/pr/x ${base}"
+expect allowed "the same commit to a feature branch" "refs/heads/clean ${personal} refs/heads/feature/x ${base}"
+
+# 6. A unit test's maskSecrets fixture is exempt, and only that.
+mkdir -p es-app/tests/unit
+echo "CHECK(maskSecrets(\"${FAKE}\") == \"devpassword=<redacted>\");" > es-app/tests/unit/MaskTests.cpp
+g add es-app && g commit -q -m fixture
+fixture="$(git rev-parse HEAD)"
+expect allowed "a maskSecrets fixture in a unit test" "refs/heads/clean ${fixture} refs/heads/clean ${personal}"
+
+[ "${fail}" -eq 0 ] && echo "PASS" || { echo "FAIL"; exit 1; }
