@@ -108,6 +108,15 @@ public:
 	// that never started keep their last real run's. The card and the
 	// transfer page both end a stopped run through here.
 	static void restampStoppedParts(const std::string& command, time_t runStarted, const std::string& token);
+	// The same with the stamps as they were when the run began (readStamps
+	// at its start): a stamp is this run's when its file was written since,
+	// not when the clock says so (audit of the fixes G-E1-04/06). The card
+	// takes this snapshot; a caller that has none uses the one above.
+	static void restampStoppedParts(const std::string& command, const std::vector<CloudText::StampText>& before,
+		time_t runStarted, const std::string& token);
+	// Each stamp a command's scripts can write, with its text and the file's
+	// identity (inode and change time) now.
+	static std::vector<CloudText::StampText> readStamps(const std::string& command);
 	static std::string whyForCode(int rc);
 	static std::string tokenForCode(int rc);
 	static std::string whyForToken(const std::string& token);
@@ -130,6 +139,7 @@ private:
 	std::string					mTitle;
 	std::string					mRunning;
 	Origin						mOrigin;
+	std::vector<CloudText::StampText> mStampsBefore;   // the script stamps as the run began (G-E1-04/06)
 	time_t						mStartedAt;   // wall clock, to tell a stamp this run wrote
 
 	// Set and read across the worker and the main thread; see

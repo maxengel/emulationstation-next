@@ -1459,6 +1459,53 @@ TEST_CASE("a stopped run's stamps: only the part the stop interrupted is restamp
 	CHECK(has(stampsToRestamp({ { "last-restore", "1789000003 130 IT_WAS_STOPPED" } }, started), "last-restore"));
 }
 
+TEST_CASE("a stop stamp this interface already restamped is an earlier run's, even in the same second (G-E1-06)")
+{
+	// The scripts' trap writes "<epoch> 130[ <WHY>]", never one of this
+	// interface's tokens; a stamp that carries one was restamped after an
+	// earlier stop. Read by the time alone, one written in the second this
+	// run began qualified as this run's, and took this run's word.
+	const time_t started = 1789000000;
+	CHECK(stampsToRestamp({ { "last-backup", "1789000000 130 cancelled" } }, started).empty());
+	CHECK(stampsToRestamp({ { "last-backup", "1789000000 130 player-cancelled" } }, started).empty());
+	// The trap's own, the same second: this run's.
+	CHECK(has(stampsToRestamp({ { "last-backup", "1789000000 130" } }, started), "last-backup"));
+}
+
+TEST_CASE("with the stamps read as the run began, a file not written since is not this run's, whatever the clock says (G-E1-04 claude)")
+{
+	// A device that boots with its clock behind: yesterday's stop stamp is
+	// "not older" than this run's start by the clock, and was restamped with
+	// a cancel this run never made -- on a part that never started.
+	const time_t started = 1789000000;
+	const std::vector<StampText> before = {
+		{ "last-restore", "1789500000 130 IT_WAS_STOPPED", "11:1789500000.5" },
+		{ "last-backup", "", "" },
+	};
+	// The restore part never ran: the file is the one read at the start.
+	const std::vector<StampText> after = {
+		{ "last-restore", "1789500000 130 IT_WAS_STOPPED", "11:1789500000.5" },
+		{ "last-backup", "", "" },
+	};
+	CHECK(stampsToRestamp(after, started, &before).empty());
+
+	// The restore part ran and was stopped: a new file, whatever its epoch.
+	const std::vector<StampText> stopped = {
+		{ "last-restore", "1788990000 130 IT_WAS_STOPPED", "12:1788990000.1" },
+		{ "last-backup", "", "" },
+	};
+	const auto names = stampsToRestamp(stopped, started, &before);
+	CHECK(names.size() == 1);
+	CHECK(has(names, "last-restore"));
+
+	// Written this run and finished, or failed on its own: kept.
+	const std::vector<StampText> finished = { { "last-restore", "1788990000 0", "13:1788990000.2" } };
+	CHECK(stampsToRestamp(finished, started, &before).empty());
+	// A stamp that did not exist at the start and does now, stopped: this run's.
+	const std::vector<StampText> fresh = { { "last-backup", "1788990001 130", "14:1788990001.0" } };
+	CHECK(has(stampsToRestamp(fresh, started, &before), "last-backup"));
+}
+
 // The scan's and the top-up's whys (moved from OfflineAchievements::scanWhy
 // and ProxyCards' topUpWhy so the table has a case). The ctl ends a scan or
 // a top-up with SOME_IMAGES_NOT_SAVED when achievement images could not be

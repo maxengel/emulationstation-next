@@ -200,13 +200,33 @@ std::vector<std::string> scriptStampNames(const std::string& command)
 // time test used to restamp every stamp the run had written, so a saves
 // part that completed read as stopped once the settings part after it
 // was. A part that never started keeps its last real run's stamp.
-std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted)
+std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted,
+	const std::vector<StampText>* before)
 {
 	std::vector<std::string> names;
 	for (auto& s : stamps)
 	{
 		const LastRun r = parseLastRun(s.text);
-		if (r.ran && r.when >= runStarted && r.code == CloudExit::Stopped)
+		// The trap's stop: 130, and none of this interface's tokens -- a
+		// stamp that carries one was restamped after an earlier stop, and is
+		// that run's (audit of the fixes G-E1-06: by the time alone, one
+		// written in the second this run began qualified).
+		if (!r.ran || r.code != CloudExit::Stopped || r.knownToken)
+			continue;
+		if (before != nullptr)
+		{
+			// Written since the run began: the file is not the one read then
+			// (the scripts write a new file and rename it), whatever the
+			// clock -- a device booting with its clock behind made
+			// yesterday's stop look like today's (G-E1-04, the claude seat).
+			std::string was;
+			for (auto& b : *before)
+				if (b.name == s.name)
+					was = b.version;
+			if (!s.version.empty() && s.version != was)
+				names.push_back(s.name);
+		}
+		else if (r.when >= runStarted)
 			names.push_back(s.name);
 	}
 	return names;
