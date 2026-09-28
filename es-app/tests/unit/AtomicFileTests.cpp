@@ -23,6 +23,7 @@
 #include <thread>
 #include <vector>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -589,5 +590,76 @@ TEST_CASE("the transfer lock reads as held while a script holds it, and only the
 	CHECK_FALSE(isFlockHeld(lockPath));
 	::close(held[0]);
 	::close(done[1]);
+}
+
+// ------------------------------------------------------------------ PL-069
+
+namespace
+{
+	long vmSizeKiB()
+	{
+		std::ifstream status("/proc/self/status");
+		std::string line;
+		while (std::getline(status, line))
+			if (line.rfind("VmSize:", 0) == 0)
+				return atol(line.c_str() + 7);
+		return -1;
+	}
+
+	// The entries under /proc/self/task: this process's threads, as
+	// `ls /proc/<pid>/task | wc -l` counts them.
+	int taskCount()
+	{
+		DIR* dir = opendir("/proc/self/task");
+		if (dir == nullptr)
+			return -1;
+		int n = 0;
+		while (struct dirent* entry = readdir(dir))
+			if (entry->d_name[0] != '.')
+				n++;
+		closedir(dir);
+		return n;
+	}
+}
+
+TEST_CASE("a thread that ends unjoined keeps its stack; a detached one gives it back (PL-069)")
+{
+	// ThreadedCloudSync did `mHandle = new std::thread(run)` and ended run()
+	// with `delete this`, never joining, detaching or deleting the thread: a
+	// joinable thread that has ended keeps its stack mapping and its control
+	// block until somebody joins it, so every sync -- two a game -- left one
+	// behind for the life of the interface. The class needs a Window and
+	// cannot be built here; this is the pattern it used and the one it uses
+	// now, sequentially, as the syncs run. It also says what to measure on
+	// the VM: the task count does not move (the kernel reaps the thread
+	// either way); VmSize does, by a stack a sync.
+	const int tasksBefore = taskCount();
+	const long before = vmSizeKiB();
+	for (int i = 0; i < 20; i++)
+	{
+		std::atomic<bool> ended(false);
+		new std::thread([&ended] { ended = true; });   // the old shape: never joined, never deleted
+		while (!ended)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	const long leaked = vmSizeKiB() - before;
+	const int tasksAfterLeak = taskCount();
+
+	const long before2 = vmSizeKiB();
+	for (int i = 0; i < 20; i++)
+	{
+		std::atomic<bool> ended(false);
+		std::thread([&ended] { ended = true; }).detach();   // the new one
+		while (!ended)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	const long detached = vmSizeKiB() - before2;
+
+	INFO("VmSize growth, 20 unjoined threads: " << leaked << " KiB; 20 detached: " << detached << " KiB");
+	CHECK(leaked > 20 * 4096);      // a stack each, at least 4 MiB of address space apiece
+	CHECK(detached < 4 * 8192);     // a stack or two, reused from glibc's cache
+	CHECK(tasksAfterLeak == tasksBefore);   // why `ls /proc/<pid>/task` cannot see it
 }
 

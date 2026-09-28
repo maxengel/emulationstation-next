@@ -43,7 +43,12 @@ ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
 	mWndNotification->updateText(_("STARTING..."));
 	mWndNotification->updatePercent(-1);
 
-	mHandle = new std::thread(&ThreadedCloudSync::run, this);
+	// Detached: run() ends with `delete this`, so nothing is left to join
+	// it, and a joinable thread that has ended keeps its stack and control
+	// block until somebody does -- one per sync, two a game, for the life of
+	// the interface (#307 PL-069). This was `mHandle = new std::thread(...)`,
+	// never joined, detached or deleted.
+	std::thread(&ThreadedCloudSync::run, this).detach();
 }
 
 ThreadedCloudSync::~ThreadedCloudSync()

@@ -168,7 +168,6 @@ private:
 	Window*						mWindow;
 	AsyncNotificationComponent* mWndNotification;
 
-	std::thread*				mHandle;
 	static ThreadedCloudSync*	mInstance;
 	// Holds mInstance steady while cancelForLaunch dereferences it: run()
 	// clears the pointer from the worker thread, and deletes the object
