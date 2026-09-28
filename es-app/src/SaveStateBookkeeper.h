@@ -20,10 +20,14 @@
 // gone (D-CLOUD-132): it re-keyed slots the renumber had moved, and nothing
 // renumbers since D-UI-069.
 //
-// A copy made with COPY TO FREE SLOT is recorded the same way, on the worker,
-// through `cloud_capture --adopt` (#206): the file is real the moment it is
-// copied and its tile shows at once; the manifest learns of it a moment
-// later, as the source's version at the new path.
+// A copy made with COPY TO FREE SLOT is recorded on the worker too, through
+// `cloud_capture --adopt` (#206): the file is real the moment it is copied
+// and its tile shows at once; the manifest learns of it a moment later, as
+// the source's version at the new path. Only a deletion waits for and takes
+// the cloud transfer lock: its unlink is the one write to the saves tree the
+// worker makes. The copy's write was made at the press, behind the manager's
+// gate, and the record writes only the capture manifest, which no transfer
+// reads (the audit of the fix round).
 //
 // The rules (D-UI-073), because each guards a way this can crash or lie:
 //   - the worker holds path strings per job and never a pointer to a page
