@@ -45,16 +45,21 @@ namespace
 	Worker* gWorker = nullptr;
 
 	// A cloud transfer -- a back up, a restore, a sync, started here or from
-	// a shell -- holds the scripts' lock while it runs, and a deletion made
-	// under it retires and unlinks a state the transfer may be copying, in a
-	// manifest the transfer may be reading (audit #307 PL-068). The manager
-	// refuses a DELETE while the lock is held; a deletion already queued
-	// when a transfer starts waits here for it to end, polled twice a
-	// second, however long it takes -- the tile stays hidden meanwhile
-	// (isPending). At exit it waits five seconds more and no longer: a
-	// deletion still waiting then is not made, the file stays, and its tile
-	// is back at the next start, which is honest where deleting under the
-	// transfer would not be. True when the deletion may go ahead.
+	// a shell -- holds the scripts' lock while it runs and reads the saves
+	// tree, and a deletion made under it unlinks (cloud_capture --retire
+	// --unlink) a state file the transfer may be copying (audit #307
+	// PL-068). That unlink is what the lock protects. The retired row is not:
+	// it goes to the capture manifest under /storage/.cache/cloud_sync, which
+	// no transfer script reads, and cloud_capture serialises its writers with
+	// its own capture_lock (the audit of the fix round: a grep of the five
+	// transfer scripts for manifest-, cloud_capture, /stage and .capture
+	// finds nothing). The manager refuses a DELETE while the lock is held; a
+	// deletion already queued when a transfer starts waits here for it to
+	// end, polled twice a second, however long it takes -- the tile stays
+	// hidden meanwhile (isPending). At exit it waits five seconds more and no
+	// longer: a deletion still waiting then is not made, the file stays, and
+	// its tile is back at the next start, which is honest where deleting
+	// under the transfer would not be. True when the deletion may go ahead.
 	//
 	// Asked through Utils::AtomicFile::isFlockHeld, the check the manager's
 	// DELETE and COPY refusal makes (E1, PL-068), so the two cannot answer
@@ -202,6 +207,13 @@ namespace
 
 	void runCopy(const SaveStateJob& job)
 	{
+		// No transfer lock here, and none needed: the copy's write to the
+		// saves tree was made at the press, synchronously, behind the
+		// manager's gate (GuiSaveState's savesTreeBusy, copyToSlot); what is
+		// queued is only the record, which writes under
+		// /storage/.cache/cloud_sync -- serialised by cloud_capture's
+		// capture_lock, read by no transfer (the audit of the fix round).
+		//
 		// A slot the manager copied had no entry from any capture mode (#206):
 		// exit mode records only files written after the launch, and the
 		// verify passes adopt nothing new. --adopt records it as the source's
