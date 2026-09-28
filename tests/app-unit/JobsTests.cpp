@@ -58,6 +58,7 @@ namespace FakeLog
 
 void ThreadedCloudSync::writeStamp(const std::string&, int, const std::string&, const std::string&) {}
 std::string ThreadedCloudSync::whyForCode(int) { return "SOMETHING WENT WRONG"; }
+void ThreadedCloudSync::restampStoppedParts(const std::string&, time_t, const std::string&) {}
 
 void Window::postToUiThread(const std::function<void()>& func, void*) { sPosts++; func(); }
 

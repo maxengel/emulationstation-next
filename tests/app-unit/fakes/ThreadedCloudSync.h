@@ -1,6 +1,7 @@
 #pragma once
 // Double for es-app/src/ThreadedCloudSync.h: whether a sync card is up, and
 // the stamps the code under test writes.
+#include <ctime>
 #include <string>
 class Window;
 class ThreadedCloudSync
@@ -13,4 +14,5 @@ public:
 	static bool isRunning();
 	static void writeStamp(const std::string& path, int rc, const std::string& token, const std::string& why);
 	static std::string whyForCode(int rc);
+	static void restampStoppedParts(const std::string& command, time_t runStarted, const std::string& token);
 };

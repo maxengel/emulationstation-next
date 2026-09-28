@@ -172,6 +172,46 @@ static bool wholeNumber(const std::string& field, long long lo, long long hi, lo
 	return true;
 }
 
+// Every stamp each script can write, whichever flags it ran with: a
+// composed command runs cloud_backup twice (saves, then --system-only
+// settings), so which stamp a part wrote is the stamp's to say, not the
+// command line's. The table used to map cloud_backup to last-backup alone,
+// and a stopped settings part left its trap's 130 under the settings row.
+std::vector<std::string> scriptStampNames(const std::string& command)
+{
+	struct Part { const char* script; std::vector<const char*> stamps; };
+	static const std::vector<Part> PARTS = {
+		{ "cloud_content_backup",  { "last-content-backup" } },
+		{ "cloud_content_restore", { "last-content-restore", "last-content-match" } },
+		{ "cloud_restore",         { "last-restore", "last-settings-restore" } },
+		{ "cloud_backup",          { "last-backup", "last-settings-backup" } },
+	};
+	std::vector<std::string> names;
+	for (const Part& part : PARTS)
+		if (command.find(part.script) != std::string::npos)
+			for (const char* stamp : part.stamps)
+				names.push_back(stamp);
+	return names;
+}
+
+// The part the stop interrupted, and nothing else: a stamp this run wrote
+// with the trap's code. A part that finished before the stop keeps its
+// outcome, one that failed on its own keeps its why -- the table and a
+// time test used to restamp every stamp the run had written, so a saves
+// part that completed read as stopped once the settings part after it
+// was. A part that never started keeps its last real run's stamp.
+std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted)
+{
+	std::vector<std::string> names;
+	for (auto& s : stamps)
+	{
+		const LastRun r = parseLastRun(s.text);
+		if (r.ran && r.when >= runStarted && r.code == CloudExit::Stopped)
+			names.push_back(s.name);
+	}
+	return names;
+}
+
 bool exitSyncOwed(const std::string& exitStamp, const std::string& startupStamp, const std::string& backupStamp)
 {
 	const LastRun e = parseLastRun(exitStamp);

@@ -120,6 +120,19 @@ namespace CloudText
 	// whole texts; an absent stamp is "".
 	bool exitSyncOwed(const std::string& exitStamp, const std::string& startupStamp, const std::string& backupStamp);
 
+	// A stopped run's stamps (#203; #308 5-cloud-sync-and-saves claude
+	// F-CS-05, gpt F-CS-23). The scripts' INT/TERM trap stamps the part it
+	// was inside with 130 and no token, which a row reads as COULDN'T
+	// FINISH; the process that stopped the run knows why and restamps it.
+	//
+	// The stamps the scripts a command names can write, by name under
+	// /storage/.cache/cloud_sync.
+	std::vector<std::string> scriptStampNames(const std::string& command);
+	// Of those (each name with the file's whole text, "" when there is
+	// none), the ones to restamp for a run that began at runStarted.
+	struct StampText { std::string name; std::string text; };
+	std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted);
+
 	// Which run a stamp describes. EmulationStation stamps last-sync-exit
 	// and last-sync-startup as each automatic run ends, within a second or
 	// two of the script writing its own last-backup or last-restore, so a

@@ -14,7 +14,6 @@
 #include <cstdlib>
 #include <thread>
 #include <signal.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 
 std::mutex CloudTransferJob::sMutex;
@@ -696,33 +695,15 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 	(void) self;
 }
 
-// Only over a stamp this run wrote: a part the command names that never
-// started keeps the stamp of its last real run, which is the truth about
-// it. The scripts each own one stamp under /storage/.cache/cloud_sync; the
-// content restore's depends on the verb it ran with.
+// The part the stop interrupted, and only it: ThreadedCloudSync's rule,
+// shared with the card (#308 claude F-CS-05, gpt F-CS-23). This page's
+// table named cloud_backup's last-backup and cloud_restore's last-restore
+// alone, so a stopped settings part kept its trap's 130 under the settings
+// row, and restamped every stamp the run had written, so a saves part that
+// finished before the stop read as stopped.
 void CloudTransferJob::restampStoppedParts(const char* token)
 {
-	struct Part { const char* script; const char* stamp; };
-	static const Part PARTS[] = {
-		{ "cloud_content_backup",  "last-content-backup" },
-		{ "cloud_content_restore", "last-content-restore" },
-		{ "cloud_restore",         "last-restore" },
-		{ "cloud_backup",          "last-backup" },
-	};
-	for (const Part& part : PARTS)
-	{
-		if (mCommand.find(part.script) == std::string::npos)
-			continue;
-		std::string stamp = part.stamp;
-		if (stamp == "last-content-restore" && mCommand.find("--match") != std::string::npos)
-			stamp = "last-content-match";
-		const std::string path = std::string("/storage/.cache/cloud_sync/") + stamp;
-		struct stat st;
-		if (stat(path.c_str(), &st) != 0 || st.st_mtime < mStartedAt - 1)
-			continue;   // not this run's: the part never got as far as its trap
-		ThreadedCloudSync::writeStamp(path, CloudExit::Stopped, token, "");
-		LOG(LogInfo) << "CloudTransferJob: " << stamp << " restamped as " << token;
-	}
+	ThreadedCloudSync::restampStoppedParts(mCommand, mStartedAt, token);
 }
 
 // One line of a script's output: ANSI escapes, C0 controls and DEL dropped,

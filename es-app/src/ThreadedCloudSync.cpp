@@ -29,7 +29,8 @@ std::mutex ThreadedCloudSync::sInstanceLock;
 
 ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
 	const std::string& title, const std::string& running, Origin origin)
-	: mWindow(window), mCommand(command), mTitle(title), mRunning(running), mOrigin(origin)
+	: mWindow(window), mCommand(command), mTitle(title), mRunning(running), mOrigin(origin),
+	  mStartedAt(time(nullptr))
 {
 	mGameExitSync = SystemConf::getInstance()->get("cloudsaves.gameexit") == "1";
 	// With the action row. The default is a two-row card (title and text),
@@ -524,19 +525,21 @@ void ThreadedCloudSync::run()
 	if (mOrigin != Origin::Manual || CloudText::verbOf(mCommand) == CloudText::Verb::Sync)
 		recordOutcome(mOrigin, ret, token, mWhy);
 
-	// A manual backup or restore stopped for a game (the player's answer to
-	// the launch question, D-CLOUD-129): the script's own stamp -- what the
-	// BACK UP and RESTORE rows read -- carries its trap's 130 and no token,
-	// which the row reads as COULDN'T FINISH (guest d, 2026-09-15: LAST
-	// 18:42 - COULDN'T FINISH for a run nobody saw fail). This process knows
-	// why it stopped; the stamp says so, in the shape the reader already
-	// knows, written after the trap's since pclose returned after it.
-	if (cancelled && mOrigin == Origin::Manual)
-	{
-		const CloudText::Verb verb = CloudText::verbOf(mCommand);
-		if (verb == CloudText::Verb::Backup || verb == CloudText::Verb::Restore)
-			writeStamp(std::string("/storage/.cache/cloud_sync/last-") + (verb == CloudText::Verb::Backup ? "backup" : "restore"), ret, token, "");
-	}
+	// A run stopped for a game (the player's answer to the launch question,
+	// D-CLOUD-129): the script's own stamp -- what the BACK UP and RESTORE
+	// rows read -- carries its trap's 130 and no token, which the row reads
+	// as COULDN'T FINISH (guest d, 2026-09-15: LAST 18:42 - COULDN'T FINISH
+	// for a run nobody saw fail). This process knows why it stopped; the
+	// stamp says so, in the shape the reader already knows, written after
+	// the trap's since pclose returned after it.
+	//
+	// Every origin, not the manual backup and restore alone: a startup sync
+	// or an exit sync a launch cancelled, and a manual sync, left the same
+	// 130 under the same rows (#308 5-cloud-sync-and-saves claude F-CS-05).
+	// And only the part the stop interrupted: the stamp its trap wrote this
+	// run, whichever script and flags (the settings stamps included).
+	if (cancelled)
+		restampStoppedParts(mCommand, mStartedAt, token);
 
 	// Offline achievements no longer ride this card (fork #292, D-RA-030):
 	// the proxy sends them the moment RetroAchievements answers, and that
@@ -838,6 +841,19 @@ void ThreadedCloudSync::recordOutcome(Origin origin, int rc, const std::string& 
 	if (name == nullptr)
 		return;
 	writeStamp(std::string("/storage/.cache/cloud_sync/last-sync-") + name, rc, token, why);
+}
+
+void ThreadedCloudSync::restampStoppedParts(const std::string& command, time_t runStarted, const std::string& token)
+{
+	static const std::string DIR = "/storage/.cache/cloud_sync/";
+	std::vector<CloudText::StampText> stamps;
+	for (auto& name : CloudText::scriptStampNames(command))
+		stamps.push_back({ name, Utils::FileSystem::readAllText(DIR + name) });
+	for (auto& name : CloudText::stampsToRestamp(stamps, runStarted))
+	{
+		writeStamp(DIR + name, CloudExit::Stopped, token, "");
+		LOG(LogInfo) << "ThreadedCloudSync: " << name << " restamped as " << token;
+	}
 }
 
 // One stamp file, in the shape above, whichever surface reads it.

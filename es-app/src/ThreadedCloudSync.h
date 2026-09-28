@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <mutex>
+#include <ctime>
 #include <string>
 #include <thread>
 #include <utility>
@@ -100,6 +101,13 @@ public:
 	// path: recordOutcome's own, and a script's last-backup / last-restore
 	// when this process knows an outcome the script's trap could not name.
 	static void writeStamp(const std::string& path, int rc, const std::string& token, const std::string& why);
+	// A run of `command` that began at runStarted was stopped: the part its
+	// stop interrupted -- the script stamp its trap wrote with 130 this run
+	// (CloudText::stampsToRestamp) -- is restamped with `token`, the
+	// stopper's word for it. Parts that finished keep their outcome; parts
+	// that never started keep their last real run's. The card and the
+	// transfer page both end a stopped run through here.
+	static void restampStoppedParts(const std::string& command, time_t runStarted, const std::string& token);
 	static std::string whyForCode(int rc);
 	static std::string tokenForCode(int rc);
 	static std::string whyForToken(const std::string& token);
@@ -122,6 +130,7 @@ private:
 	std::string					mTitle;
 	std::string					mRunning;
 	Origin						mOrigin;
+	time_t						mStartedAt;   // wall clock, to tell a stamp this run wrote
 
 	// Set and read across the worker and the main thread; see
 	// cancelForLaunch. mWaitingForNetwork records that the network step is

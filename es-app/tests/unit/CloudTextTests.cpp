@@ -1363,3 +1363,62 @@ TEST_CASE("fileInFlight names the file that is moving from rclone's done count")
 	CHECK(CloudText::fileInFlight(0, 0) == 0);     // rclone has not counted: the bytes alone
 	CHECK(CloudText::fileInFlight(2, -1) == 0);
 }
+
+// A stopped run restamps the part its stop interrupted, and only that part
+// (#203; #308 5-cloud-sync-and-saves claude F-CS-05, gpt F-CS-23). The
+// commands are the ones the transfer page and the startup sync compose.
+namespace
+{
+	bool has(const std::vector<std::string>& v, const std::string& s)
+	{
+		for (auto& x : v)
+			if (x == s)
+				return true;
+		return false;
+	}
+}
+
+TEST_CASE("a stopped run's stamps: the settings parts are among the stamps its scripts write")
+{
+	const std::string settingsBackup = "echo '>>> unit SETTINGS||' ; echo '>>> doing archive' ; "
+		"/usr/bin/backuptool backup >/dev/null 2>&1 && /usr/bin/cloud_backup --yes --system-only";
+	const std::string settingsRestore = "echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only"
+		" && { echo '>>> doing unpack' ; /usr/bin/backuptool restore --no-restart ; }";
+	CHECK(has(scriptStampNames(settingsBackup), "last-settings-backup"));
+	CHECK(has(scriptStampNames(settingsRestore), "last-settings-restore"));
+
+	const std::string startup = "/usr/bin/cloud_restore --yes --method=copy --update --saves-only --automatic; _r=$?;"
+		" /usr/bin/cloud_backup --yes --method=copy --update --saves-only --automatic; _b=$?;";
+	CHECK(has(scriptStampNames(startup), "last-restore"));
+	CHECK(has(scriptStampNames(startup), "last-backup"));
+	CHECK(has(scriptStampNames("/usr/bin/cloud_content_restore --match --apply"), "last-content-match"));
+	CHECK(has(scriptStampNames("/usr/bin/cloud_content_backup --selected"), "last-content-backup"));
+	// cloud_content_backup is not cloud_backup.
+	CHECK_FALSE(has(scriptStampNames("/usr/bin/cloud_content_backup --selected"), "last-backup"));
+	CHECK(scriptStampNames("sleep 4").empty());
+}
+
+TEST_CASE("a stopped run's stamps: only the part the stop interrupted is restamped")
+{
+	const time_t started = 1789000000;
+	// Saves, then content, then settings -- stopped in the settings part:
+	// the saves and content parts finished this run and keep their outcome.
+	const std::vector<StampText> stamps = {
+		{ "last-backup",          "1789000040 0" },
+		{ "last-content-backup",  "1789000090 0" },
+		{ "last-settings-backup", "1789000120 130" },
+	};
+	const auto restamp = stampsToRestamp(stamps, started);
+	CHECK(restamp.size() == 1);
+	CHECK(has(restamp, "last-settings-backup"));
+	CHECK_FALSE(has(restamp, "last-backup"));
+
+	// A part that failed on its own before the stop keeps its why.
+	CHECK(stampsToRestamp({ { "last-backup", "1789000040 5 YOUR_CLOUD_STOPPED_ANSWERING" } }, started).empty());
+	// A part that never started keeps its last real run, even a stop.
+	CHECK(stampsToRestamp({ { "last-restore", "1788999000 130" } }, started).empty());
+	// No stamp, or one that is not a stamp.
+	CHECK(stampsToRestamp({ { "last-restore", "" }, { "last-backup", "garbage" } }, started).empty());
+	// The trap's stamp from this run, with a why the scripts printed first.
+	CHECK(has(stampsToRestamp({ { "last-restore", "1789000003 130 IT_WAS_STOPPED" } }, started), "last-restore"));
+}
