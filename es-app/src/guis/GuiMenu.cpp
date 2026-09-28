@@ -4129,7 +4129,7 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			r.selected = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
 			return r;
 		},
-		[window, onDone, proceedLabel, backup, perSystem, wholeDevice](CloudScanResult result)
+		[window, onDone, proceedLabel, backup, content, perSystem, wholeDevice](CloudScanResult result)
 		{
 			// A scan that could not read the cloud says so, and says what to
 			// do; only a scan that read it and found nothing shows the
@@ -4161,6 +4161,8 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			// missing fields as "nothing to move".
 			struct Found { std::string name; unsigned long cloudBytes; bool supported; unsigned long localBytes; int cloudNotHere; int hereNotCloud; unsigned long cloudNotHereBytes; unsigned long hereNotCloudBytes; bool sized; };
 			std::vector<Found> found;
+			Found bios{ "bios", 0, true, 0, 0, 0, 0, 0, false };
+			bool biosListed = false;
 			for (auto& line : result.scan)
 			{
 				auto p = Utils::String::split(Utils::String::trim(line), '|', true);
@@ -4180,12 +4182,37 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					f.sized = true;
 				}
 				if (f.name == "bios")
-					continue;   // not a system; comes with the tier (D-CLOUD-043)
+				{
+					// Not a system; comes with the tier (D-CLOUD-043). Kept
+					// aside for the case below.
+					bios = f;
+					biosListed = true;
+					continue;
+				}
 				// Each direction lists only what it can act on: backup sends what
-				// is here, restore brings what is there.
-				if (backup ? f.localBytes == 0 : f.cloudBytes == 0)
+				// is here, restore brings what is there. A file counts when it
+				// would move, whatever its size: a system whose only file is
+				// empty read as nothing to move and was left out (#308 8a gpt
+				// F-ES-10).
+				if (backup ? (f.localBytes == 0 && f.hereNotCloud == 0) : (f.cloudBytes == 0 && f.cloudNotHere == 0))
 					continue;
 				found.push_back(f);
+			}
+			// BIOS files and no system to pick: the tier's other half still
+			// moves (#308 8a gpt F-ES-10). It used to end in NO SYSTEM ...
+			// HOLDS WHAT YOU TICKED with the BIOS files sitting there. The
+			// selection names bios alone: cloud_content_restore --selected
+			// refuses an empty selection before it adds bios, and both
+			// scripts take bios in the selection as the tier. Not for game
+			// content alone, which BIOS is not.
+			const bool biosToMove = biosListed && content
+				&& (backup ? (bios.localBytes > 0 || bios.hereNotCloud > 0) : (bios.cloudBytes > 0 || bios.cloudNotHere > 0));
+			if (found.empty() && biosToMove)
+			{
+				LOG(LogInfo) << "cloud content: no system to pick; BIOS files alone " << (backup ? "go up" : "come down");
+				ApiSystem::executeScriptLegacy(cloudSetSystemsCommand({ "bios" }));
+				onDone();
+				return;
 			}
 			if (found.empty())
 			{
