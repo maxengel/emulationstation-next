@@ -473,10 +473,12 @@ namespace Utils
 		//                                      keys: the web API key, the token,
 		//                                      the login password
 		//
-		// A value is one shell word: a single-quoted run as shellQuote writes it
-		// (with the '\'' escape), a double-quoted run with backslash escapes, or
-		// an unquoted run to the next space, &, ;, | or quote. The quotes go with
-		// the value, so a passphrase with spaces is masked whole. An unterminated
+		// A value is one shell word: every single-quoted, double-quoted and bare
+		// piece of it and every backslash-escaped character, to the next
+		// unquoted space, &, ; or | (#308 F-ES-09) -- shellQuote's '\'' escape
+		// is three such pieces. The quotes go with the value, so a passphrase
+		// with spaces is masked whole. Inside a quoted string (a URL in double
+		// quotes) the value ends at that string's closing quote. An unterminated
 		// quote takes the rest of the line: where the shape is unclear, more is
 		// masked rather than less.
 
@@ -518,38 +520,91 @@ namespace Utils
 			return false;
 		}
 
-		// The end of the one shell word starting at pos.
+		// What quote `pos` sits inside, reading the line from its start as the
+		// shell would: 0 at the top level, else the quote character.
+		static char maskQuoteAt(const std::string& s, size_t pos)
+		{
+			char quote = 0;
+			for (size_t i = 0; i < pos && i < s.size(); ++i)
+			{
+				const char c = s[i];
+				if (quote == '\'')
+				{
+					if (c == '\'')
+						quote = 0;
+					continue;
+				}
+				if (c == '\\')
+				{
+					++i;
+					continue;
+				}
+				if (quote == '"')
+				{
+					if (c == '"')
+						quote = 0;
+					continue;
+				}
+				if (c == '\'' || c == '"')
+					quote = c;
+			}
+			return quote;
+		}
+
+		// The end of the one shell word starting at pos (#308 F-ES-09). At the
+		// top level a word runs across every quoted and bare piece of it, and
+		// every backslash-escaped character, until unquoted whitespace or &, ;
+		// or |: `--password 'front'back` passes the shell frontback, and the
+		// mask used to stop at the first closing quote and log "back". Inside
+		// a quoted string -- a URL in double quotes, a command in single ones
+		// -- the value ends where it always did: at the string's own closing
+		// quote, or at whitespace, &, ; or |.
 		static size_t maskValueEnd(const std::string& s, size_t pos)
 		{
 			if (pos >= s.size())
 				return pos;
 
-			const char quote = s[pos];
-			if (quote == '\'' || quote == '"')
+			const char enclosing = maskQuoteAt(s, pos);
+			if (enclosing != 0)
 			{
-				for (size_t i = pos + 1; i < s.size(); ++i)
+				size_t i = pos;
+				while (i < s.size() && !maskEndsValue(s[i]))
 				{
-					if (quote == '"' && s[i] == '\\')
-					{
-						++i; // an escaped character, whatever it is
-						continue;
-					}
-					if (s[i] != quote)
-						continue;
-					if (quote == '\'' && s.compare(i, 4, "'\\''") == 0)
-					{
-						i += 3; // shellQuote's embedded quote: close, \', reopen
-						continue;
-					}
-					return i + 1;
+					if (enclosing == '"' && s[i] == '\\')
+						++i;
+					++i;
 				}
-				return s.size(); // unterminated: the value is the rest of the line
+				return i < s.size() ? i : s.size();
 			}
 
+			char quote = 0;
 			size_t i = pos;
-			while (i < s.size() && !maskEndsValue(s[i]))
-				++i;
-			return i;
+			for (; i < s.size(); ++i)
+			{
+				const char c = s[i];
+				if (quote == '\'')
+				{
+					if (c == '\'')
+						quote = 0;
+					continue;
+				}
+				if (c == '\\')
+				{
+					++i; // an escaped character, whatever it is
+					continue;
+				}
+				if (quote == '"')
+				{
+					if (c == '"')
+						quote = 0;
+					continue;
+				}
+				if (c == '\'' || c == '"')
+					quote = c;
+				else if (maskIsSpace(c) || c == '&' || c == ';' || c == '|')
+					return i;
+			}
+			return s.size(); // the end of the line, or an unterminated quote: the value is the rest
 		}
 
 		static bool maskIsPlaceholder(const std::string& s, size_t pos, size_t end)
