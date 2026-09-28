@@ -212,3 +212,23 @@ TEST_CASE("an escaped quote inside an inner quoted value does not end it (audit 
 	CHECK(maskSecrets(R"(sh -c 'tool --password front\ back && x')") == R"(sh -c 'tool --password <redacted> && x')");
 	CHECK(maskSecrets(R"(sh -c "tool --password front\\ back && x")") == R"(sh -c "tool --password <redacted> && x")");
 }
+
+TEST_CASE("shellQuote's escaped quote inside a single-quoted command is a quote of the command (audit of the fix round, claude G2-E-core-01)")
+{
+	// shellQuote writes a single quote inside its string as '\'' -- close,
+	// escaped quote, reopen -- so a value it quoted, nested in a command it
+	// quoted again, begins with the enclosing quote. The mask took that
+	// first byte for the string's end, masked nothing, and logged the value.
+	// The four bytes are one quote of the inner command.
+	using Utils::String::shellQuote;
+	CHECK(maskSecrets("sh -c " + shellQuote("tool --password " + shellQuote("front back")))
+		== "sh -c 'tool --password <redacted>'");
+	CHECK(maskSecrets(R"(sh -c 'tool --password '\''front back'\'' && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	// An apostrophe inside the inner double quote.
+	CHECK(maskSecrets(R"(sh -c 'tool --password "it'\''s front back" && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	// Inside the inner single quote a backslash is only a backslash: the
+	// inner shell reads 'front\'back as the one word front\back.
+	CHECK(maskSecrets(R"(sh -c 'tool --password '\''front\'\''back next')") == R"(sh -c 'tool --password <redacted> next')");
+	// A lone quote still ends the enclosing string, and the value with it.
+	CHECK(maskSecrets("sh -c 'x --password front' back") == "sh -c 'x --password <redacted>' back");
+}

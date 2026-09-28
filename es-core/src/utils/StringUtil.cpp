@@ -555,13 +555,18 @@ namespace Utils
 		// that runs it will read it (audit of the fix round PL-010): in a
 		// double-quoted string \" \\ \$ and \` are one character, the escaped
 		// one, and any other backslash stays itself; in a single-quoted string
-		// every byte stands for itself. Sets c, and returns the character's
-		// width in the line -- or 0 where the enclosing string itself ends.
+		// every byte stands for itself, except shellQuote's '\'' -- close,
+		// escaped quote, reopen -- which is one single quote of the command
+		// (audit of the fix round, claude G2-E-core-01: a value shellQuote
+		// quoted inside a command it quoted again began with that quote, was
+		// taken for the string's end, and went to the log unmasked). Sets c,
+		// and returns the character's width in the line -- or 0 where the
+		// enclosing string itself ends.
 		static size_t maskInnerChar(const std::string& s, size_t i, char enclosing, char& c)
 		{
 			c = s[i];
 			if (c == enclosing)
-				return 0;
+				return enclosing == '\'' && s.compare(i, 4, "'\\''") == 0 ? 4 : 0;
 			if (enclosing == '"' && c == '\\' && i + 1 < s.size())
 			{
 				const char next = s[i + 1];
