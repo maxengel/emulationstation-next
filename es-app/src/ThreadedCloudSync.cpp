@@ -484,6 +484,19 @@ void ThreadedCloudSync::run()
 	// interface does (#308 F-CS-31). The stamp below keeps mWhy as printed.
 	const std::string why = mWhy.empty() ? whyForCode(ret) : CloudText::localizedWhy(mWhy);
 
+	// A 69 is not always a skip (the audit of the fix round, stream A's
+	// lead G2-A-03 claude). The scripts exit 69 whenever the network is the
+	// reason -- the retry at the link's return and the offline recovery line
+	// read the code -- and when files had moved before the link went, the
+	// script's own stamp adds the gaps token and its why ("69 gaps YOU WENT
+	// OFFLINE PART-WAY THROUGH"), which the rows and the transfer page read
+	// as COULDN'T FINISH. This card read the 69 alone and said SKIPPED -
+	// YOU'RE NOT ONLINE, which says nothing moved. A bare 69 is still that.
+	std::string offlineWhy;
+	if (!cancelled && !gaps && ret == CloudExit::NoNetwork)
+		offlineWhy = CloudText::offlinePartWayWhy(readStamps(mCommand), mStampsBefore);
+	const bool offlineGaps = !offlineWhy.empty();
+
 	std::string outcome, token;
 	if (cancelled)
 	{
@@ -504,6 +517,11 @@ void ThreadedCloudSync::run()
 	{
 		outcome = _("SKIPPED - A SYNC IS ALREADY RUNNING");
 		token = "lock-held";
+	}
+	else if (offlineGaps)
+	{
+		outcome = _("COULDN'T FINISH") + std::string(" - ") + CloudText::localizedWhy(offlineWhy);
+		token = "gaps";
 	}
 	else if (ret == CloudExit::NoNetwork)
 	{
@@ -527,7 +545,7 @@ void ThreadedCloudSync::run()
 	// row -- LAST 00:48 - COULDN'T FINISH on a row nobody had pressed (guest
 	// d, 2026-09-10). Automatic origins stamp whatever they ran.
 	if (mOrigin != Origin::Manual || CloudText::verbOf(mCommand) == CloudText::Verb::Sync)
-		recordOutcome(mOrigin, ret, token, mWhy);
+		recordOutcome(mOrigin, ret, token, offlineGaps && mWhy.empty() ? offlineWhy : mWhy);
 
 	// A run stopped for a game (the player's answer to the launch question,
 	// D-CLOUD-129): the script's own stamp -- what the BACK UP and RESTORE
@@ -573,7 +591,10 @@ void ThreadedCloudSync::run()
 		// its outcome word is SKIPPED, which says nothing moved, so the
 		// in-place clause -- THE SAVES THAT MADE IT ARE ON BOTH SIDES -- is
 		// kept in every candidate rather than dropped first (#307 PL-072).
-		const bool keepInPlace = mMoved && ret == CloudExit::NoNetwork && !cancelled && !gaps;
+		// A run whose script stamped the cut (offlineGaps) says COULDN'T
+		// FINISH above and takes the in-place clause as every failure does.
+		const bool moved = mMoved || offlineGaps;
+		const bool keepInPlace = mMoved && ret == CloudExit::NoNetwork && !cancelled && !gaps && !offlineGaps;
 		std::vector<std::string> action;
 		if (completed)
 		{
@@ -587,7 +608,7 @@ void ThreadedCloudSync::run()
 			// goes first when the line is short of room. And there is a
 			// mechanism behind the sentence (D-RA-030): the link's return
 			// runs the sync that is owed, with a card (ProxyCards).
-			const std::string inPlace = inPlaceClause(CloudText::verbOf(mCommand), mMoved);
+			const std::string inPlace = inPlaceClause(CloudText::verbOf(mCommand), moved);
 			// When awards earned offline wait in the proxy's queue, the line
 			// names them too (fork #298): they go with the saves at the link's
 			// return (ProxyCards). The ctl is asked here, off the interface
@@ -612,7 +633,7 @@ void ThreadedCloudSync::run()
 		else
 		{
 			const CloudText::Verb verb = CloudText::verbOf(mCommand);
-			const std::string inPlace = inPlaceClause(verb, mMoved);
+			const std::string inPlace = inPlaceClause(verb, moved);
 
 			std::string recover;
 			if (cancelled && mGameExitSync)

@@ -140,6 +140,17 @@ namespace CloudText
 	std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted,
 		const std::vector<StampText>* before = nullptr);
 
+	// A run the scripts ended for want of a network (69) after files had
+	// moved (the audit of the fix round, stream A's lead G2-A-03 claude):
+	// the script that lost the link stamps "<epoch> 69 gaps YOU WENT OFFLINE
+	// PART-WAY THROUGH", which the rows and the transfer page read as
+	// COULDN'T FINISH, and the automatic sync's card read the 69 alone as
+	// SKIPPED - YOU'RE NOT ONLINE. The why of the first of `stamps` written
+	// since `before` was read (a new file, as stampsToRestamp tells one)
+	// that carries 69 and the gaps token, in English as the scripts wrote
+	// it; "" when none does -- a bare 69, where nothing moved.
+	std::string offlinePartWayWhy(const std::vector<StampText>& stamps, const std::vector<StampText>& before);
+
 	// Which run a stamp describes. EmulationStation stamps last-sync-exit
 	// and last-sync-startup as each automatic run ends, within a second or
 	// two of the script writing its own last-backup or last-restore, so a
