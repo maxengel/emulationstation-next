@@ -4481,13 +4481,16 @@ static std::string cloudLastLabel(time_t when)
 	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt);
 }
 
-static std::string cloudLastRunDetail(const std::string& name)
+// The run a row reports. SYNC SAVES WITH THE CLOUD moves saves both ways,
+// and so do the two automatic syncs; a row that counted only the manual one
+// said NOT DONE ON THIS DEVICE YET on a device that had been syncing all
+// along, so it reports the newest sync by any route (#112). The row's line
+// and its confirmation's LAST TIME both read this one, so they speak of the
+// same run: the confirmation read the manual stamp alone, and could explain
+// a failure the row no longer showed (#308 8a gpt F-ES-16).
+static CloudLastRun cloudLatestRun(const std::string& name)
 {
 	CloudLastRun r = cloudReadLastRun(name);
-	// SYNC SAVES WITH THE CLOUD moves saves both ways, and so do the two
-	// automatic syncs; a row that counted only the manual one said NOT DONE
-	// ON THIS DEVICE YET on a device that had been syncing all along. It
-	// reports the newest sync by any route (#112).
 	if (name == "sync-manual")
 		for (auto* other : { "sync-exit", "sync-startup" })
 		{
@@ -4495,6 +4498,12 @@ static std::string cloudLastRunDetail(const std::string& name)
 			if (a.ran && (!r.ran || a.when > r.when))
 				r = a;
 		}
+	return r;
+}
+
+static std::string cloudLastRunDetail(const std::string& name)
+{
+	const CloudLastRun r = cloudLatestRun(name);
 	if (!r.ran)
 		return _("NOT DONE ON THIS DEVICE YET");
 	const time_t when = r.when;
@@ -4515,7 +4524,7 @@ static std::string cloudLastRunDetail(const std::string& name)
 // dialog then reads as it always has.
 static std::string cloudLastRunWhy(const std::string& name)
 {
-	const CloudLastRun r = cloudReadLastRun(name);
+	const CloudLastRun r = cloudLatestRun(name);
 	if (!r.ran || r.why.empty())
 		return "";
 	return std::string("\n\n") + _("LAST TIME IT COULDN'T FINISH:") + " " + r.why + ".";
