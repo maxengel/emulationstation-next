@@ -59,6 +59,14 @@ ThreadedHasher::ThreadedHasher(Window* window, HasherType type, std::queue<FileD
 					ProxyCards::indexRanOffline(mWindow, (int) mSearchQueue.size());
 				while (!mSearchQueue.empty())
 					mSearchQueue.pop();
+				// And nothing is counted: mTotal was taken from the queue
+				// above, so it stayed at the games that were waiting. A card
+				// and threads were made for an empty queue, the destructor
+				// toasted INDEXING COMPLETED beside the offline card, and the
+				// threads -- ending at once -- could delete this before
+				// start() read it back (#308 1-raoffline claude F-RA-05).
+				// With 0, the check below returns before any of that.
+				mTotal = 0;
 			}
 			else
 				sCheevosLibraryCame = true;
