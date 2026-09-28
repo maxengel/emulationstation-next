@@ -1,6 +1,7 @@
 #include "CloudText.h"
 
 #include "CloudExit.h"
+#include "LocaleES.h"
 #include "utils/StringUtil.h"
 
 #include <cctype>
@@ -311,6 +312,58 @@ std::vector<std::string> outcomeCandidates(const std::string& outcome)
 	}
 
 	return candidates;
+}
+
+std::vector<std::pair<std::string, std::string>> whySentences()
+{
+	// Each sentence twice: as the script prints it, to match, and inside
+	// _(""), so xgettext carries it into the catalog and the French in
+	// locale/lang/fr reaches the card. Built on each call, after the
+	// language is chosen. The list is the emitter table in
+	// es-app/tests/unit/CloudTextTests.cpp, which fails on a why a script
+	// prints that is not here; a sentence a script changes wants its pair
+	// changed in the same change, or the card shows it in English again.
+	return {
+		{ "YOUR CLOUD STORAGE ISN'T SET UP YET", _("YOUR CLOUD STORAGE ISN'T SET UP YET") },
+		{ "COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN", _("COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN") },
+		{ "YOUR CLOUD STOPPED ANSWERING", _("YOUR CLOUD STOPPED ANSWERING") },
+		{ "YOUR CLOUD SYNC SETTINGS COULDN'T BE READ", _("YOUR CLOUD SYNC SETTINGS COULDN'T BE READ") },
+		{ "AN OLD FOLDER SETTING IS IN THE WAY", _("AN OLD FOLDER SETTING IS IN THE WAY") },
+		{ "YOUR SAVES FOLDER ISN'T ON THIS DEVICE", _("YOUR SAVES FOLDER ISN'T ON THIS DEVICE") },
+		{ "THIS DEVICE'S SETTINGS BACKUP IS DAMAGED", _("THIS DEVICE'S SETTINGS BACKUP IS DAMAGED") },
+		{ "THE COPY IN YOUR CLOUD ISN'T COMPLETE", _("THE COPY IN YOUR CLOUD ISN'T COMPLETE") },
+		{ "COULDN'T FIND YOUR CLOUD FOLDER", _("COULDN'T FIND YOUR CLOUD FOLDER") },
+		{ "SOME FILES DIDN'T FINISH", _("SOME FILES DIDN'T FINISH") },
+		{ "YOUR CLOUD WOULDN'T TAKE THE FILES", _("YOUR CLOUD WOULDN'T TAKE THE FILES") },
+		{ "IT WAS STOPPED", _("IT WAS STOPPED") },
+		{ "THE CLOUD TOOK TOO LONG - IT'LL TRY AGAIN NEXT TIME", _("THE CLOUD TOOK TOO LONG - IT'LL TRY AGAIN NEXT TIME") },
+		{ "SOMETHING WENT WRONG", _("SOMETHING WENT WRONG") },
+		{ "COULDN'T TELL WHICH CARD YOUR SAVES ARE ON", _("COULDN'T TELL WHICH CARD YOUR SAVES ARE ON") },
+		{ "YOUR SAVES ARE ON A DIFFERENT CARD", _("YOUR SAVES ARE ON A DIFFERENT CARD") },
+		{ "YOUR SAVES CHANGED CARDS PART-WAY THROUGH", _("YOUR SAVES CHANGED CARDS PART-WAY THROUGH") },
+		{ "THERE'S NO SETTINGS BACKUP ON THIS DEVICE YET", _("THERE'S NO SETTINGS BACKUP ON THIS DEVICE YET") },
+		{ "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS", _("COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS") },
+		{ "THE RESTORE COULDN'T FINISH", _("THE RESTORE COULDN'T FINISH") },
+		{ "THIS DEVICE CAN'T MAKE A SETTINGS BACKUP", _("THIS DEVICE CAN'T MAKE A SETTINGS BACKUP") },
+		{ "THE BACKUP COULDN'T FINISH WHILE GATHERING YOUR SETTINGS", _("THE BACKUP COULDN'T FINISH WHILE GATHERING YOUR SETTINGS") },
+		{ "THE BACKUP COULDN'T FINISH", _("THE BACKUP COULDN'T FINISH") },
+	};
+}
+
+std::string localizedWhy(const std::string& why)
+{
+	for (auto& sentence : whySentences())
+		if (sentence.first == why)
+			return sentence.second;
+	return why;
+}
+
+bool isKnownWhy(const std::string& why)
+{
+	for (auto& sentence : whySentences())
+		if (sentence.first == why)
+			return true;
+	return false;
 }
 
 std::string cleanLine(const std::string& raw)

@@ -475,7 +475,9 @@ void ThreadedCloudSync::run()
 		(t.second == 0 || t.second == 9 ? okTiers : badTiers).push_back(t.first);
 	const bool completed = !cancelled && (ret == 0 || ret == 9);
 	const bool gaps = !cancelled && !completed && !okTiers.empty() && !badTiers.empty();
-	const std::string why = mWhy.empty() ? whyForCode(ret) : mWhy;
+	// In the player's language: the scripts speak English whatever the
+	// interface does (#308 F-CS-31). The stamp below keeps mWhy as printed.
+	const std::string why = mWhy.empty() ? whyForCode(ret) : CloudText::localizedWhy(mWhy);
 
 	std::string outcome, token;
 	if (cancelled)

@@ -614,13 +614,33 @@ TEST_CASE("every protocol shape an emitter prints classifies to a known kind")
 	// projects/ROCKNIX/packages/network/rclone/sources/ and
 	// projects/ROCKNIX/packages/rocknix/sources/scripts/, on next.
 	static const Shape shapes[] = {
-		{ ">>> why COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN", ProtocolKind::Why, "cloud_restore:430, cloud_backup:409" },
-		{ ">>> why YOUR CLOUD STORAGE ISN'T SET UP YET", ProtocolKind::Why, "cloud_content_backup:95, :104; cloud_content_restore:96, :105" },
-		{ ">>> why THE UPLOAD COULDN'T FINISH", ProtocolKind::Why, "cloud_content_backup:158, cloud_content_restore:162" },
+		// Every ">>> why" a script prints, from the scripts at next f0f263b8cc
+		// (#308 5 claude F-CS-28: this list had drifted -- an upload sentence
+		// no script prints any more, backuptool at the wrong line, and six
+		// sentences missing). The why_for tables print the rc-keyed ones.
+		{ ">>> why YOUR CLOUD STORAGE ISN'T SET UP YET", ProtocolKind::Why, "cloud_backup:790, cloud_restore:856, cloud_content_backup:95, :104, cloud_content_restore:96, :105" },
+		{ ">>> why COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN", ProtocolKind::Why, "cloud_backup:815, cloud_restore:881" },
+		{ ">>> why YOUR CLOUD STOPPED ANSWERING", ProtocolKind::Why, "cloud_backup:872, :687, :698, cloud_restore:934, :760, :771, cloud_content_*:168/:172" },
+		{ ">>> why YOUR CLOUD SYNC SETTINGS COULDN'T BE READ", ProtocolKind::Why, "cloud_backup:926, :932, cloud_restore:988, :994" },
+		{ ">>> why AN OLD FOLDER SETTING IS IN THE WAY", ProtocolKind::Why, "cloud_backup:944, cloud_restore:1006" },
+		{ ">>> why YOUR SAVES FOLDER ISN'T ON THIS DEVICE", ProtocolKind::Why, "cloud_backup:1273" },
+		{ ">>> why THIS DEVICE'S SETTINGS BACKUP IS DAMAGED", ProtocolKind::Why, "cloud_backup:1729, backuptool:613" },
+		{ ">>> why THE COPY IN YOUR CLOUD ISN'T COMPLETE", ProtocolKind::Why, "cloud_backup:1839" },
+		{ ">>> why COULDN'T FIND YOUR CLOUD FOLDER", ProtocolKind::Why, "why_for 3|4: cloud_backup:686, cloud_restore:759, cloud_content_backup:167, cloud_content_restore:171" },
+		{ ">>> why SOME FILES DIDN'T FINISH", ProtocolKind::Why, "why_for 6: cloud_backup:688, cloud_restore:761, cloud_content_backup:169, cloud_content_restore:173" },
+		{ ">>> why YOUR CLOUD WOULDN'T TAKE THE FILES", ProtocolKind::Why, "why_for 7|8: cloud_backup:689, cloud_restore:762, cloud_content_backup:170, cloud_content_restore:174" },
+		{ ">>> why IT WAS STOPPED", ProtocolKind::Why, "why_for 130: cloud_backup:690, cloud_restore:763, cloud_content_backup:171, cloud_content_restore:175" },
+		{ ">>> why THE CLOUD TOOK TOO LONG - IT'LL TRY AGAIN NEXT TIME", ProtocolKind::Why, "why_for 10|124 automatic: cloud_backup:696, cloud_restore:769" },
+		{ ">>> why SOMETHING WENT WRONG", ProtocolKind::Why, "why_for *: cloud_backup:700, cloud_restore:773, cloud_content_backup:172, cloud_content_restore:176" },
 		{ ">>> why COULDN'T TELL WHICH CARD YOUR SAVES ARE ON", ProtocolKind::Why, "cloud_saves_root:125" },
 		{ ">>> why YOUR SAVES ARE ON A DIFFERENT CARD", ProtocolKind::Why, "cloud_saves_root:144" },
 		{ ">>> why YOUR SAVES CHANGED CARDS PART-WAY THROUGH", ProtocolKind::Why, "cloud_saves_root:157" },
-		{ ">>> why THE BACKUP COULDN'T FINISH", ProtocolKind::Why, "backuptool:145" },
+		{ ">>> why THERE'S NO SETTINGS BACKUP ON THIS DEVICE YET", ProtocolKind::Why, "backuptool:598" },
+		{ ">>> why COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS", ProtocolKind::Why, "backuptool:637" },
+		{ ">>> why THE RESTORE COULDN'T FINISH", ProtocolKind::Why, "backuptool:717, :721, :724" },
+		{ ">>> why THIS DEVICE CAN'T MAKE A SETTINGS BACKUP", ProtocolKind::Why, "backuptool:761" },
+		{ ">>> why THE BACKUP COULDN'T FINISH WHILE GATHERING YOUR SETTINGS", ProtocolKind::Why, "backuptool:783" },
+		{ ">>> why THE BACKUP COULDN'T FINISH", ProtocolKind::Why, "backuptool:785" },
 		{ ">>> doing network", ProtocolKind::Doing, "cloud_net_ready:169" },
 		{ ">>> unit SAVES||", ProtocolKind::Unit, "cloud_restore:912, cloud_backup:884" },
 		{ ">>> unit SETTINGS||", ProtocolKind::Unit, "cloud_restore:1133, cloud_backup:1149" },
@@ -654,7 +674,31 @@ TEST_CASE("every protocol shape an emitter prints classifies to a known kind")
 		// is the rule -- no emitter's line is a line a reader cannot place.
 		CHECK(p.kind != ProtocolKind::Unknown);
 		CHECK(p.kind != ProtocolKind::NotProtocol);
+		// And no why an emitter prints is left in English under a
+		// translated outcome word: the card has its translation (#308
+		// F-CS-31).
+		if (p.kind == ProtocolKind::Why)
+			CHECK(isKnownWhy(p.text));
 	}
+}
+
+TEST_CASE("each why's two spellings agree, so its translation is found (#308 5 gpt F-CS-31)")
+{
+	// whySentences pairs the English a script prints with _("") of the same
+	// English, for xgettext to carry into the catalog. The unit build has no
+	// gettext, so _() hands the English back: a pair whose two copies differ
+	// by a letter is a sentence the card will never translate.
+	const auto sentences = whySentences();
+	CHECK(sentences.size() >= 23);
+	for (auto& sentence : sentences)
+	{
+		INFO(sentence.first);
+		CHECK(sentence.first == sentence.second);
+		CHECK(localizedWhy(sentence.first) == sentence.second);
+	}
+	// A sentence this build does not list comes back as it came.
+	CHECK(localizedWhy("A SENTENCE FROM A NEWER SCRIPT") == "A SENTENCE FROM A NEWER SCRIPT");
+	CHECK_FALSE(isKnownWhy("A SENTENCE FROM A NEWER SCRIPT"));
 }
 
 TEST_CASE("classifyProtocolLine on everything else")
