@@ -6155,10 +6155,6 @@ static void cloudSetupAddFact(GuiSettings* s, Window* window, const std::string&
 	s->addWithLabel(label, std::make_shared<TextComponent>(window, value, theme->Text.font, theme->Text.color), false, func);
 }
 
-// Show a freshly built wizard page: give it the standard large-menu
-// height (the cap MenuComponent::updateSize applies) so the window does
-// not jump between steps, push it, then close the page it replaces -
-// closing first would flash the menu underneath.
 // The sign-in pages that own a waiting `cloud_oauth serve` (#308 8a gpt
 // F-ES-17). A page handed on to the next one by cloudSetupPresent leaves
 // the session to it; a page that closes any other way -- EXIT, back -- is
@@ -6179,6 +6175,10 @@ static void cloudOAuthOwnSession(GuiSettings* s)
 	});
 }
 
+// Show a freshly built wizard page: give it the standard large-menu
+// height (the cap MenuComponent::updateSize applies) so the window does
+// not jump between steps, push it, then close the page it replaces -
+// closing first would flash the menu underneath.
 static void cloudSetupPresent(Window* window, GuiSettings* s, GuiSettings* prev)
 {
 	if (prev != nullptr)
