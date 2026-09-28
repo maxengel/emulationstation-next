@@ -356,6 +356,72 @@ TEST_CASE("two waiters on a stale lock never both hold it (PL-041)")
 	CHECK(failures == 0);
 }
 
+// --------------------------------------------- audit of the fixes G-E1-01/02
+
+TEST_CASE("a reap guard somebody else holds cannot stretch the wait past its budget (G-E1-01)")
+{
+	// The stale-lock remover took `lock`.reap with a blocking flock and read
+	// the clock only after it: a holder of the guard that never let go --
+	// stopped, or a shell reaper waiting on something of its own -- kept the
+	// interface's settings save waiting for good.
+	ScratchDir dir;
+	const std::string lockPath = dir / ".system.cfg.lock";
+	put(lockPath, std::to_string((long long) deadPid()) + "\n");   // stale: a reaper is needed
+
+	int held[2];
+	REQUIRE(pipe(held) == 0);
+	pid_t guard = fork();
+	if (guard == 0)
+	{
+		::close(held[0]);
+		int fd = ::open((lockPath + ".reap").c_str(), O_RDWR | O_CREAT, 0644);
+		if (fd < 0 || ::flock(fd, LOCK_EX) != 0)
+			_exit(2);
+		if (::write(held[1], "x", 1) != 1)
+			_exit(2);
+		pause();   // holds the guard until killed
+		_exit(0);
+	}
+	::close(held[1]);
+	char c;
+	REQUIRE(::read(held[0], &c, 1) == 1);
+	::close(held[0]);
+
+	const auto started = std::chrono::steady_clock::now();
+	const int rc = inChildWithin(5, [&] {
+		PidLock lock(lockPath);
+		return lock.acquire(300) ? 1 : 0;
+	});
+	const long ms = (long) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+	kill(guard, SIGKILL);
+	int status = 0;
+	waitpid(guard, &status, 0);
+
+	CHECK(rc == 0);          // -1: the deadline killed an acquire still blocked on the guard
+	CHECK(ms < 3000);
+}
+
+TEST_CASE("a reap guard that cannot be taken removes nothing (G-E1-02)")
+{
+	// Without the guard the remover used to go on to its re-read and unlink,
+	// which is the race the guard exists to close: a check that could not
+	// run went ahead as if it had passed. A directory where the guard goes
+	// cannot be opened for writing; the stale lock must stay, and the wait
+	// end false within its budget.
+	ScratchDir dir;
+	const std::string lockPath = dir / ".system.cfg.lock";
+	const std::string stale = std::to_string((long long) deadPid()) + "\n";
+	put(lockPath, stale);
+	REQUIRE(mkdir((lockPath + ".reap").c_str(), 0755) == 0);
+
+	const int rc = inChildWithin(5, [&] {
+		PidLock lock(lockPath);
+		return lock.acquire(300) ? 1 : 0;
+	});
+	CHECK(rc == 0);
+	CHECK(get(lockPath) == stale);   // not removed, not taken
+}
+
 // ------------------------------------------------------------ F-ES-07
 
 TEST_CASE("a lock path that can never be a lock ends the wait within its budget (#308 8b gpt F-ES-07)")

@@ -126,9 +126,9 @@ namespace Utils
 		// no waiter ever sees it empty (PL-041); and a stale lock is removed
 		// under an flock on `path`.reap, re-read first, so two waiters that
 		// both judged one dead holder's lock stale cannot remove each other's
-		// new one. The shell's wait_lock removes a stale lock without that
-		// guard (its own half of PL-041); until it takes the same flock, a
-		// shell waiter and this one can still meet in that window. The shell
+		// new one; the shell's wait_lock takes the same flock. The guard is
+		// asked without waiting past the budget, and a guard that cannot be
+		// had removes nothing (audit of the fixes G-E1-01/02). The shell
 		// waits forever; acquire() takes a budget, because it runs on the
 		// interface thread.
 		class PidLock

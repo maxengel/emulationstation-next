@@ -413,32 +413,49 @@ namespace Utils
 
 		// Remove the lock at `path` only if it still names `holder`, with no
 		// other remover between that look and the unlink (PL-041). Every
-		// remover of a stale lock -- this process on any thread, and any other
-		// process that takes the same guard -- takes an flock on `path`.reap
-		// for the few instructions this lasts. Under it nothing else can
-		// change what `path` names: a stale holder is gone and cannot release
-		// it, a live holder only ever releases a lock naming itself, and every
-		// other remover waits here. So the re-read and the unlink are one step
-		// as far as the lock's users are concerned. The guard is an flock, so
-		// a remover that dies holding it frees it with its last descriptor --
-		// there is no stale guard to clear. Without a guard file (the
-		// directory will not take one) this is the re-read and remove it was.
-		static void removeIfStill(const std::string& path, const std::string& holder)
+		// remover of a stale lock -- this process on any thread, and the
+		// shell's wait_lock, which takes the same guard -- takes an flock on
+		// `path`.reap for the few instructions this lasts. Under it nothing
+		// else can change what `path` names: a stale holder is gone and cannot
+		// release it, a live holder only ever releases a lock naming itself,
+		// and every other remover waits. So the re-read and the unlink are one
+		// step as far as the lock's users are concerned. The guard is an
+		// flock, so a remover that dies holding it frees it with its last
+		// descriptor -- there is no stale guard to clear.
+		//
+		// The guard is asked without waiting, until `deadline` (audit of the
+		// fixes G-E1-01: a blocking flock here held the interface thread past
+		// its budget for as long as another holder kept the guard). And a
+		// guard that cannot be had -- the file cannot be opened, the flock
+		// fails, the deadline comes -- removes nothing (G-E1-02): the re-read
+		// and unlink without it are the race the guard is for. False then;
+		// the caller waits on as for a live holder, and its budget ends it.
+		static bool removeIfStill(const std::string& path, const std::string& holder,
+			std::chrono::steady_clock::time_point deadline)
 		{
 			const std::string guard = path + ".reap";
 			int gfd = ::open(guard.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-			if (gfd >= 0)
+			if (gfd < 0)
+				return false;
+			for (;;)
 			{
-				while (::flock(gfd, LOCK_EX) != 0 && errno == EINTR)
+				if (::flock(gfd, LOCK_EX | LOCK_NB) == 0)
+					break;
+				if (errno == EINTR)
+					continue;
+				if (errno != EWOULDBLOCK || std::chrono::steady_clock::now() >= deadline)
 				{
+					::close(gfd);
+					return false;
 				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			}
 			bool again = false;
 			const std::string current = readText(path, &again);
 			if (again && lockHolder(current) == holder)
 				::unlink(path.c_str());
-			if (gfd >= 0)
-				::close(gfd);   // and the flock with it
+			::close(gfd);   // and the flock with it
+			return true;
 		}
 #endif
 
@@ -605,14 +622,15 @@ namespace Utils
 					// first removed it and took it, and the second's remove,
 					// two steps after its re-read, took the first's new lock
 					// with it (PL-041).
-					removeIfStill(mPath, holder);
+					const bool reaped = removeIfStill(mPath, holder, started + std::chrono::milliseconds(timeoutMs));
 					if (expired())
 						return false;
 					// Retry at once, there is nothing to wait for -- unless the
-					// remove did not take (a directory that will not let go of
-					// the name), which a pause keeps from spinning.
+					// guard could not be had (G-E1-02), or the remove did not
+					// take (a directory that will not let go of the name),
+					// which a pause keeps from spinning.
 					bool still = false;
-					if (lockHolder(readText(mPath, &still)) == holder && still)
+					if (!reaped || (lockHolder(readText(mPath, &still)) == holder && still))
 						std::this_thread::sleep_for(std::chrono::milliseconds(50));
 					continue;
 				}
