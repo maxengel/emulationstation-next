@@ -19,11 +19,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <dirent.h>
+#include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -32,6 +35,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 
 namespace
 {
@@ -215,6 +219,49 @@ TEST_CASE("a read that fails after the file opened is not a read (PL-065)")
 	CHECK(ok);   // empty and missing are different answers
 }
 
+// A read() that fails part way, for readText's case below: this binary's
+// own read(), which AtomicFileUtil.cpp's calls resolve to, passes every
+// call through to the kernel unless a test on this thread has armed it, and
+// then lets `readsLeft` reads through and fails the next with EIO -- the
+// failing card the finding describes, on a file that opened and began to
+// read (the audit of the fixes: PL-065's fixture failed on the first read).
+namespace
+{
+	thread_local int readsLeft = -1;   // -1: not armed
+}
+extern "C" ssize_t read(int fd, void* buf, size_t count)
+{
+	if (readsLeft == 0)
+	{
+		readsLeft = -1;
+		errno = EIO;
+		return -1;
+	}
+	if (readsLeft > 0)
+		readsLeft--;
+	return (ssize_t) syscall(SYS_read, fd, buf, count);
+}
+
+TEST_CASE("a read that fails after part of the file came is not a read (PL-065)")
+{
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	put(path, lines('a', 2000));   // 200000 bytes: more than one 64 KiB read
+	bool ok = true;
+	readsLeft = 1;                 // the first read succeeds, the second fails
+	const std::string text = readText(path, &ok);
+	const int left = readsLeft;
+	readsLeft = -1;
+	CHECK(left == -1);             // the failure was reached: the fixture ran
+	CHECK_FALSE(ok);
+	CHECK(text.empty());           // not the 65536 bytes that came first
+
+	// Unarmed, the same file reads whole.
+	ok = false;
+	CHECK(readText(path, &ok).size() == 200000);
+	CHECK(ok);
+}
+
 // ------------------------------------------------------------ F-ES-08
 
 TEST_CASE("replacing a file keeps its mode (#308 8b gpt F-ES-08)")
@@ -354,6 +401,72 @@ TEST_CASE("two waiters on a stale lock never both hold it (PL-041)")
 	}
 	CHECK(overlaps == 0);
 	CHECK(failures == 0);
+}
+
+// --------------------------------------------- audit of the fixes G-E1-01/02
+
+TEST_CASE("a reap guard somebody else holds cannot stretch the wait past its budget (G-E1-01)")
+{
+	// The stale-lock remover took `lock`.reap with a blocking flock and read
+	// the clock only after it: a holder of the guard that never let go --
+	// stopped, or a shell reaper waiting on something of its own -- kept the
+	// interface's settings save waiting for good.
+	ScratchDir dir;
+	const std::string lockPath = dir / ".system.cfg.lock";
+	put(lockPath, std::to_string((long long) deadPid()) + "\n");   // stale: a reaper is needed
+
+	int held[2];
+	REQUIRE(pipe(held) == 0);
+	pid_t guard = fork();
+	if (guard == 0)
+	{
+		::close(held[0]);
+		int fd = ::open((lockPath + ".reap").c_str(), O_RDWR | O_CREAT, 0644);
+		if (fd < 0 || ::flock(fd, LOCK_EX) != 0)
+			_exit(2);
+		if (::write(held[1], "x", 1) != 1)
+			_exit(2);
+		pause();   // holds the guard until killed
+		_exit(0);
+	}
+	::close(held[1]);
+	char c;
+	REQUIRE(::read(held[0], &c, 1) == 1);
+	::close(held[0]);
+
+	const auto started = std::chrono::steady_clock::now();
+	const int rc = inChildWithin(5, [&] {
+		PidLock lock(lockPath);
+		return lock.acquire(300) ? 1 : 0;
+	});
+	const long ms = (long) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+	kill(guard, SIGKILL);
+	int status = 0;
+	waitpid(guard, &status, 0);
+
+	CHECK(rc == 0);          // -1: the deadline killed an acquire still blocked on the guard
+	CHECK(ms < 3000);
+}
+
+TEST_CASE("a reap guard that cannot be taken removes nothing (G-E1-02)")
+{
+	// Without the guard the remover used to go on to its re-read and unlink,
+	// which is the race the guard exists to close: a check that could not
+	// run went ahead as if it had passed. A directory where the guard goes
+	// cannot be opened for writing; the stale lock must stay, and the wait
+	// end false within its budget.
+	ScratchDir dir;
+	const std::string lockPath = dir / ".system.cfg.lock";
+	const std::string stale = std::to_string((long long) deadPid()) + "\n";
+	put(lockPath, stale);
+	REQUIRE(mkdir((lockPath + ".reap").c_str(), 0755) == 0);
+
+	const int rc = inChildWithin(5, [&] {
+		PidLock lock(lockPath);
+		return lock.acquire(300) ? 1 : 0;
+	});
+	CHECK(rc == 0);
+	CHECK(get(lockPath) == stale);   // not removed, not taken
 }
 
 // ------------------------------------------------------------ F-ES-07
@@ -628,11 +741,24 @@ TEST_CASE("a thread that ends unjoined keeps its stack; a detached one gives it 
 	// with `delete this`, never joining, detaching or deleting the thread: a
 	// joinable thread that has ended keeps its stack mapping and its control
 	// block until somebody joins it, so every sync -- two a game -- left one
-	// behind for the life of the interface. The class needs a Window and
-	// cannot be built here; this is the pattern it used and the one it uses
-	// now, sequentially, as the syncs run. It also says what to measure on
-	// the VM: the task count does not move (the kernel reaps the thread
-	// either way); VmSize does, by a stack a sync.
+	// behind for the life of the interface. This is the pattern it used and
+	// the one it uses now, sequentially, as the syncs run; the case below
+	// holds ThreadedCloudSync itself to the second. It also says what to
+	// measure on the VM: the task count does not move (the kernel reaps the
+	// thread either way); VmSize does, by a stack a sync.
+	//
+	// The thresholds are this host's own stack size, not a number
+	// (audit of the fixes G-E1-07 gpt / G-E1-05 claude): glibc gives a new
+	// thread RLIMIT_STACK's size, 8 MiB on most hosts and 2 MiB where the
+	// limit is unlimited, and a fixed 4 MiB floor was one host's.
+	pthread_attr_t attr;
+	REQUIRE(pthread_attr_init(&attr) == 0);
+	size_t stack = 0;
+	REQUIRE(pthread_attr_getstacksize(&attr, &stack) == 0);
+	pthread_attr_destroy(&attr);
+	const long stackKiB = (long) (stack / 1024);
+	REQUIRE(stackKiB > 0);
+
 	const int tasksBefore = taskCount();
 	const long before = vmSizeKiB();
 	for (int i = 0; i < 20; i++)
@@ -657,9 +783,171 @@ TEST_CASE("a thread that ends unjoined keeps its stack; a detached one gives it 
 	}
 	const long detached = vmSizeKiB() - before2;
 
-	INFO("VmSize growth, 20 unjoined threads: " << leaked << " KiB; 20 detached: " << detached << " KiB");
-	CHECK(leaked > 20 * 4096);      // a stack each, at least 4 MiB of address space apiece
-	CHECK(detached < 4 * 8192);     // a stack or two, reused from glibc's cache
-	CHECK(tasksAfterLeak == tasksBefore);   // why `ls /proc/<pid>/task` cannot see it
+	INFO("thread stack " << stackKiB << " KiB; VmSize growth, 20 unjoined threads: " << leaked << " KiB; 20 detached: " << detached << " KiB");
+	CHECK(leaked >= 20 * stackKiB / 2);   // most of a stack each, kept
+	CHECK(detached <= 4 * stackKiB);      // a stack or a few, reused
+	CHECK(tasksAfterLeak == tasksBefore); // why `ls /proc/<pid>/task` cannot see it
+}
+
+TEST_CASE("ThreadedCloudSync starts its thread detached and keeps no handle to leak (PL-069, G-E1-07)")
+{
+	// The case above is the mechanism; this one holds the class to it. The
+	// class needs a Window and cannot be built here, so its source is read:
+	// no `new std::thread`, no thread member, and the one thread it starts is
+	// detached where it is made. Reverting to the leaking shape fails here.
+	// ES_SOURCE_ROOT overrides the tree read (to show this fail on an old one).
+	const char* root = getenv("ES_SOURCE_ROOT");
+	const std::string base = root != nullptr && *root != '\0' ? root : ES_ROOT_DIR;
+	// The code, not its comments: the comment that tells the story names
+	// the old shape.
+	auto code = [](const std::string& text) {
+		std::string out;
+		std::istringstream in(text);
+		std::string line;
+		while (std::getline(in, line))
+			out += line.substr(0, line.find("//")) + "\n";
+		return out;
+	};
+	const std::string cpp = code(get(base + "/es-app/src/ThreadedCloudSync.cpp"));
+	const std::string h = code(get(base + "/es-app/src/ThreadedCloudSync.h"));
+	REQUIRE_FALSE(cpp.empty());
+	REQUIRE_FALSE(h.empty());
+	CHECK(cpp.find("new std::thread") == std::string::npos);
+	CHECK(h.find("std::thread*") == std::string::npos);
+	CHECK(cpp.find("std::thread(&ThreadedCloudSync::run, this).detach();") != std::string::npos);
+}
+
+// ------------------------------------------------------ G-E1-03
+
+TEST_CASE("a reload keeps the changes still waiting to be saved, unless the file moved under them (G-E1-03)")
+{
+	// A save refused for the lock keeps its changes for the next save
+	// (PL-024) -- and the Wi-Fi picker's reload after a join cleared them, so
+	// the next save had nothing to make. A change survives a reload when
+	// the file still holds the key as it was when the change was made; a
+	// key the file now holds differently was written by somebody since
+	// (wifictl join wrote wifi.ssid), and theirs is the newer write.
+	std::map<std::string, PendingChange> pending;
+	pending["audio.volume"] = { "40", true, "70" };              // the player's; the file still says 70
+	pending["wifi.ssid"] = { "Old Cafe", true, "Home" };         // the join rewrote it: Library
+	pending["global.retroachievements"] = { "1", false, "" };    // new key; the file still has none
+	pending["system.language"] = { "fr_FR", false, "" };         // new key; a script added one since
+
+	const std::map<std::string, std::string> reloaded = {
+		{ "audio.volume", "70" },
+		{ "wifi.ssid", "Library" },
+		{ "system.language", "de_DE" },
+		{ "system.hostname", "RG35XXSP" },
+	};
+
+	const auto kept = pendingAfterReload(pending, reloaded);
+	CHECK(kept.size() == 2);
+	REQUIRE(kept.count("audio.volume") == 1);
+	CHECK(kept.at("audio.volume") == "40");
+	REQUIRE(kept.count("global.retroachievements") == 1);
+	CHECK(kept.at("global.retroachievements") == "1");
+	CHECK(kept.count("wifi.ssid") == 0);
+	CHECK(kept.count("system.language") == 0);
+
+	// Nothing pending, nothing kept.
+	CHECK(pendingAfterReload({}, reloaded).empty());
+}
+
+TEST_CASE("parseKeyValues reads a system.cfg as SystemConf always has")
+{
+	const auto v = parseKeyValues("# comment\n;also\nsystem.hostname=RG\nempty=\n=novalue\nwifi.key=a=b\naudio.volume=70\naudio.volume=40\n");
+	CHECK(v.size() == 3);
+	CHECK(v.at("system.hostname") == "RG");
+	CHECK(v.at("wifi.key") == "a=b");      // the value is everything after the first =
+	CHECK(v.at("audio.volume") == "40");   // the last of a repeated key
+	CHECK(v.count("empty") == 0);
+}
+
+// ------------------------------------------------------ G-E1-04 / G-E1-05
+
+namespace
+{
+	void setMtime(const std::string& path, time_t when)
+	{
+		struct timespec times[2];
+		times[0].tv_sec = when; times[0].tv_nsec = 0;
+		times[1].tv_sec = when; times[1].tv_nsec = 0;
+		utimensat(AT_FDCWD, path.c_str(), times, 0);
+	}
+}
+
+TEST_CASE("a live file cut short of its own record loads the record (G-E1-04)")
+{
+	// No temporary to compare with, and a whole record beside the live file
+	// whose text is the live file's start: the file was cut after the record
+	// was written from it. It used to be loaded as it was -- one key=value
+	// line is "usable" -- and the next save recorded the fragment over the
+	// record that held the rest.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string whole = "system.hostname=A\nwifi.ssid=Home\nwifi.key=secret\n";
+	put(path + ".backup", whole);
+	put(path, whole.substr(0, 38));   // "...wifi.ssid=Home\nwifi.k"
+	const time_t now = time(nullptr);
+	setMtime(path, now - 60);
+	setMtime(path + ".backup", now - 60);
+
+	LoadedConfig c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Backup);
+	CHECK(c.text == whole);
+
+	// A live file edited after the record -- a hand edit that left off the
+	// last line end and dropped the last lines -- is the owner's, and stays.
+	setMtime(path, now);
+	c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Live);
+	CHECK_FALSE(c.record);
+}
+
+TEST_CASE("a save merged onto a cut file is written and not recorded (G-E1-04)")
+{
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	auto setA = [](const std::string& current) { return withLine(current + (current.empty() || current.back() == '\n' ? "" : "\n"), "a=", "a=2"); };
+
+	put(path, "a=1\nb=par");
+	bool whole = true;
+	CHECK(saveUnderLock(path, lockPath, 1000, setA, nullptr, &whole) == LockedSave::Written);
+	CHECK_FALSE(whole);
+
+	put(path, "a=1\nb=2\n");
+	whole = false;
+	CHECK(saveUnderLock(path, lockPath, 1000, setA, nullptr, &whole) == LockedSave::Written);
+	CHECK(whole);
+}
+
+TEST_CASE("a recovery is written no less private than any copy it came from (G-E1-05)")
+{
+	// A whole system.cfg.tmp made 0600, and neither the live file nor the
+	// record: the recovery wrote it back 0644 -- its mode came from the live
+	// file and the record only -- and the record after it the same.
+	ScratchDir dir;
+	const mode_t before = umask(022);
+	const std::string path = dir / "system.cfg";
+	put(path + ".tmp", "system.hostname=A\nwifi.key=secret\n");
+	REQUIRE(chmod((path + ".tmp").c_str(), 0600) == 0);
+	LoadedConfig c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Temporary);
+	CHECK(c.mode == 0600);
+
+	// A 0600 record beside a 0644 cut live file: the record's privacy wins.
+	::unlink((path + ".tmp").c_str());
+	put(path + ".backup", "system.hostname=A\n");
+	REQUIRE(chmod((path + ".backup").c_str(), 0600) == 0);
+	put(path, "");
+	c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Backup);
+	CHECK(c.mode == 0600);
+
+	// Nothing private anywhere: 0644, as ever.
+	REQUIRE(chmod((path + ".backup").c_str(), 0644) == 0);
+	CHECK(chooseConfig(path).mode == 0644);
+	umask(before);
 }
 

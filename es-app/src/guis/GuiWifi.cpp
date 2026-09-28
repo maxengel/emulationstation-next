@@ -181,7 +181,10 @@ void GuiWifi::join(const std::string& name, const std::string& profile)
 					Utils::String::format(_("COULDN'T CONNECT TO %s.").c_str(), name.c_str()) + "\n\n" + advice, _("OK")));
 				return;
 			}
-			SystemConf::getInstance()->loadSystemConf();
+			// Re-read for what the join wrote (wifi.ssid, wifi.key), keeping
+			// any change this interface has not saved yet -- one the settings
+			// lock refused -- unless the join wrote that key (G-E1-03).
+			SystemConf::getInstance()->loadSystemConf(true);
 			joined(name);
 		}));
 }

@@ -129,9 +129,16 @@ namespace CloudText
 	// /storage/.cache/cloud_sync.
 	std::vector<std::string> scriptStampNames(const std::string& command);
 	// Of those (each name with the file's whole text, "" when there is
-	// none), the ones to restamp for a run that began at runStarted.
-	struct StampText { std::string name; std::string text; };
-	std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted);
+	// none, and the file's identity when it was read -- inode and change
+	// time -- "" when there was no file or it was not asked), the ones to
+	// restamp for a run that began at runStarted. With `before`, the same
+	// stamps read as the run began, a stamp is this run's when its file was
+	// written since -- the scripts write each stamp to a new file and rename
+	// it into place -- whatever the clocks said; without it (a caller that
+	// took no snapshot), when its epoch is not older than runStarted.
+	struct StampText { std::string name; std::string text; std::string version; };
+	std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted,
+		const std::vector<StampText>* before = nullptr);
 
 	// Which run a stamp describes. EmulationStation stamps last-sync-exit
 	// and last-sync-startup as each automatic run ends, within a second or

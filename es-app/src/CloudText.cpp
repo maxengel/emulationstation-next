@@ -200,13 +200,33 @@ std::vector<std::string> scriptStampNames(const std::string& command)
 // time test used to restamp every stamp the run had written, so a saves
 // part that completed read as stopped once the settings part after it
 // was. A part that never started keeps its last real run's stamp.
-std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted)
+std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, time_t runStarted,
+	const std::vector<StampText>* before)
 {
 	std::vector<std::string> names;
 	for (auto& s : stamps)
 	{
 		const LastRun r = parseLastRun(s.text);
-		if (r.ran && r.when >= runStarted && r.code == CloudExit::Stopped)
+		// The trap's stop: 130, and none of this interface's tokens -- a
+		// stamp that carries one was restamped after an earlier stop, and is
+		// that run's (audit of the fixes G-E1-06: by the time alone, one
+		// written in the second this run began qualified).
+		if (!r.ran || r.code != CloudExit::Stopped || r.knownToken)
+			continue;
+		if (before != nullptr)
+		{
+			// Written since the run began: the file is not the one read then
+			// (the scripts write a new file and rename it), whatever the
+			// clock -- a device booting with its clock behind made
+			// yesterday's stop look like today's (G-E1-04, the claude seat).
+			std::string was;
+			for (auto& b : *before)
+				if (b.name == s.name)
+					was = b.version;
+			if (!s.version.empty() && s.version != was)
+				names.push_back(s.name);
+		}
+		else if (r.when >= runStarted)
 			names.push_back(s.name);
 	}
 	return names;
@@ -425,17 +445,43 @@ std::string cleanLine(const std::string& raw)
 	// card did not share: it kept printable ASCII only, and a folder name in
 	// the player's language lost its accented letters on the way to the
 	// offer (#308 F-CS-19). A terminal escape is an instruction to a
-	// terminal that is not here, and goes whole.
+	// terminal that is not here, and goes whole -- and only itself, by its
+	// own grammar (ECMA-48), not "to the next letter", which swallowed the
+	// start of a protocol line after a window title or a two-byte escape
+	// (audit of the fixes, claude G-E1-07):
+	//   ESC [ ...   CSI: parameter and intermediate bytes, then one final
+	//               byte in 0x40-0x7E (what rclone prints);
+	//   ESC ] ...   OSC (and P, X, ^, _ strings): to BEL, or ESC and a backslash;
+	//   ESC <byte>  any other escape: that one byte, when it is ASCII;
+	//   ESC         before a UTF-8 byte or at the end: the ESC alone.
 	std::string clean;
 	for (size_t i = 0; i < raw.size(); ++i)
 	{
 		const unsigned char c = (unsigned char) raw[i];
 		if (c == 0x1B)
 		{
-			while (i + 1 < raw.size() && !isalpha((unsigned char) raw[i + 1]))
-				i++;
-			i++;   // the letter that ends the sequence
-			continue;
+			if (i + 1 >= raw.size())
+				break;
+			const unsigned char kind = (unsigned char) raw[i + 1];
+			if (kind == '[')
+			{
+				size_t j = i + 2;
+				while (j < raw.size() && ((unsigned char) raw[j] < 0x40 || (unsigned char) raw[j] > 0x7E)
+					&& (unsigned char) raw[j] >= 0x20)
+					j++;
+				i = j;   // the final byte, skipped by the loop's ++i
+			}
+			else if (kind == ']' || kind == 'P' || kind == 'X' || kind == '^' || kind == '_')
+			{
+				size_t j = i + 2;
+				while (j < raw.size() && raw[j] != '\x07' && !(raw[j] == 0x1B && j + 1 < raw.size() && raw[j + 1] == '\\'))
+					j++;
+				// at BEL, or at the backslash of the ESC-backslash that ends it
+				i = (j < raw.size() && raw[j] == 0x1B) ? j + 1 : j;
+			}
+			else if (kind >= 0x20 && kind < 0x7F)
+				i++;       // a two-byte escape
+			continue;      // before a UTF-8 byte or a control: the ESC alone
 		}
 		if ((c >= 32 && c < 127) || c >= 0x80)
 			clean += (char) c;

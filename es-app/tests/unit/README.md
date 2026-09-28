@@ -53,6 +53,9 @@ under `$TMPDIR` (or `/tmp`) and removes, forking the processes that play the
 other writer or the other waiter. Built by the same `cmake --build build-tests`
 and run as `./build-tests/es-file-tests`; POSIX only, like the guarantees it
 checks. `es-unit-tests` stays the binary that touches nothing.
+`es-file-tests-win32` (`AtomicFileWin32Tests.cpp`) compiles the same
+`AtomicFileUtil.cpp` with `_WIN32` defined for that one object, so the
+Windows branches' contract in the header is checked on this host too.
 
 **Elsewhere:** `tests/app-unit/` (audit #307, stream E2) builds four more
 binaries the same way -- `app-unit-tests` for header-only rules the

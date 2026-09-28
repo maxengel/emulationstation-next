@@ -70,19 +70,11 @@ SystemConf *SystemConf::getInstance()
 
 void SystemConf::parseSystemConf(const std::string& text)
 {
-	std::istringstream in(text);
-	std::string line;
-	while (std::getline(in, line))
-	{
-		int idx = line.find("=");
-		if (idx == std::string::npos || line.find("#") == 0 || line.find(";") == 0)
-			continue;
-
-		std::string key = line.substr(0, idx);
-		std::string value = line.substr(idx + 1);
-		if (!key.empty() && !value.empty())
-			confMap[key] = value;
-	}
+	// The same reading as ever (Utils::AtomicFile::parseKeyValues), kept
+	// alone as well for a reload's comparison (G-E1-03).
+	mOnDisk = Utils::AtomicFile::parseKeyValues(text);
+	for (const auto& kv : mOnDisk)
+		confMap[kv.first] = kv.second;
 }
 
 // One record at rest, under the name the boot scripts already use
@@ -109,12 +101,66 @@ void SystemConf::recordLastGood(const std::string& text)
 // before, and nothing is written over it (D-CLOUD-078: never defaults over a
 // file that failed to parse before the recovery was tried). Which one is
 // Utils::AtomicFile::chooseConfig's call; the writes and the words are here.
-bool SystemConf::loadSystemConf()
+bool SystemConf::loadSystemConf(bool keepPending)
 {
 	if (mSystemConfFile.empty())
 		return true;
 
+	// The changes not saved yet, with what each key held when it was
+	// changed (G-E1-03).
+	std::map<std::string, Utils::AtomicFile::PendingChange> pending;
+	if (keepPending)
+	{
+		for (const auto& key : changedConf)
+		{
+			Utils::AtomicFile::PendingChange change;
+			change.value = confMap[key];
+			const auto base = mPendingBase.find(key);
+			if (base != mPendingBase.cend())
+			{
+				change.hadBase = base->second.first;
+				change.base = base->second.second;
+			}
+			pending[key] = change;
+		}
+	}
+	const auto bases = mPendingBase;
+	const std::set<std::string> unsaved = changedConf;
+
 	changedConf.clear();
+	mPendingBase.clear();
+	mOnDisk.clear();
+	const bool loaded = loadFromDisk();
+
+	const auto kept = Utils::AtomicFile::pendingAfterReload(pending, mOnDisk);
+	// A change dropped here must not linger in memory where the file has no
+	// such key: the parse only adds, so the interface would go on showing a
+	// value nothing will ever save.
+	for (const auto& key : unsaved)
+		if (kept.find(key) == kept.cend() && mOnDisk.find(key) == mOnDisk.cend())
+			confMap.erase(key);
+
+	if (!pending.empty())
+	{
+		for (const auto& change : pending)
+			if (kept.find(change.first) == kept.cend())
+				LOG(LogInfo) << "loadSystemConf: " << change.first << " was changed in " << mSystemConfFile
+					<< " since this interface changed it -- the file's value stands";
+		for (const auto& kv : kept)
+		{
+			confMap[kv.first] = kv.second;
+			changedConf.insert(kv.first);
+			const auto base = bases.find(kv.first);
+			mPendingBase[kv.first] = base != bases.cend() ? base->second : std::make_pair(false, std::string());
+		}
+		if (!kept.empty())
+			LOG(LogInfo) << "loadSystemConf: " << kept.size() << " change(s) not saved yet are kept for the next save";
+	}
+	return loaded;
+}
+
+bool SystemConf::loadFromDisk()
+{
 
 	// The record's own temporary, from a build before PL-063 gave every
 	// write a temporary of its own, is litter: nothing else writes that name.
@@ -126,7 +172,8 @@ bool SystemConf::loadSystemConf()
 	std::remove((mSystemConfFile + ".backup.tmp").c_str());
 
 	const Utils::AtomicFile::LoadedConfig chosen = Utils::AtomicFile::chooseConfig(mSystemConfFile);
-	const int mode = Utils::AtomicFile::modeOf(mSystemConfFile, Utils::AtomicFile::modeOf(mSystemConfFile + ".backup", 0644));
+	// No less private than any copy it came from (G-E1-05).
+	const int mode = chosen.mode;
 
 	switch (chosen.source)
 	{
@@ -152,7 +199,7 @@ bool SystemConf::loadSystemConf()
 		return true;
 
 	case Utils::AtomicFile::LoadedConfig::Source::Backup:
-		LOG(LogWarning) << mSystemConfFile << " is missing, empty, unreadable or damaged -- loading the last-known-good record "
+		LOG(LogWarning) << mSystemConfFile << " is missing, empty, unreadable, damaged or cut short of the record -- loading the last-known-good record "
 			<< mSystemConfFile << ".backup and writing it back";
 		parseSystemConf(chosen.text);
 		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
@@ -195,8 +242,9 @@ bool SystemConf::saveSystemConf()
 	// changes stay in changedConf, and the next save -- any page closing,
 	// any set-and-save -- writes them over whatever the script left.
 	std::string out;
+	bool baseWhole = true;
 	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, "/tmp/.system.cfg.lock", 5000,
-		[this](const std::string& current) { return applyChanges(current); }, &out);
+		[this](const std::string& current) { return applyChanges(current); }, &out, &baseWhole);
 
 	switch (saved)
 	{
@@ -216,11 +264,17 @@ bool SystemConf::saveSystemConf()
 	}
 
 	changedConf.clear();
+	mPendingBase.clear();
 
 	// What was just written is, by construction, the newest good state, so
 	// it becomes the record (D-CLOUD-078: a success becomes the last known
 	// good). Outside the lock: the shell never takes it for the record.
-	recordLastGood(out);
+	// Unless it was merged onto a file cut short: the record then keeps the
+	// keys the cut lost (audit of the fixes G-E1-04).
+	if (baseWhole)
+		recordLastGood(out);
+	else
+		LOG(LogWarning) << "saveSystemConf: " << mSystemConfFile << " was cut short when this save read it -- written, and not recorded as the last known good";
 
 	return true;
 }
@@ -327,6 +381,13 @@ bool SystemConf::set(const std::string &name, const std::string &value)
 
 	if (confMap.count(name) == 0 || confMap[name] != value)
 	{
+		// What the key held before this run of changes, once: a reload
+		// compares it with the file (G-E1-03).
+		if (changedConf.find(name) == changedConf.cend())
+		{
+			const auto it = confMap.find(name);
+			mPendingBase[name] = it == confMap.cend() ? std::make_pair(false, std::string()) : std::make_pair(true, it->second);
+		}
 		confMap[name] = value;
 		changedConf.insert(name);
 		return true;

@@ -3,6 +3,7 @@
 #define ES_CORE_UTILS_ATOMIC_FILE_UTIL_H
 
 #include <functional>
+#include <map>
 #include <string>
 
 // Whole-file writes that leave either the old file or the new one on disk,
@@ -77,6 +78,9 @@ namespace Utils
 			Source source = Source::Missing;
 			std::string text;
 			bool record = false;   // may replace the last-known-good record
+			// The mode to write the chosen text back with, and the record:
+			// never less private than any copy of it on disk (G-E1-05).
+			int mode = 0644;
 		};
 
 		// The choice, from what is on disk now. Reads; writes nothing.
@@ -92,6 +96,30 @@ namespace Utils
 		// a file that cannot be opened or asked is taken as held, since the
 		// callers refuse on held.
 		bool isFlockHeld(const std::string& path);
+
+		// A key=value text as SystemConf reads it: comment lines (# or ;)
+		// and lines without a key or a value skipped, the last of a repeated
+		// key kept.
+		std::map<std::string, std::string> parseKeyValues(const std::string& text);
+
+		// A change the interface made and has not saved yet (a save refused
+		// for the lock keeps it, PL-024): its value, and what the key held
+		// when the change was made -- hadBase false when it held nothing.
+		struct PendingChange
+		{
+			std::string value;
+			bool hadBase = false;
+			std::string base;
+		};
+
+		// Which pending changes a reload of the file keeps (audit of the fixes
+		// G-E1-03): each whose key the file still holds as it was when the
+		// change was made, which is then made again at the next save. A key
+		// the file now holds differently was written by somebody else since --
+		// wifictl join's wifi.ssid, a script's set_setting -- and that newer
+		// write wins. The answer is the changes to keep, key to value.
+		std::map<std::string, std::string> pendingAfterReload(const std::map<std::string, PendingChange>& pending,
+			const std::map<std::string, std::string>& reloaded);
 
 		// What a read-modify-write under the settings lock came to.
 		enum class LockedSave
@@ -111,8 +139,13 @@ namespace Utils
 		// snapshot of the file renamed over the shell's new one, or the other
 		// way round -- lost one of the two writers' keys. The caller keeps its
 		// changes on any answer but Written and makes them at its next save.
+		// `baseComplete`, when given, says whether the text read under the lock
+		// was whole (empty, or ending in a line end): a save merged onto a cut
+		// file is written, and must not become the last-known-good record
+		// (audit of the fixes G-E1-04).
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
-			const std::function<std::string(const std::string& current)>& merge, std::string* written = nullptr);
+			const std::function<std::string(const std::string& current)>& merge, std::string* written = nullptr,
+			bool* baseComplete = nullptr);
 
 		// The settings lock the shell takes around every get_setting and
 		// set_setting (wait_lock in profile.d/001-functions): a file holding
@@ -126,9 +159,9 @@ namespace Utils
 		// no waiter ever sees it empty (PL-041); and a stale lock is removed
 		// under an flock on `path`.reap, re-read first, so two waiters that
 		// both judged one dead holder's lock stale cannot remove each other's
-		// new one. The shell's wait_lock removes a stale lock without that
-		// guard (its own half of PL-041); until it takes the same flock, a
-		// shell waiter and this one can still meet in that window. The shell
+		// new one; the shell's wait_lock takes the same flock. The guard is
+		// asked without waiting past the budget, and a guard that cannot be
+		// had removes nothing (audit of the fixes G-E1-01/02). The shell
 		// waits forever; acquire() takes a budget, because it runs on the
 		// interface thread.
 		class PidLock
