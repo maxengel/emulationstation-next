@@ -7367,8 +7367,22 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	cloudSetupAddInfoRow(s, window, "2.  " + _("BACK UP SAVES TO THE CLOUD, OR RESTORE THEM"));
 	cloudSetupAddInfoRow(s, window, "3.  " + _("MANAGE CLOUD STORAGE"));
 
-	cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
-		_("CONNECTING A PROVIDER ONLY GIVES THE DEVICE SOMEWHERE TO PUT THINGS. TURN ON THE SYSTEMS YOU WANT KEPT. ROMS AND BIOS FILES ARE NEVER INCLUDED."));
+	// Which is true of this device: what syncs on its own is two switches
+	// under MANAGE CLOUD STORAGE (SYNC SAVES DURING STARTUP, WHEN EXITING A
+	// GAME), not systems, and a device whose settings were restored may have
+	// them on already -- its next exit syncs to the cloud just connected. The
+	// page said NOTHING SYNCS YET whatever the switches said, told the player
+	// to turn on systems, and said ROMs and BIOS are never included, which
+	// the ROMS AND BIOS tier has not been true of since D-UI-022 (#308 8a gpt
+	// F-ES-19).
+	const bool syncsOnItsOwn = SystemConf::getInstance()->get("cloudsaves.startup") == "1"
+		|| SystemConf::getInstance()->get("cloudsaves.gameexit") == "1";
+	if (syncsOnItsOwn)
+		cloudSetupAddProse(s, window, _("YOUR SAVES ALREADY SYNC"),
+			_("THIS DEVICE WAS SET TO SYNC THEM, SO FROM NOW ON THEY GO TO THIS CLOUD."));
+	else
+		cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
+			_("CONNECTING ONLY GIVES THIS DEVICE SOMEWHERE TO PUT THINGS. TO SYNC SAVES ON THEIR OWN, TURN IT ON UNDER MANAGE CLOUD STORAGE."));
 
 	// One button, and it leaves. There is nothing left to continue to -- the
 	// sign-in is done, and the page it would return to is the provider list,
