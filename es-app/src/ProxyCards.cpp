@@ -44,7 +44,16 @@ namespace
 	// by the proxy seconds after its queue empties, was found by the probe
 	// at the saves card's end and shown as a second card for the same batch.
 	static std::atomic<bool> sSendShowing{ false };
+	// One top-up watcher at a time (audit #307 PL-056): a second one read
+	// the same progress file and raised a second card beside the first,
+	// whose ctl had refused it (75) and whose card then said COULDN'T
+	// FINISH. A request that arrives while the watcher runs is not dropped
+	// either -- the index's run (--after-index) is the one that lists the
+	// games the index just found, and nothing else would run it -- so it
+	// is kept here, one bit a kind, for the watcher to run when its run
+	// ends: 1 the link's return, 2 the index's.
 	static std::atomic<bool> sTopUpRunning{ false };
+	static std::atomic<int> sTopUpWanted{ 0 };
 	static std::atomic<bool> sBatchOwed{ false };
 	// A stamp the proxy writes after the queue has emptied is the send
 	// card's to take: it waits this long for it before saying the outcome.
@@ -148,16 +157,10 @@ namespace
 		sSendShowing = false;
 	}
 
-	// The top-up's watcher: the ctl on a thread of its own, this one attaching
-	// a card once the ctl's progress file says it has work and no other card
-	// holds the screen, and ending it with the ctl's stamp.
-	// Every way out of runTopUp clears the running flag.
-	struct TopUpEnd
-	{
-		Window* window;
-		~TopUpEnd() { sTopUpRunning = false; }
-	};
-
+	// One run of the top-up: the ctl on a thread of its own, this one
+	// attaching a card once the ctl's progress file says it has work and no
+	// other card holds the screen, and ending it with the ctl's stamp.
+	// topUpWatcher runs these one after another.
 	// One card for both ways an index can end offline (D-UI-104): the ctl's
 	// probe refused, or the hash library never came. The maintainer's shape
 	// and words (D-UI-106, 2026-09-27): the trophy and a title, the sentence
@@ -181,7 +184,6 @@ namespace
 
 	void runTopUp(Window* window, bool afterIndex)
 	{
-		TopUpEnd ending{ window };
 		std::atomic<bool> finished{ false };
 		int rc = -1;
 		const time_t startedAt = time(nullptr);
@@ -316,6 +318,39 @@ namespace
 		std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 		card->close();
 	}
+
+	// The one watcher (PL-056): runs what was asked for, and what is asked
+	// for while it runs, then lets go. The index's run goes first when both
+	// are waiting. A run asked for while a game has the screen waits for the
+	// game to end rather than start under it: the ctl reads the network and
+	// the store, and a player who chose STOP IT AND PLAY was told it would
+	// try again later, not the moment the game started.
+	void topUpWatcher(Window* window)
+	{
+		bool first = true;
+		for (;;)
+		{
+			const int wanted = sTopUpWanted.exchange(0);
+			if (wanted == 0)
+			{
+				sTopUpRunning = false;
+				// A request that came between the exchange and the store found
+				// the flag still up and left itself here: take it, unless a
+				// watcher it started has taken the flag first.
+				if (sTopUpWanted.load() == 0 || sTopUpRunning.exchange(true))
+					return;
+				continue;
+			}
+			if (!first)
+				while (FileData::GetRunningGame() != nullptr)
+					std::this_thread::sleep_for(std::chrono::seconds(1));
+			first = false;
+			if (wanted & 2)
+				runTopUp(window, true);
+			if (wanted & 1)
+				runTopUp(window, false);
+		}
+	}
 }
 
 namespace ProxyCards
@@ -422,8 +457,10 @@ namespace ProxyCards
 	{
 		if (!OfflineAchievements::available() || !OfflineAchievements::toggleOn())
 			return;
-		sTopUpRunning = true;   // before the thread, so a probe started beside it sees it (#298)
-		std::thread(runTopUp, window, afterIndex).detach();
+		sTopUpWanted |= afterIndex ? 2 : 1;
+		if (sTopUpRunning.exchange(true))
+			return;   // the watcher that holds the flag runs this request when its run ends
+		std::thread(topUpWatcher, window).detach();
 	}
 
 	bool topUpRunning()

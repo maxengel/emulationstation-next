@@ -275,3 +275,44 @@ TEST_CASE("send card: the flush stamp earns the account sentence")
 	CHECK(fake.stamps[0].token == "sent");
 }
 
+
+// PL-056: a second request while a top-up runs raises no second watcher
+// over the same progress file, and is not lost either: the index's run
+// (--after-index) is the one that lists the games the index just found,
+// and nothing else would run it.
+TEST_CASE("top-up: two requests, one watcher at a time, and the second still runs")
+{
+	fake.reset();
+	std::atomic<bool> release{ false };
+	fake.ctl = [&release](bool afterIndex)
+	{
+		if (!afterIndex)
+			while (!release)
+				std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		else
+			std::this_thread::sleep_for(std::chrono::milliseconds(800));
+		return 0;
+	};
+	std::atomic<int> maxOpen{ 0 };
+	std::atomic<bool> watching{ true };
+	std::thread watcher([&] { while (watching) { maxOpen = std::max(maxOpen.load(), openCards()); std::this_thread::sleep_for(std::chrono::milliseconds(20)); } });
+
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { return !cardsNow().empty(); }, 10));   // the first run's card is up
+	ProxyCards::topUp(&window, true);                              // the index's request arrives
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	release = true;
+	REQUIRE(waitFor([] { return fake.ctlCalls >= 2 && fake.ctlActive == false && openCards() == 0 && ProxyCards::topUpRunning() == false; }, 60));
+	std::this_thread::sleep_for(std::chrono::milliseconds(6000));   // any late card has come and gone
+	watching = false;
+	watcher.join();
+
+	CHECK(maxOpen.load() == 1);
+	std::lock_guard<std::mutex> g(fake.m);
+	INFO("ctl runs: " << fake.ctlAfterIndex.size());
+	REQUIRE(fake.ctlAfterIndex.size() == 2);
+	CHECK(fake.ctlAfterIndex[0] == false);
+	CHECK(fake.ctlAfterIndex[1] == true);
+	for (auto& c : fake.cards)
+		CHECK(c->text.front().find("COULDN'T FINISH") == std::string::npos);
+}
