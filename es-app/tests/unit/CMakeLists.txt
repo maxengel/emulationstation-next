@@ -108,3 +108,27 @@ set_target_properties(es-file-tests PROPERTIES
 	CXX_STANDARD_REQUIRED ON
 	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+# AtomicFileUtil's _WIN32 branches, compiled on this host with _WIN32
+# defined for that one object (audit of the fixes of #307, claude
+# G-E1-06): the header's contract for them is checked where it can run.
+# Only the branches that use standard C and C++ -- which is all of them --
+# so the object builds here as it does on Windows.
+add_library(atomicfile-win32-branch OBJECT ${ES_ROOT}/es-core/src/utils/AtomicFileUtil.cpp)
+target_compile_definitions(atomicfile-win32-branch PRIVATE _WIN32)
+target_include_directories(atomicfile-win32-branch PRIVATE ${ES_ROOT}/es-core/src)
+set_target_properties(atomicfile-win32-branch PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+add_executable(es-file-tests-win32
+	${CMAKE_CURRENT_SOURCE_DIR}/AtomicFileWin32Tests.cpp
+	$<TARGET_OBJECTS:atomicfile-win32-branch>
+)
+target_include_directories(es-file-tests-win32 PRIVATE
+	${ES_ROOT}/es-core/src
+	${ES_ROOT}/external
+)
+set_target_properties(es-file-tests-win32 PROPERTIES
+	CXX_STANDARD 17
+	CXX_STANDARD_REQUIRED ON
+	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+

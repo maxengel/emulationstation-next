@@ -197,16 +197,25 @@ namespace Utils
 			if (ok != nullptr)
 				*ok = false;
 #if defined(_WIN32)
-			std::ifstream in(path, std::ios::binary);
-			if (!in)
+			// C stdio, whose ferror says whether a read failed. The stream
+			// version read failbit on its ostringstream as a failure, and
+			// `ss << in.rdbuf()` sets it when nothing is inserted: an empty
+			// file came back not read (audit of the fixes G-E1-06, claude).
+			FILE* file = std::fopen(path.c_str(), "rb");
+			if (file == nullptr)
 				return "";
-			std::ostringstream ss;
-			ss << in.rdbuf();
-			if (in.bad() || ss.fail())
+			std::string text;
+			char buffer[65536];
+			size_t n;
+			while ((n = std::fread(buffer, 1, sizeof(buffer), file)) > 0)
+				text.append(buffer, n);
+			const bool failed = std::ferror(file) != 0;
+			std::fclose(file);
+			if (failed)
 				return "";
 			if (ok != nullptr)
 				*ok = true;
-			return ss.str();
+			return text;
 #else
 			int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
 			if (fd < 0)
@@ -327,6 +336,9 @@ namespace Utils
 			// the record -- a hand edit that left off the last line end -- is
 			// the owner's, and is read as it is.
 			bool cutOfRecord = false;
+#if defined(_WIN32)
+			(void) backupWhole;   // the mtime test below is POSIX's
+#else
 			if (liveOk && backupWhole && !isComplete(live) && live.size() < backup.size()
 				&& backup.compare(0, live.size(), live) == 0)
 			{
@@ -334,6 +346,7 @@ namespace Utils
 				cutOfRecord = ::stat(path.c_str(), &ls) == 0 && ::stat((path + ".backup").c_str(), &bs) == 0
 					&& ls.st_mtime <= bs.st_mtime + 1;
 			}
+#endif
 
 			if (liveOk && isUsableKeyValues(live) && !liveCut && !cutOfRecord)
 			{
