@@ -7626,7 +7626,9 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 				// The web API key is held back from backups too (#68).
 				ra->addInputTextConfigRow(_("WEB API KEY"), "global.retroachievements.key", true);
 #endif
-				ra->onFinalize([s, reopen] { s->close(); reopen(); });
+				// Written here: the rows set memory only, and a page with no
+				// save function writes no file (GuiSettings::save).
+				ra->onFinalize([s, reopen] { SystemConf::getInstance()->saveSystemConf(); s->close(); reopen(); });
 				window->pushGui(ra);
 			});
 
@@ -7642,7 +7644,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 				// The developer password is held back from backups too (#64).
 				ss->addInputTextConfigRow(_("DEVELOPER PASSWORD"), "ScreenScraperDevPass", true, true);
 #endif
-				ss->onFinalize([s, reopen] { s->close(); reopen(); });
+				ss->onFinalize([s, reopen] { Settings::getInstance()->saveFile(); s->close(); reopen(); });
 				window->pushGui(ss);
 			});
 	}
@@ -7659,7 +7661,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 		{
 			auto np = new GuiSettings(window, _("NETPLAY PASSWORD"));
 			np->addInputTextConfigRow(_("NETPLAY PASSWORD"), "global.netplay.password", true);
-			np->onFinalize([s, reopen] { s->close(); reopen(); });
+			np->onFinalize([s, reopen] { SystemConf::getInstance()->saveSystemConf(); s->close(); reopen(); });
 			window->pushGui(np);
 		});
 	}
