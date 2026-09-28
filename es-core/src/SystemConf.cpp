@@ -285,6 +285,9 @@ bool SystemConf::saveSystemConf()
 
 	changedConf.clear();
 	mPendingBase.clear();
+	// The file is now what this save wrote: the base the next change is
+	// compared with (G2-E-core-07).
+	mOnDisk = Utils::AtomicFile::parseKeyValues(out);
 
 	// What was just written is, by construction, the newest good state, so
 	// it becomes the record (D-CLOUD-078: a success becomes the last known
@@ -402,11 +405,16 @@ bool SystemConf::set(const std::string &name, const std::string &value)
 	if (confMap.count(name) == 0 || confMap[name] != value)
 	{
 		// What the key held before this run of changes, once: a reload
-		// compares it with the file (G-E1-03).
+		// compares it with the file (G-E1-03). Held in the file, as last
+		// read or written -- not in confMap, which keeps keys the file no
+		// longer has: one another writer removed, one the last save wrote
+		// away. The reload found such a key missing where the base said it
+		// was, and dropped the change as removed by somebody since (audit of
+		// the fix round, gpt G2-E-core-07, claude G2-E-core-09).
 		if (changedConf.find(name) == changedConf.cend())
 		{
-			const auto it = confMap.find(name);
-			mPendingBase[name] = it == confMap.cend() ? std::make_pair(false, std::string()) : std::make_pair(true, it->second);
+			const auto it = mOnDisk.find(name);
+			mPendingBase[name] = it == mOnDisk.cend() ? std::make_pair(false, std::string()) : std::make_pair(true, it->second);
 		}
 		confMap[name] = value;
 		changedConf.insert(name);

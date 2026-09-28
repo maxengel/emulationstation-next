@@ -73,8 +73,9 @@ private:
 	// since the last save (false: nothing), for a reload to tell the player's
 	// change from somebody else's newer write (G-E1-03).
 	std::map<std::string, std::pair<bool, std::string>> mPendingBase;
-	// The values of the text the last load parsed, alone -- confMap also
-	// carries keys the file no longer has.
+	// The values of the text the last load parsed or the last save wrote,
+	// alone -- confMap also carries keys the file no longer has. A change's
+	// base comes from here (G2-E-core-07).
 	std::map<std::string, std::string> mOnDisk;
 
 

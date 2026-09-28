@@ -199,3 +199,70 @@ TEST_CASE("a reload that reads nothing keeps every change still waiting to be sa
 	CHECK(conf->saveSystemConf());
 	CHECK(get(path) == "system.hostname=A\naudio.volume=40\n");
 }
+
+// ------------------------------------------------------------ G2-E-core-07
+
+TEST_CASE("a change is compared with the file it was made against, not with memory (audit of the fix round, gpt G2-E-core-07, claude G2-E-core-09)")
+{
+	// set() took a change's base from confMap, which also holds keys the
+	// file no longer has -- a key another writer removed since the last
+	// load, a key the last save wrote away (an empty value is a removed
+	// line). A reload compared that base with the file, found the key
+	// missing where the base said it was there, and dropped the change as
+	// removed by somebody since, when nobody had touched the file.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+
+	SUBCASE("a key another writer removed before the change was made")
+	{
+		put(path, "system.hostname=A\ntone=old\nkeep=1\n");
+		SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 300);
+		put(path, "system.hostname=A\nkeep=1\n");   // a script removed tone
+		REQUIRE(conf->loadSystemConf(true));
+
+		CHECK(conf->set("tone", "new"));
+		{
+			PidLock other(lockPath);
+			REQUIRE(other.acquire(1000));
+			CHECK_FALSE(conf->saveSystemConf());
+		}
+		REQUIRE(conf->loadSystemConf(true));   // the file as it was when the change was made
+		CHECK(conf->get("tone") == "new");
+		CHECK(conf->saveSystemConf());
+		CHECK(get(path) == "system.hostname=A\nkeep=1\ntone=new\n");
+	}
+	SUBCASE("a key the last save wrote away")
+	{
+		put(path, "system.hostname=A\na=1\n");
+		SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 300);
+		CHECK(conf->set("a", ""));
+		REQUIRE(conf->saveSystemConf());
+		REQUIRE(get(path) == "system.hostname=A\n");
+
+		CHECK(conf->set("a", "3"));
+		{
+			PidLock other(lockPath);
+			REQUIRE(other.acquire(1000));
+			CHECK_FALSE(conf->saveSystemConf());
+		}
+		REQUIRE(conf->loadSystemConf(true));
+		CHECK(conf->get("a") == "3");
+		CHECK(conf->saveSystemConf());
+		CHECK(get(path) == "system.hostname=A\na=3\n");
+	}
+	SUBCASE("a key somebody else really did change is still theirs")
+	{
+		put(path, "system.hostname=A\nwifi.ssid=Home\n");
+		SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 300);
+		CHECK(conf->set("wifi.ssid", "Cafe"));
+		{
+			PidLock other(lockPath);
+			REQUIRE(other.acquire(1000));
+			CHECK_FALSE(conf->saveSystemConf());
+		}
+		put(path, "system.hostname=A\nwifi.ssid=Library\n");   // wifictl join wrote it
+		REQUIRE(conf->loadSystemConf(true));
+		CHECK(conf->get("wifi.ssid") == "Library");
+	}
+}
