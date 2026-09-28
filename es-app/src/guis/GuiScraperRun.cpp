@@ -1,6 +1,7 @@
 #include "guis/GuiScraperRun.h"
 
 #include "CloudText.h"
+#include "TextFit.h"
 #include "guis/GuiMsgBox.h"
 #include "Window.h"
 #include "ThemeData.h"
@@ -80,7 +81,7 @@ GuiScraperRun::GuiScraperRun(Window* window)
 	mBackground.fitTo(mPanelSize, Vector3f(mPanelPos.x(), mPanelPos.y(), 0), Vector2f(-32, -32));
 }
 
-// While the scrape runs, B asks whether to cancel it (D-UI-078: the page is
+// While the scrape runs, back asks whether to cancel it (D-UI-078: the page is
 // sat in, and CANCEL is the one way out); every other press is refused,
 // since there is nothing to choose and a stray press should not dismiss a
 // page somebody is waiting on. Once it has finished, any button dismisses
@@ -162,16 +163,26 @@ void GuiScraperRun::render(const Transform4x4f& parentTrans)
 	// (es-native-ui.md: a bar only where a real percentage exists).
 	if (!mShownFinished)
 		mBusyAnim.render(trans);
+
+	// The keys are the help bar's, drawn here: with full-screen menus on
+	// (every handheld) Window draws no help while a second page is open, so
+	// the footer spelled the cancel out as PRESS B -- the wrong button on a
+	// swapped mapping (#308 8-es claude F-ES-05, 8a gpt F-ES-15;
+	// es-ui-style-guide.md, Interaction rules). As the transfer and scan
+	// pages do.
+	if (mWindow->peekGui() == this && Renderer::ScreenSettings::fullScreenMenus())
+		mWindow->renderHelpPromptsEarly(parentTrans);
 }
 
 // Clip to one line: a long game name gets an ellipsis, never a second line.
+// On characters, not bytes (TextFit; #308 8a gpt F-ES-13): a title ending in
+// an accented or Japanese character was measured, and could be shown, with
+// half a character on its end.
 std::string GuiScraperRun::fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width)
 {
-	if (!font || text.empty() || font->sizeText(text).x() <= width)
+	if (!font)
 		return text;
-	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
-		text.pop_back();
-	return text + "...";
+	return TextFit::fitOneLine(text, width, [&font](const std::string& t) { return font->sizeText(t).x(); });
 }
 
 // "GAMES SCRAPED: 12  -  COULDN'T SCRAPE: 1" (the separator on screen is a
@@ -240,11 +251,8 @@ void GuiScraperRun::update(int deltaTime)
 		mDetail  ->setText(p.done > 0 ? fitOneLine(mSmallFont, countsLine(p), mLineWidth) : "");
 		mNote    ->setText("");
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		// 7. That the page can be cancelled: the longest form that fits the
-		// line (D-UI-035), so a 640x480 panel keeps the sentence to one row.
-		std::shared_ptr<Font> font = mSmallFont;
-		mFooter  ->setText(CloudText::chooseThatFits(
-			{ _("THIS CAN TAKE A WHILE. PRESS B TO CANCEL."), _("PRESS B TO CANCEL.") },
-			mLineWidth, [font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; }));
+		// 7. That it takes a while; how to cancel is the help bar's, on the
+		// player's own back button (render).
+		mFooter  ->setText(fitOneLine(mSmallFont, _("THIS CAN TAKE A WHILE."), mLineWidth));
 	}
 }
