@@ -563,6 +563,23 @@ TEST_CASE("a script's line keeps its UTF-8 on its way to the card (#308 5 claude
 	CHECK(cleanLine("   ") == "");
 }
 
+TEST_CASE("an escape sequence goes, and nothing after it that is not its own (claude G-E1-07)")
+{
+	// Every escape was taken to end at the first ASCII letter: an OSC (a
+	// window title, ESC ] ... BEL), a two-byte escape (ESC 7), or an ESC
+	// before a UTF-8 byte swallowed everything up to the next letter --
+	// here the start of a protocol line.
+	CHECK(cleanLine("\x1B]0;title\x07>>> offer create-saves-folder|/Spiele") == ">>> offer create-saves-folder|/Spiele");
+	CHECK(cleanLine("\x1B]0;title\x1B\\>>> why IT WAS STOPPED") == ">>> why IT WAS STOPPED");
+	CHECK(cleanLine("\x1B" "7>>> pid 12") == ">>> pid 12");
+	CHECK(cleanLine("\x1B\xC3\xA4nde") == "\xC3\xA4nde");
+	// CSI, which rclone prints: parameters, then one final byte.
+	CHECK(cleanLine("\x1B[1;32m>>> tier SAVES|0\x1B[0m") == ">>> tier SAVES|0");
+	CHECK(cleanLine("\x1B[?25lTransferred: 1 B") == "Transferred: 1 B");
+	// A lone ESC at the end.
+	CHECK(cleanLine("done\x1B") == "done");
+}
+
 TEST_CASE("the card's action line drops the in-place clause first, as the house rule says")
 {
 	const std::string inPlace = "WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.";
