@@ -32,6 +32,11 @@ public:
 	static bool hasInstance() { return sInstance != nullptr; }
 	
 	static void saveState();
+	// The configuration files were replaced or removed under this process
+	// (a settings restore, a factory reset) and it is about to restart:
+	// saveState writes nothing from here on, since what this process holds
+	// is the configuration from before (#308 8-es claude F-ES-10).
+	static void configurationReplaced();
 
 	static ViewController* get();
 

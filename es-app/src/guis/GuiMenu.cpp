@@ -306,10 +306,17 @@ static std::string maintenancePlainLine(const std::string& line)
 // -- ViewController::saveState() saves es_settings.cfg on the way out whenever
 // the player has moved to another system since this boot, and that write
 // carries every other setting with it (#114).
+//
+// Re-reading is not enough after a factory reset: there is nothing to read,
+// Settings::loadFile leaves the old map as it stood, and the exit's
+// ViewController::saveState would write it all back with LastSystem. So the
+// exit is told to write nothing (#308 8-es claude F-ES-10). SystemConf needs
+// no telling: saveSystemConf refuses when the live file cannot be opened.
 static void maintenanceRestart()
 {
 	Settings::getInstance()->loadFile();
 	SystemConf::getInstance()->loadSystemConf();
+	ViewController::configurationReplaced();
 	Utils::Platform::quitES(Utils::Platform::QuitMode::REBOOT);
 }
 
@@ -4739,6 +4746,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 						// carries every other setting with it.
 						Settings::getInstance()->loadFile();
 						SystemConf::getInstance()->loadSystemConf();
+						ViewController::configurationReplaced();
 						Utils::Platform::quitES(Utils::Platform::QuitMode::REBOOT);
 					}, _("RESTART"), _("PRESS ANY BUTTON TO RESTART"),
 					   _("THIS DEVICE RESTARTS SO YOUR RESTORED SETTINGS TAKE EFFECT."));
