@@ -834,6 +834,14 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 {
 	LOG(LogInfo) << "Attempting to launch game...";
 
+	// PLAY NOW's answer is for the launch it leads to and no other (#308
+	// 8-es-menus-and-core claude F-ES-07): taken here, on the way in,
+	// whether or not the send is still running. It was taken only where the
+	// send was, so a send that ended between the press and the relaunch left
+	// it set, and a later launch over a later send asked nothing. A relaunch
+	// that meets another question first asks the send's again after it.
+	const bool playThroughSend = sPlayThroughSend.exchange(false);
+
 	// Not while saves are moving -- unless the sync is one EmulationStation
 	// started on its own. A cloud sync reads and writes the same save files
 	// the emulator is about to open, and the archive step tars up /storage
@@ -924,7 +932,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// stopped: STOP IT AND PLAY signals the ctl and waits for it to be
 	// gone, and the ctl runs again next time the device is connected. The
 	// safe verb is last in both (D-UI-096).
-	if (ProxyCards::sendRunning() && !sPlayThroughSend.exchange(false))
+	if (ProxyCards::sendRunning() && !playThroughSend)
 	{
 		window->pushGui(new GuiMsgBox(window,
 			_("OFFLINE ACHIEVEMENTS ARE BEING SENT.") + "\n\n" + _("IT'LL BE A MOMENT."),
