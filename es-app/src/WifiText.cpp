@@ -106,6 +106,11 @@ bool WifiText::parseJoin(const std::vector<std::string>& lines)
 	return false;
 }
 
+WifiText::JoinFailure WifiText::joinFailure(int exitCode)
+{
+	return exitCode == 2 ? JoinFailure::ServiceNotAnswering : JoinFailure::MayBeKey;
+}
+
 WifiText::ForgetOutcome WifiText::parseForget(const std::vector<std::string>& lines)
 {
 	ForgetOutcome outcome;

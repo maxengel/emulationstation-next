@@ -212,3 +212,19 @@ TEST_CASE("the joined toast is <subject> : <outcome>, the name as it is (#308 2 
 	CHECK(joinedNotice("cafe guest", "CONNECT\xC3\x89") == "cafe guest : CONNECT\xC3\x89");
 }
 
+
+TEST_CASE("a join that did not happen: NetworkManager not answering is not a key that changed (#308 2 claude F-WF-03, gpt F-WF-06)")
+{
+	// wifictl join: exit 2 when NetworkManager could not be asked -- nothing
+	// was tried, and the key is not in question. The picker told the player
+	// to forget the network and join it again with a new key.
+	CHECK(joinFailure(2) == JoinFailure::ServiceNotAnswering);
+	// Exit 1: the profile would not come up, or the name is not a saved
+	// network -- the key may be why. 124 is the timeout's own bound on the
+	// activation: the same may.
+	CHECK(joinFailure(1) == JoinFailure::MayBeKey);
+	CHECK(joinFailure(124) == JoinFailure::MayBeKey);
+	// A run that exited 0 without printing "joined" (parseJoin) is not a
+	// join; nothing in it points away from the key either.
+	CHECK(joinFailure(0) == JoinFailure::MayBeKey);
+}

@@ -155,17 +155,23 @@ void GuiWifi::join(const std::string& name)
 	Window* window = mWindow;
 	mWaitingLoad = true;
 	LOG(LogInfo) << "wifi picker: joining the saved network " << name;
-	window->pushGui(new GuiLoading<bool>(window, _("CONNECTING TO WI-FI"),
+	window->pushGui(new GuiLoading<int>(window, _("CONNECTING TO WI-FI"),
 		[name](IGuiLoadingHandler*) { return ApiSystem::getInstance()->joinWifiNetwork(name); },
-		[this, window, name](bool ok)
+		[this, window, name](int code)
 		{
 			mWaitingLoad = false;
-			if (!ok)
+			if (code != 0)
 			{
-				LOG(LogWarning) << "wifi picker: could not join the saved network " << name;
+				LOG(LogWarning) << "wifi picker: could not join the saved network " << name << " (wifictl join exited " << code << ")";
+				// The advice by what happened (WifiText::joinFailure, #308
+				// F-WF-03/06): NetworkManager not answering is not a key that
+				// changed, and forgetting the network on that advice would
+				// lose a profile that was fine.
+				const std::string advice = WifiText::joinFailure(code) == WifiText::JoinFailure::ServiceNotAnswering
+					? _("THE WI-FI SERVICE DIDN'T ANSWER. TRY AGAIN IN A MOMENT.")
+					: _("IF ITS KEY HAS CHANGED, FORGET IT UNDER MANAGE SAVED NETWORKS AND JOIN IT AGAIN WITH THE NEW KEY.");
 				window->pushGui(new GuiMsgBox(window,
-					Utils::String::format(_("COULDN'T CONNECT TO %s.").c_str(), name.c_str()) + "\n\n"
-					+ _("IF ITS KEY HAS CHANGED, FORGET IT UNDER MANAGE SAVED NETWORKS AND JOIN IT AGAIN WITH THE NEW KEY."), _("OK")));
+					Utils::String::format(_("COULDN'T CONNECT TO %s.").c_str(), name.c_str()) + "\n\n" + advice, _("OK")));
 				return;
 			}
 			SystemConf::getInstance()->loadSystemConf();

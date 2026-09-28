@@ -275,7 +275,11 @@ public:
 	// #191). True only when the script said "joined"; the settings wifi.ssid
 	// and wifi.key then follow the profile on disk, so a caller re-reads
 	// SystemConf before trusting either.
-	bool joinWifiNetwork(const std::string& name);
+	// wifictl join's answer: 0 when the saved network's profile is active
+	// ("joined"), else the script's exit code -- 2 NetworkManager not
+	// answering, 1 not joined -- and 1 for a 0 that printed no "joined".
+	// WifiText::joinFailure reads it.
+	int joinWifiNetwork(const std::string& name);
 
 	virtual std::vector<std::string> getIpAddresses();
 	virtual std::string getIpAddress();

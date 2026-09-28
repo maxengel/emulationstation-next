@@ -105,6 +105,14 @@ namespace WifiText
 	// is active. Anything else, or nothing, is not a join that happened.
 	bool parseJoin(const std::vector<std::string>& lines);
 
+	// What a join that did not happen means, from `wifictl join`'s exit code
+	// (#308 2-wifi claude F-WF-03, gpt F-WF-06): 2 is NetworkManager not
+	// answering -- nothing was tried, and the key is not in question; any
+	// other (1: the profile would not come up or is not saved, 124: the
+	// timeout's bound on the activation, 0 without "joined") may be the key.
+	enum class JoinFailure { ServiceNotAnswering, MayBeKey };
+	JoinFailure joinFailure(int exitCode);
+
 	// What `wifictl forget` printed: "forgotten" when the profile went, then
 	// "disconnected" on a second line when it was the one in use. A
 	// "disconnected" with no "forgotten" before it is not a forget that
