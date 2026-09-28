@@ -5515,8 +5515,11 @@ void GuiMenu::openGamesSettings()
 	// A device upgraded from before the row had two spellings can hold "0",
 	// which matches no entry, so the row showed INCREMENT PER SAVE while the
 	// launcher ran with auto-index off. "0" reads as DO NOT INCREMENT, which
-	// is what it does and what Batocera's launcher makes of it (fork #209,
-	// D-UI-083); the row's next save writes "2".
+	// is what it does (fork #209, D-UI-083); the row's next save writes "2".
+	// The launcher that reads it is ROCKNIX's setsettings.sh, set_savestates:
+	// `0|2|false|none` turn savestate_auto_index off, anything else on -- so
+	// the old INCREMENT SLOT ("0") and DO NOT INCREMENT ("2") were one
+	// behaviour under two names (#308 8-es claude F-ES-18).
 	std::string incrementalValue = SystemConf::getInstance()->get("global.incrementalsavestates");
 	if (incrementalValue == "0")
 		incrementalValue = "2";
