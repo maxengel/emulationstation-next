@@ -152,6 +152,25 @@ bool isOutcomeToken(const std::string& token)
 	return ourTokens.find(token) != ourTokens.cend();
 }
 
+// A field that is a whole number and nothing else -- an optional minus,
+// then digits -- within [lo, hi]. atoi read "garbage" as 0, and 0 is
+// success; a status that cannot be read is not one (#308 F-CS-27).
+static bool wholeNumber(const std::string& field, long long lo, long long hi, long long& out)
+{
+	const std::string f = Utils::String::trim(field);
+	size_t i = (!f.empty() && f[0] == '-') ? 1 : 0;
+	if (i >= f.size() || f.size() - i > 12)
+		return false;
+	for (size_t j = i; j < f.size(); j++)
+		if (f[j] < '0' || f[j] > '9')
+			return false;
+	const long long value = atoll(f.c_str());
+	if (value < lo || value > hi)
+		return false;
+	out = value;
+	return true;
+}
+
 bool exitSyncOwed(const std::string& exitStamp, const std::string& startupStamp, const std::string& backupStamp)
 {
 	const LastRun e = parseLastRun(exitStamp);
@@ -172,9 +191,12 @@ LastRun parseLastRun(const std::string& text)
 	auto parts = Utils::String::split(Utils::String::trim(text), ' ', true);
 	if (parts.size() < 2)
 		return r;
-	time_t when = (time_t) atoll(parts[0].c_str());
-	if (when <= 0)
+	// Both fields whole numbers, or this is not a stamp: the epoch positive,
+	// the code an exit status (-1 where there was none) (#308 F-CS-27).
+	long long epoch = 0, status = 0;
+	if (!wholeNumber(parts[0], 1, 99999999999LL, epoch) || !wholeNumber(parts[1], -1, 255, status))
 		return r;
+	time_t when = (time_t) epoch;
 	r.ran = true;
 	r.when = when;
 	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028). The first two fields
@@ -192,7 +214,7 @@ LastRun parseLastRun(const std::string& text)
 	// (last-sync-startup, -exit, -manual; fork #94) do, because under SYNC
 	// SAVES DURING STARTUP the player's question is what happened this
 	// morning, and "nothing, there was no network" answers it.
-	const int code = atoi(parts[1].c_str());
+	const int code = (int) status;
 	r.code = code;
 	//
 	// Two writers, two shapes of third field. EmulationStation's stamps
@@ -374,7 +396,10 @@ ProtocolLine classifyProtocolLine(const std::string& clean)
 		out.kind = ProtocolKind::Tier;
 		auto parts = Utils::String::split(clean.substr(9), '|', false);
 		out.text = parts.size() > 0 ? Utils::String::toUpper(Utils::String::trim(parts[0])) : "";
-		out.number = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : -1;
+		// The part's exit status, 0-255; anything else -- nothing, junk -- is
+		// -1, which is not a success and not one of rclone's (#308 F-CS-27).
+		long long code = -1;
+		out.number = (parts.size() > 1 && wholeNumber(parts[1], 0, 255, code)) ? (int) code : -1;
 	}
 	// ">>> unit nes|2|5" -- an item starts: a system, or a phase whose
 	// counts are empty ("SAVES||"). The label keeps the case it came in,

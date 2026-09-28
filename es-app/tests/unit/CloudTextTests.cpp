@@ -129,6 +129,41 @@ TEST_CASE("parseLastRun on the shapes that are not a run")
 	CHECK_FALSE(parseLastRun("\x01\x02 junk").ran);
 }
 
+TEST_CASE("a stamp whose fields are not whole numbers is not a run, and never a completed one (#308 5 gpt F-CS-27)")
+{
+	// atoi read "garbage" as 0 and 0 is success: a stamp cut or overwritten
+	// in its code field said COMPLETED under the row that reads it, and one
+	// with junk after the epoch's digits dated a run that never was.
+	CHECK_FALSE(parseLastRun("1789000000 garbage").ran);
+	CHECK_FALSE(parseLastRun("1789000000 garbage completed").ran);
+	CHECK_FALSE(parseLastRun("1789000000 0x0 completed").ran);
+	CHECK_FALSE(parseLastRun("1789000000 5abc cloud-stopped").ran);
+	CHECK_FALSE(parseLastRun("1789000000xyz 0 completed").ran);
+	CHECK_FALSE(parseLastRun("1789000000 99999999999 unknown").ran);
+	CHECK_FALSE(parseLastRun("1789000000 - completed").ran);
+
+	// And what the writers do write still reads.
+	CHECK(parseLastRun("1789000000 0 completed").outcome == Outcome::Completed);
+	CHECK(parseLastRun("1789000000 130 cancelled").outcome == Outcome::SkippedGameStarted);
+	CHECK(parseLastRun("1789000000 -1 unknown").ran);   // no exit status at all: -1, and not a success
+	CHECK(parseLastRun("1789000000 -1 unknown").outcome == Outcome::Failed);
+}
+
+TEST_CASE("a tier whose code is not a whole number is not a success (#308 5 gpt F-CS-27)")
+{
+	// ">>> tier SETTINGS|nonsense" read as 0 -- a part that finished -- and a
+	// composed run whose other part failed was then a run whose parts
+	// disagreed rather than a failure of both.
+	CHECK(classifyProtocolLine(">>> tier SETTINGS|nonsense").number == -1);
+	CHECK(classifyProtocolLine(">>> tier SETTINGS|").number == -1);
+	CHECK(classifyProtocolLine(">>> tier SETTINGS|0x0").number == -1);
+	CHECK(classifyProtocolLine(">>> tier SETTINGS|7up").number == -1);
+	CHECK(classifyProtocolLine(">>> tier SETTINGS|99999").number == -1);
+	CHECK(classifyProtocolLine(">>> tier SETTINGS|0").number == 0);
+	CHECK(classifyProtocolLine(">>> tier SETTINGS| 9 ").number == 9);
+	CHECK(classifyProtocolLine(">>> tier SETTINGS|255").number == 255);
+}
+
 TEST_CASE("parseLastRun tolerates how the line is written")
 {
 	// The stamp is written with a trailing newline, and read after a trim.
@@ -393,8 +428,10 @@ TEST_CASE("classifyProtocolLine reads a tier line")
 
 	// No code: -1, which is not a success and not one of rclone's.
 	CHECK(classifyProtocolLine(">>> tier saves").number == -1);
-	CHECK(classifyProtocolLine(">>> tier saves|").number == 0);
-	CHECK(classifyProtocolLine(">>> tier saves|nonsense").number == 0);
+	// An empty or unreadable code is not a success either (#308 F-CS-27):
+	// -1, as for no code at all. Every emitter prints its shell's $?.
+	CHECK(classifyProtocolLine(">>> tier saves|").number == -1);
+	CHECK(classifyProtocolLine(">>> tier saves|nonsense").number == -1);
 
 	// No label: the caller records nothing.
 	CHECK(classifyProtocolLine(">>> tier |5").text == "");
