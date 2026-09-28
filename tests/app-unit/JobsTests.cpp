@@ -2,7 +2,9 @@
 // compiled from their shipped sources against the doubles under fakes/:
 // real processes, real process groups, real signals.
 #include "doctest/doctest.h"
+#include "AppWindow.h"
 #include "CloudTransferJob.h"
+#include "OfflineScanJob.h"
 #include "Log.h"
 #include "ThreadedCloudSync.h"
 #include "Window.h"
@@ -119,4 +121,36 @@ TEST_CASE("transfer job: a run that completed is not called stopped because a st
 	REQUIRE(waitFor([&] { return job->finished(); }, 10));
 	CHECK_FALSE(job->stoppedByPlayer());
 	CloudTransferJob::dismiss(job);
+}
+
+// Last in this file, and so last in the run: main() letting the window go
+// cannot be undone in a process, and doctest runs a file's cases in order.
+//
+// The scan's worker posts its refresh to the window when the run's state
+// changes and once when it ends (#308 8-es-menus-and-core claude F-ES-26's
+// rule, carried to the long jobs): the thread is detached and a scan runs
+// for minutes, so it can end after main() has torn the window down. Its
+// post goes through AppWindow, which drops it once the window is closing.
+TEST_CASE("scan job: nothing is posted to a window main() has let go")
+{
+	Window window;
+	auto runOnce = [&window]
+	{
+		auto job = OfflineScanJob::start(&window, "sleep 0.3");
+		REQUIRE(job != nullptr);
+		job->setOnChanged([] {});
+		REQUIRE(waitFor([&] { return job->state().finished; }, 10));
+		// The end's post is made after finished is set.
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	};
+
+	// The control: with the window open, the run's end is posted.
+	const int before = sPosts;
+	runOnce();
+	REQUIRE(sPosts.load() > before);
+
+	AppWindow::closing();   // main(), before the window goes
+	const int atClose = sPosts;
+	runOnce();
+	CHECK(sPosts.load() == atClose);
 }

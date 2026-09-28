@@ -67,10 +67,12 @@ target_link_libraries(proxycards-tests Threads::Threads)
 # doubles, running real commands in real process groups, so a stop, a
 # cancel and a post are the ones a device makes.
 configure_file(${ES_ROOT}/es-app/src/CloudTransferJob.cpp ${CMAKE_BINARY_DIR}/under-test/CloudTransferJob.cpp COPYONLY)
+configure_file(${ES_ROOT}/es-app/src/OfflineScanJob.cpp ${CMAKE_BINARY_DIR}/under-test/OfflineScanJob.cpp COPYONLY)
 add_executable(jobs-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/JobsTests.cpp
 	${CMAKE_BINARY_DIR}/under-test/CloudTransferJob.cpp
+	${CMAKE_BINARY_DIR}/under-test/OfflineScanJob.cpp
 	${ES_ROOT}/es-app/src/CloudText.cpp
 	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
 )

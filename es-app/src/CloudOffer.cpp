@@ -1,5 +1,6 @@
 #include "CloudOffer.h"
 
+#include "AppWindow.h"
 #include "ApiSystem.h"
 #include "Window.h"
 #include "guis/GuiLoading.h"
@@ -73,8 +74,11 @@ void present(Window* window, const std::string& offer, const std::vector<std::st
 	// worker and asks from its own input handler, having just deleted
 	// itself. Posting covers both -- and on the page it also puts the
 	// dialog up on the frame after the one that took the press, rather than
-	// inside the input dispatch of a component that is gone.
-	window->postToUiThread([window, args]() { createSavesFolder(window, args); });
+	// inside the input dispatch of a component that is gone. Through
+	// AppWindow: the card's worker is detached and asks after its linger,
+	// which can be after main() has let the window go (#308 8-es claude
+	// F-ES-26's rule).
+	AppWindow::post(window, [window, args]() { createSavesFolder(window, args); });
 }
 
 }

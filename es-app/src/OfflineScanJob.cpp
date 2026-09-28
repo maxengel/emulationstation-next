@@ -1,4 +1,5 @@
 #include "OfflineScanJob.h"
+#include "AppWindow.h"
 #include "CloudText.h"
 
 #include "Window.h"
@@ -94,8 +95,13 @@ void OfflineScanJob::changed()
 	}
 	// This run, not current(): a TRY AGAIN may have started the next one
 	// between the last line and here.
+	//
+	// Through AppWindow (#308 8-es claude F-ES-26's rule): this thread is
+	// detached and a scan runs for minutes, so its end can come after main()
+	// has let the window go. A refresh nobody can draw is dropped, and with
+	// it the pending mark, so nothing waits on a post that was not made.
 	std::shared_ptr<OfflineScanJob> self = shared_from_this();
-	mWindow->postToUiThread([self, onChanged]
+	const bool posted = AppWindow::post(mWindow, [self, onChanged]
 	{
 		{
 			std::unique_lock<std::mutex> lock(self->mMutex);
@@ -103,6 +109,11 @@ void OfflineScanJob::changed()
 		}
 		onChanged();
 	});
+	if (!posted)
+	{
+		std::unique_lock<std::mutex> lock(mMutex);
+		mPostPending = false;
+	}
 }
 
 void OfflineScanJob::run()
