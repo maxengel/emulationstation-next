@@ -132,20 +132,66 @@ namespace Utils
 #endif
 		}
 
+		// Read whole, or say it was not (PL-065). This used to say ok once the
+		// stream had opened, whatever the read then did: an I/O error part way
+		// through a failing card returned the prefix as the whole file, and
+		// SystemConf parsed it and recorded it as the last known good. Now ok
+		// means every read succeeded to the end, and for a regular file that
+		// the end was no shorter than the size it had when it was opened -- a
+		// file cut under the reader is not the file. On any failure the text
+		// is "", as for a file that would not open.
 		std::string readText(const std::string& path, bool* ok)
 		{
+			if (ok != nullptr)
+				*ok = false;
+#if defined(_WIN32)
 			std::ifstream in(path, std::ios::binary);
 			if (!in)
-			{
-				if (ok != nullptr)
-					*ok = false;
 				return "";
-			}
 			std::ostringstream ss;
 			ss << in.rdbuf();
+			if (in.bad() || ss.fail())
+				return "";
 			if (ok != nullptr)
 				*ok = true;
 			return ss.str();
+#else
+			int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+			if (fd < 0)
+				return "";
+			struct stat st;
+			if (::fstat(fd, &st) != 0)
+			{
+				::close(fd);
+				return "";
+			}
+
+			std::string text;
+			if (S_ISREG(st.st_mode) && st.st_size > 0)
+				text.reserve((size_t) st.st_size);
+			char buffer[65536];
+			for (;;)
+			{
+				const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+				if (n < 0)
+				{
+					if (errno == EINTR)
+						continue;
+					::close(fd);   // EIO part way, EISDIR on a directory: not a read
+					return "";
+				}
+				if (n == 0)
+					break;
+				text.append(buffer, (size_t) n);
+			}
+			::close(fd);
+
+			if (S_ISREG(st.st_mode) && (off_t) text.size() < st.st_size)
+				return "";
+			if (ok != nullptr)
+				*ok = true;
+			return text;
+#endif
 		}
 
 		bool copy(const std::string& src, const std::string& dst)

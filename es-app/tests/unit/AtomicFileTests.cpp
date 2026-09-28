@@ -163,3 +163,35 @@ TEST_CASE("two writers at once leave one whole file, never a mix of both (PL-063
 	// Nothing left behind: every temporary was renamed or removed.
 	CHECK(std::system(("test -z \"$(ls -A '" + dir.path + "' | grep -v '^system.cfg$')\"").c_str()) == 0);
 }
+
+// ------------------------------------------------------------------ PL-065
+
+TEST_CASE("a read that fails after the file opened is not a read (PL-065)")
+{
+	// readText said ok once the stream opened, whatever the read did, and
+	// SystemConf took the prefix it got as the whole file -- and recorded it
+	// as the last known good. A directory opens for reading on Linux and
+	// then fails with EISDIR; /proc/self/mem opens and fails with EIO at
+	// offset 0. Neither is a file's text.
+	ScratchDir dir;
+	bool ok = true;
+	readText(dir.path, &ok);
+	CHECK_FALSE(ok);
+
+	ok = true;
+	readText("/proc/self/mem", &ok);
+	CHECK_FALSE(ok);
+
+	// And the two answers that were always right stay right.
+	put(dir / "f", "a=1\n");
+	ok = false;
+	CHECK(readText(dir / "f", &ok) == "a=1\n");
+	CHECK(ok);
+	ok = true;
+	CHECK(readText(dir / "missing", &ok).empty());
+	CHECK_FALSE(ok);
+	ok = false;
+	put(dir / "empty", "");
+	CHECK(readText(dir / "empty", &ok).empty());
+	CHECK(ok);   // empty and missing are different answers
+}

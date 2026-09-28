@@ -26,8 +26,10 @@ namespace Utils
 		// two threads or two processes, each leave one whole file (PL-063).
 		bool writeText(const std::string& path, const std::string& text);
 
-		// Read `path` whole. `ok` (when given) says whether it could be
-		// opened at all, since an empty file and a missing one both read "".
+		// Read `path` whole. `ok` (when given) says whether it was: opened,
+		// read to the end without an error, and -- for a regular file -- no
+		// shorter than its size at the open (PL-065). An empty file and a
+		// missing one both read ""; only the first is ok. On failure "".
 		std::string readText(const std::string& path, bool* ok = nullptr);
 
 		// readText(src) then writeText(dst): dst is replaced whole or not at
