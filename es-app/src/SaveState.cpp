@@ -136,10 +136,20 @@ std::string SaveState::setupSaveState(FileData* game, const std::string& command
 			{
 				Utils::FileSystem::copyFile(fileName, autoFilename);
 
-				if (incrementalSaveStates)
+				// Copy file to new slot, if the users want to reload the saved game in the slot directly from retroach
+				//
+				// Only when that slot is another file. Batocera's no-next-slot
+				// patch (D-UI-057) changed the target from the next free slot
+				// to the launched one, so this named the launched state
+				// itself: removeFile deleted it and the copy from it then
+				// failed -- the player's state was gone, with only the .auto
+				// copy above left (#308 F-CS-14). With no free-slot target
+				// left there is nothing for it to copy, and onGameEnded's
+				// check below finds no mNewSlotFile.
+				const std::string newSlotFile = makeStateFilename(slot);
+				if (incrementalSaveStates && Utils::FileSystem::getGenericPath(newSlotFile) != Utils::FileSystem::getGenericPath(fileName))
 				{
-					// Copy file to new slot, if the users want to reload the saved game in the slot directly from retroach
-					mNewSlotFile = makeStateFilename(slot);
+					mNewSlotFile = newSlotFile;
 					Utils::FileSystem::removeFile(mNewSlotFile);
 					if (Utils::FileSystem::copyFile(fileName, mNewSlotFile))
 						mNewSlotCheckSum = ApiSystem::getInstance()->getMD5(fileName, false);
