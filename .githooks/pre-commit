@@ -6,6 +6,9 @@
 # Written 2026-09-28 (#307 PL-078): a guard that refuses at commit time costs
 # one edit; at push time it costs a history rewrite.
 . "$(dirname "$(readlink -f "$0")")/secret-patterns"
+# No patterns is no scan: refuse rather than let every commit through
+# (the pre-push guard's failure of 2026-09-28, the same line here).
+[ -n "${SECRET_PATTERNS:-}" ] || { echo "pre-commit: no credential patterns (.githooks/secret-patterns missing or empty beside this hook); refused" >&2; exit 1; }
 hits="$(git diff --cached -U0 --no-color --diff-filter=ACMRT \
   | awk '/^\+\+\+ b\//{f=substr($0,7); next} /^\+\+\+ /{next} /^\+/{print f ": " $0}' \
   | grep -v -E '^es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp: \+.*maskSecrets\(' \
