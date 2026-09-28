@@ -535,14 +535,11 @@ std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std:
 // ">>> unit SAVES||"), and the page used to show that word as it came, so
 // the French page read SETTINGS over ELEMENT 1 SUR 1 (#153, 2026-09-21). A
 // system's name from the content scripts is a directory and stays as it is.
+// The composers' labels in the player's language, a system's folder as it
+// came (CloudText::unitLabel).
 std::string GuiCloudTransfer::unitName(const std::string& label)
 {
-	const std::string upper = Utils::String::toUpper(label);
-	if (upper == "SETTINGS")
-		return _("SETTINGS");
-	if (upper == "SAVES")
-		return _("SAVES");
-	return upper;
+	return CloudText::unitLabel(label);
 }
 
 std::string GuiCloudTransfer::fitSentences(const std::shared_ptr<Font>& font, std::string text, float width)

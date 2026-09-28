@@ -487,6 +487,15 @@ namespace CloudText
 	std::string matchRemovedNote(int removedFiles);
 	std::string matchRecovery();
 
+	// The names the transfer page gives its items, from the ">>> unit" and
+	// ">>> tier" labels: the ones EmulationStation composes (the transfer
+	// form's parts, the journey's continuation, the startup sync) paired,
+	// English and _(""), as whySentences pairs the scripts' whys; a label
+	// not listed -- a system's folder -- is shown upper-cased, as it came.
+	std::vector<std::pair<std::string, std::string>> unitLabels();
+	std::string unitLabel(const std::string& label);
+	bool isKnownUnitLabel(const std::string& label);
+
 	// "route=<scan|topup> at=<epoch> index=<i> total=<n> name=<game>" from
 	// raofflineproxy-ctl's running file (fork #189): the one line the ctl
 	// keeps beside its stamp while a scan or top-up runs its jobs, rewritten

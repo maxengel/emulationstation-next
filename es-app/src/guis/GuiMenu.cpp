@@ -7757,11 +7757,16 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 			LOG(LogInfo) << "restore relink: reconnecting wifi to " << ssid;
 			networkApplyWifi(window, _("CONNECTING TO WI-FI"),
 				[ssid, key, country] { return ApiSystem::getInstance()->enableWifi(ssid, key, country); },
-				[window, reopen](bool ok)
+				[window, reopen, ssid](bool ok)
 				{
 					reopen();
+					// The picker's words for the same failure (GuiWifi::connect):
+					// WI-FI CONFIGURATION ERROR was upstream's, in a register
+					// a player does not speak (D-UI-031; audit of the fixes, E2
+					// claude G-E2-08).
 					if (!ok)
-						window->pushGui(new GuiMsgBox(window, _("WI-FI CONFIGURATION ERROR")));
+						window->pushGui(new GuiMsgBox(window,
+							Utils::String::format(_("COULDN'T CONNECT TO %s.").c_str(), ssid.c_str()) + "\n\n" + _("CHECK THE KEY AND TRY AGAIN.")));
 				});
 		});
 		window->pushGui(wifi);
@@ -9500,9 +9505,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 #endif
 				// This runs as the page closes, so the spinner and then the
 				// verdict appear over whatever the page returns to.
-				networkApplyWifi(window, _("CONNECTING TO WI-FI"), apply, [window](bool ok)
+				networkApplyWifi(window, _("CONNECTING TO WI-FI"), apply, [window, newSSID](bool ok)
 				{
-					window->pushGui(new GuiMsgBox(window, ok ? _("WI-FI ENABLED") : _("WI-FI CONFIGURATION ERROR")));
+					// The picker's words for a failure (G-E2-08), not upstream's
+					// WI-FI CONFIGURATION ERROR.
+					window->pushGui(new GuiMsgBox(window, ok ? _("WI-FI ENABLED")
+						: Utils::String::format(_("COULDN'T CONNECT TO %s.").c_str(), newSSID.c_str()) + "\n\n" + _("CHECK THE KEY AND TRY AGAIN.")));
 				});
 			}
 		}
