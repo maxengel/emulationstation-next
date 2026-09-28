@@ -294,14 +294,48 @@ namespace Utils
 			bool liveOk = false, tmpOk = false, backupOk = false;
 			const std::string live = readText(path, &liveOk);
 			const std::string tmp = readText(path + ".tmp", &tmpOk);
+			const std::string backup = readText(path + ".backup", &backupOk);
 			const bool tmpWhole = tmpOk && isUsableKeyValues(tmp) && isComplete(tmp);
+			const bool backupWhole = backupOk && isUsableKeyValues(backup) && isComplete(backup);
+
+			// The mode the chosen text goes back with, and the record: the
+			// permission bits every copy on disk shares, so a recovery is never
+			// less private than a copy it came from (audit of the fixes
+			// G-E1-05: a 0600 temporary came back as a 0644 file and record).
+			int mode = 07777;
+			bool any = false;
+			for (const std::string& copy : { path, path + ".tmp", path + ".backup" })
+			{
+				const int m = modeOf(copy, -1);
+				if (m >= 0)
+				{
+					mode &= m;
+					any = true;
+				}
+			}
+			out.mode = any ? mode : 0644;
 
 			// The copy stopped part way: what is there is the start of the
 			// temporary, short of its end.
 			const bool liveCut = liveOk && tmpWhole && !isComplete(live)
 				&& live.size() < tmp.size() && tmp.compare(0, live.size(), live) == 0;
 
-			if (liveOk && isUsableKeyValues(live) && !liveCut)
+			// Or the live file stops part way through a line and is the start
+			// of the whole record beside it, written no earlier than the live
+			// file was (G-E1-04): the file was cut after the record was made
+			// from it, and the record is the file. A live file changed after
+			// the record -- a hand edit that left off the last line end -- is
+			// the owner's, and is read as it is.
+			bool cutOfRecord = false;
+			if (liveOk && backupWhole && !isComplete(live) && live.size() < backup.size()
+				&& backup.compare(0, live.size(), live) == 0)
+			{
+				struct stat ls, bs;
+				cutOfRecord = ::stat(path.c_str(), &ls) == 0 && ::stat((path + ".backup").c_str(), &bs) == 0
+					&& ls.st_mtime <= bs.st_mtime + 1;
+			}
+
+			if (liveOk && isUsableKeyValues(live) && !liveCut && !cutOfRecord)
 			{
 				// A temporary beside a whole file is a save that never reached
 				// its rename, or the shell's own write in flight; neither is the
@@ -320,7 +354,6 @@ namespace Utils
 				return out;
 			}
 
-			const std::string backup = readText(path + ".backup", &backupOk);
 			if (backupOk && isUsableKeyValues(backup))
 			{
 				out.source = LoadedConfig::Source::Backup;
@@ -397,8 +430,10 @@ namespace Utils
 		}
 
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
-			const std::function<std::string(const std::string& current)>& merge, std::string* written)
+			const std::function<std::string(const std::string& current)>& merge, std::string* written,
+			bool* baseComplete)
 		{
+
 			// Not without the lock (PL-024). This used to log and go ahead once
 			// the budget ran out -- "the player's change dropped on the floor
 			// is the worse outcome" -- and the change was dropped anyway,
@@ -417,6 +452,11 @@ namespace Utils
 #endif
 			// (On Windows a file not there yet is merged onto nothing and made,
 			// as SystemConf always did there.)
+
+			// A save merged onto a cut file lands (the change is the player's)
+			// but is not a record (G-E1-04).
+			if (baseComplete != nullptr)
+				*baseComplete = current.empty() || current.back() == '\n';
 
 			const std::string out = merge(current);
 			if (!writeText(path, out))

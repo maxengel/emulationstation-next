@@ -78,6 +78,9 @@ namespace Utils
 			Source source = Source::Missing;
 			std::string text;
 			bool record = false;   // may replace the last-known-good record
+			// The mode to write the chosen text back with, and the record:
+			// never less private than any copy of it on disk (G-E1-05).
+			int mode = 0644;
 		};
 
 		// The choice, from what is on disk now. Reads; writes nothing.
@@ -136,8 +139,13 @@ namespace Utils
 		// snapshot of the file renamed over the shell's new one, or the other
 		// way round -- lost one of the two writers' keys. The caller keeps its
 		// changes on any answer but Written and makes them at its next save.
+		// `baseComplete`, when given, says whether the text read under the lock
+		// was whole (empty, or ending in a line end): a save merged onto a cut
+		// file is written, and must not become the last-known-good record
+		// (audit of the fixes G-E1-04).
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
-			const std::function<std::string(const std::string& current)>& merge, std::string* written = nullptr);
+			const std::function<std::string(const std::string& current)>& merge, std::string* written = nullptr,
+			bool* baseComplete = nullptr);
 
 		// The settings lock the shell takes around every get_setting and
 		// set_setting (wait_lock in profile.d/001-functions): a file holding

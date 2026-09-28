@@ -776,3 +776,91 @@ TEST_CASE("parseKeyValues reads a system.cfg as SystemConf always has")
 	CHECK(v.count("empty") == 0);
 }
 
+// ------------------------------------------------------ G-E1-04 / G-E1-05
+
+namespace
+{
+	void setMtime(const std::string& path, time_t when)
+	{
+		struct timespec times[2];
+		times[0].tv_sec = when; times[0].tv_nsec = 0;
+		times[1].tv_sec = when; times[1].tv_nsec = 0;
+		utimensat(AT_FDCWD, path.c_str(), times, 0);
+	}
+}
+
+TEST_CASE("a live file cut short of its own record loads the record (G-E1-04)")
+{
+	// No temporary to compare with, and a whole record beside the live file
+	// whose text is the live file's start: the file was cut after the record
+	// was written from it. It used to be loaded as it was -- one key=value
+	// line is "usable" -- and the next save recorded the fragment over the
+	// record that held the rest.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string whole = "system.hostname=A\nwifi.ssid=Home\nwifi.key=secret\n";
+	put(path + ".backup", whole);
+	put(path, whole.substr(0, 38));   // "...wifi.ssid=Home\nwifi.k"
+	const time_t now = time(nullptr);
+	setMtime(path, now - 60);
+	setMtime(path + ".backup", now - 60);
+
+	LoadedConfig c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Backup);
+	CHECK(c.text == whole);
+
+	// A live file edited after the record -- a hand edit that left off the
+	// last line end and dropped the last lines -- is the owner's, and stays.
+	setMtime(path, now);
+	c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Live);
+	CHECK_FALSE(c.record);
+}
+
+TEST_CASE("a save merged onto a cut file is written and not recorded (G-E1-04)")
+{
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	auto setA = [](const std::string& current) { return withLine(current + (current.empty() || current.back() == '\n' ? "" : "\n"), "a=", "a=2"); };
+
+	put(path, "a=1\nb=par");
+	bool whole = true;
+	CHECK(saveUnderLock(path, lockPath, 1000, setA, nullptr, &whole) == LockedSave::Written);
+	CHECK_FALSE(whole);
+
+	put(path, "a=1\nb=2\n");
+	whole = false;
+	CHECK(saveUnderLock(path, lockPath, 1000, setA, nullptr, &whole) == LockedSave::Written);
+	CHECK(whole);
+}
+
+TEST_CASE("a recovery is written no less private than any copy it came from (G-E1-05)")
+{
+	// A whole system.cfg.tmp made 0600, and neither the live file nor the
+	// record: the recovery wrote it back 0644 -- its mode came from the live
+	// file and the record only -- and the record after it the same.
+	ScratchDir dir;
+	const mode_t before = umask(022);
+	const std::string path = dir / "system.cfg";
+	put(path + ".tmp", "system.hostname=A\nwifi.key=secret\n");
+	REQUIRE(chmod((path + ".tmp").c_str(), 0600) == 0);
+	LoadedConfig c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Temporary);
+	CHECK(c.mode == 0600);
+
+	// A 0600 record beside a 0644 cut live file: the record's privacy wins.
+	::unlink((path + ".tmp").c_str());
+	put(path + ".backup", "system.hostname=A\n");
+	REQUIRE(chmod((path + ".backup").c_str(), 0600) == 0);
+	put(path, "");
+	c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Backup);
+	CHECK(c.mode == 0600);
+
+	// Nothing private anywhere: 0644, as ever.
+	REQUIRE(chmod((path + ".backup").c_str(), 0644) == 0);
+	CHECK(chooseConfig(path).mode == 0644);
+	umask(before);
+}
+

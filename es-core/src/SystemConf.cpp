@@ -172,7 +172,8 @@ bool SystemConf::loadFromDisk()
 	std::remove((mSystemConfFile + ".backup.tmp").c_str());
 
 	const Utils::AtomicFile::LoadedConfig chosen = Utils::AtomicFile::chooseConfig(mSystemConfFile);
-	const int mode = Utils::AtomicFile::modeOf(mSystemConfFile, Utils::AtomicFile::modeOf(mSystemConfFile + ".backup", 0644));
+	// No less private than any copy it came from (G-E1-05).
+	const int mode = chosen.mode;
 
 	switch (chosen.source)
 	{
@@ -198,7 +199,7 @@ bool SystemConf::loadFromDisk()
 		return true;
 
 	case Utils::AtomicFile::LoadedConfig::Source::Backup:
-		LOG(LogWarning) << mSystemConfFile << " is missing, empty, unreadable or damaged -- loading the last-known-good record "
+		LOG(LogWarning) << mSystemConfFile << " is missing, empty, unreadable, damaged or cut short of the record -- loading the last-known-good record "
 			<< mSystemConfFile << ".backup and writing it back";
 		parseSystemConf(chosen.text);
 		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
@@ -241,8 +242,9 @@ bool SystemConf::saveSystemConf()
 	// changes stay in changedConf, and the next save -- any page closing,
 	// any set-and-save -- writes them over whatever the script left.
 	std::string out;
+	bool baseWhole = true;
 	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, "/tmp/.system.cfg.lock", 5000,
-		[this](const std::string& current) { return applyChanges(current); }, &out);
+		[this](const std::string& current) { return applyChanges(current); }, &out, &baseWhole);
 
 	switch (saved)
 	{
@@ -267,7 +269,12 @@ bool SystemConf::saveSystemConf()
 	// What was just written is, by construction, the newest good state, so
 	// it becomes the record (D-CLOUD-078: a success becomes the last known
 	// good). Outside the lock: the shell never takes it for the record.
-	recordLastGood(out);
+	// Unless it was merged onto a file cut short: the record then keeps the
+	// keys the cut lost (audit of the fixes G-E1-04).
+	if (baseWhole)
+		recordLastGood(out);
+	else
+		LOG(LogWarning) << "saveSystemConf: " << mSystemConfFile << " was cut short when this save read it -- written, and not recorded as the last known good";
 
 	return true;
 }
