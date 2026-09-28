@@ -5331,8 +5331,13 @@ void GuiMenu::openCloud(Window* window)
 		// editor calls it only when the script took the folder; the new page
 		// goes up before the old one closes, so nothing flashes between.
 		const std::string syncpath = info["SAVES_REMOTE"];
+		// One line under the row (D-UI-023): the sentence around the path took
+		// 580 of the 620 px a 640x480 description has, so any real path
+		// wrapped to a third line (#308 8-es claude F-ES-14; Roboto-Bold at
+		// 15 and 20 px, the budget noted at openRestoreRelink's DEVICE
+		// PASSWORD row).
 		s->addWithDescription(_("CHANGE CLOUD FOLDER"),
-			_("THE FOLDER IN YOUR CLOUD THAT HOLDS YOUR SAVES. CURRENT:") + " " + syncpath,
+			_("YOUR SAVES ARE IN:") + " " + syncpath,
 			nullptr, [window, s, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, [window, s] { GuiMenu::openCloud(window); s->close(); }); },
 			"", false, true);
 	}
@@ -7116,7 +7121,9 @@ static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
 		}, "", false, true);
 
 	s->addWithDescription(_("WITH MY PHONE"),
-		_("SCAN THE CODE, THEN CHOOSE CONTINUE. YOUR PHONE BECOMES A KEYBOARD FOR THIS SCREEN."),
+		// One line (D-UI-023): the sentence this replaced measured 929 of
+		// 780 px at 1280x800 and 701 of 620 at 640x480 (#308 F-ES-14).
+		_("YOUR PHONE BECOMES THE KEYBOARD. SCAN THE CODE, THEN CONTINUE."),
 		nullptr, [window, backend, remoteName, s, ready]
 		{
 			cloudOAuthShowSignIn(window, backend, remoteName, s, true, ready);
