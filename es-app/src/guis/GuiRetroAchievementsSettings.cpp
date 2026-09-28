@@ -4,6 +4,8 @@
 #include "SystemConf.h"
 #include "ApiSystem.h"
 #include "RetroAchievements.h"
+#include "CheevosRetry.h"
+#include "NetworkThread.h"
 #include "utils/Platform.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
@@ -688,7 +690,28 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 		std::string token = SystemConf::getInstance()->get("global.retroachievements.token");
 
 		bool accountChanged = !retroachievementsEnabled || username != newUsername || password != newPassword;
-		if (newState && (accountChanged || token.empty()))
+		// On the interface thread only for a change the player made and an
+		// address to send it from (#308 1-raoffline claude F-RA-19): nothing
+		// changed and no token was a sign-in at every close while offline,
+		// the screen waiting on the request -- its connect timeout on a
+		// hotspot with a route and no DNS (#242). That case is the token
+		// check's, on the watchers' thread, which retries when the network
+		// comes up; CheevosRetry::saveSignIn decides.
+		const CheevosRetry::SaveSignIn signIn = CheevosRetry::saveSignIn(newState, accountChanged, token.empty(),
+			!Utils::Platform::queryIPAddress().empty());
+		if (signIn == CheevosRetry::SaveSignIn::InBackground)
+			LOG(LogInfo) << "retroachievements: no token; the token check is asked to sign in, off the interface thread";
+		else if (signIn == CheevosRetry::SaveSignIn::Offline)
+		{
+			// The account changed and there is nowhere to send it from: the
+			// old token is not this account's, and the answer is the one a
+			// request would have come back with, without the wait.
+			SystemConf::getInstance()->set("global.retroachievements.token", "");
+			window->pushGui(new GuiMsgBox(window,
+				_("COULDN'T REACH RETROACHIEVEMENTS TO SIGN YOU IN.\n\nRETROACHIEVEMENTS STAYS ON. IT'LL SIGN IN WHEN YOU'RE ONLINE."),
+				_("OK")));
+		}
+		else if (signIn == CheevosRetry::SaveSignIn::Now)
 		{
 			std::string tokenOrError;
 			bool refused = false;
@@ -717,5 +740,11 @@ GuiRetroAchievementsSettings::GuiRetroAchievementsSettings(Window* window) : Gui
 		if (SystemConf::getInstance()->setBool("global.retroachievements", newState))
 			if (!ThreadedHasher::isRunning() && newState)
 				ThreadedHasher::start(window, ThreadedHasher::HASH_CHEEVOS_MD5, false, true);
+
+		// After the switch is written: the check reads it, and one that ran
+		// before a switch just turned on would find it off and do nothing
+		// -- nor retry when the network comes up.
+		if (signIn == CheevosRetry::SaveSignIn::InBackground || signIn == CheevosRetry::SaveSignIn::Offline)
+			NetworkThread::checkCheevosTokenSoon();
 	});
 }

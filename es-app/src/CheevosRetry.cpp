@@ -15,4 +15,17 @@ namespace CheevosRetry
 
 		return IntervalMs;
 	}
+
+	// The save used to sign in whenever the switch was on and the token
+	// empty or the account changed: every close while offline was a
+	// request on the interface thread. Only a change the player made is
+	// answered here, and only when there is an address to send it from.
+	SaveSignIn saveSignIn(bool on, bool accountChanged, bool tokenEmpty, bool hasAddress)
+	{
+		if (!on)
+			return SaveSignIn::None;
+		if (accountChanged)
+			return hasAddress ? SaveSignIn::Now : SaveSignIn::Offline;
+		return tokenEmpty ? SaveSignIn::InBackground : SaveSignIn::None;
+	}
 }

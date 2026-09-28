@@ -16,11 +16,20 @@
 #include "SystemData.h"
 #include "ThreadedHasher.h"
 
+static CheckCheevosTokenComponent* sCheevosToken = nullptr;
+
+void NetworkThread::checkCheevosTokenSoon()
+{
+	if (sCheevosToken != nullptr)
+		WatchersManager::getInstance()->ResetComponent(sCheevosToken);
+}
+
 NetworkThread::NetworkThread(Window* window) : mWindow(window)
 {
 	WatchersManager* mgr = WatchersManager::getInstance();
 
 	mgr->RegisterComponent(&mCheckCheevosTokenComponent);
+	sCheevosToken = &mCheckCheevosTokenComponent;
 	mgr->RegisterComponent(new BatteryLevelWatcher());
 	mNetworkStateWatcher = new NetworkStateWatcher();
 	mgr->RegisterComponent(mNetworkStateWatcher);

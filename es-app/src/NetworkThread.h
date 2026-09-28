@@ -85,6 +85,13 @@ class NetworkThread : public IJoystickChangedEvent, public IWatcherNotify
 public:
 	NetworkThread(Window * window);
 
+	// Ask the RetroAchievements token check to run now, on the watchers'
+	// thread, rather than at its next scheduled time: the settings page's
+	// close, which used to sign in on the interface thread itself (#308
+	// 1-raoffline claude F-RA-19). Called on the interface thread, as the
+	// link-up's own reset is. Nothing before the thread exists.
+	static void checkCheevosTokenSoon();
+
 public:
 	void onJoystickChanged() override;
 

@@ -86,3 +86,27 @@ TEST_CASE("the window, walked the way the component walks it")
 	CHECK(nextDelayMs(true, true, 2) == IntervalMs);
 	CHECK(nextDelayMs(false, true, 0) == ScheduledMs);
 }
+
+// Closing RETROACHIEVEMENTS SETTINGS (#308 1-raoffline claude F-RA-19). With
+// the switch left on and no token -- every close while offline, since the
+// fork keeps the switch on when a sign-in fails (#175) -- the save signed in
+// on the interface thread, and the screen waited for the request: on a
+// hotspot with a route and no DNS (#242), its connect timeout at every close.
+// Nothing changed is the token check's to do, on its own thread; a change
+// with no address answers at once.
+TEST_CASE("closing the settings page signs in on the interface thread only for a change it can send")
+{
+	// Nothing changed, no token: the token check runs it, offline or not.
+	CHECK(saveSignIn(true, false, true, false) == SaveSignIn::InBackground);
+	CHECK(saveSignIn(true, false, true, true) == SaveSignIn::InBackground);   // the route-and-no-DNS case
+	// The player changed something: the answer is theirs to see.
+	CHECK(saveSignIn(true, true, true, true) == SaveSignIn::Now);
+	CHECK(saveSignIn(true, true, false, true) == SaveSignIn::Now);
+	// ... and with no address to send from, it is given without a request.
+	CHECK(saveSignIn(true, true, true, false) == SaveSignIn::Offline);
+	// A token and nothing changed, or the switch off: nothing to do here.
+	CHECK(saveSignIn(true, false, false, true) == SaveSignIn::None);
+	CHECK(saveSignIn(true, false, false, false) == SaveSignIn::None);
+	CHECK(saveSignIn(false, true, true, true) == SaveSignIn::None);
+	CHECK(saveSignIn(false, false, true, false) == SaveSignIn::None);
+}
