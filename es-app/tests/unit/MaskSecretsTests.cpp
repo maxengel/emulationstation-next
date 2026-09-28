@@ -155,3 +155,24 @@ TEST_CASE("a command with no secret is returned byte for byte")
 	for (const char* line : plain)
 		CHECK(maskSecrets(line) == line);
 }
+
+TEST_CASE("a value is the whole shell word, however it is quoted (#308 8b gpt F-ES-09)")
+{
+	// The mask stopped at the first closing quote, or at a quote in a bare
+	// word, and copied the rest: `--password 'front'back` passes the shell
+	// the password frontback, and the log kept "back". A shell word runs
+	// until unquoted whitespace (or & ; |), across every quoted and bare
+	// piece and every backslash-escaped character in it.
+	CHECK(maskSecrets("tool --password 'front'back") == "tool --password <redacted>");
+	CHECK(maskSecrets("tool --password front'back' more") == "tool --password <redacted> more");
+	CHECK(maskSecrets("tool --password front\\ back more") == "tool --password <redacted> more");
+	CHECK(maskSecrets("tool --password \"front\"'mid'back; next") == "tool --password <redacted>; next");
+	CHECK(maskSecrets("pass=\"a\"'b'c next=1") == "pass=<redacted> next=1");
+	CHECK(maskSecrets("wifictl connect 'Home Net' 'pa'ss'word' 'US'") == "wifictl connect 'Home Net' <redacted> 'US'");
+
+	// Inside a quoted string the value ends where the string does, as it
+	// always did: a URL in double quotes, a command in single quotes.
+	CHECK(maskSecrets("curl \"https://h/dorequest.php?r=login&u=bob&p=hunter2\" -o out")
+		== "curl \"https://h/dorequest.php?r=login&u=bob&p=<redacted>\" -o out");
+	CHECK(maskSecrets("sh -c 'tool --password hunter2 && x'") == "sh -c 'tool --password <redacted> && x'");
+}

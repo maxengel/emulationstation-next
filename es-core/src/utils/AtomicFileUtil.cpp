@@ -1,5 +1,6 @@
 #include "utils/AtomicFileUtil.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +11,7 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -34,12 +36,51 @@ namespace Utils
 			::fsync(fd);
 			::close(fd);
 		}
+
+		// A name beside `path` that no other call -- in this process or any
+		// other -- is using: `path`.tmp.<pid>.<n>, created O_EXCL so a name
+		// left behind by a process that died and whose pid came round again
+		// is stepped over rather than truncated. Every writer used to share
+		// `path`.tmp under O_TRUNC (PL-063), and so did the shell: set_setting
+		// writes system.cfg.tmp with awk and renames it. Two saves at once
+		// truncated each other's temporary; the first renamed the shared file
+		// into place -- empty or half written -- and the second's rename found
+		// the name gone and reported a save that had not happened. The fd is
+		// returned open for writing, -1 on failure.
+		static int createTemporary(const std::string& path, std::string& tmp, int mode)
+		{
+			static std::atomic<unsigned long> counter(0);
+			const std::string stem = path + ".tmp." + std::to_string((long long) ::getpid()) + ".";
+			for (int attempt = 0; attempt < 100; attempt++)
+			{
+				tmp = stem + std::to_string(counter++);
+				int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, (mode_t) mode);
+				if (fd >= 0)
+					return fd;
+				if (errno != EEXIST)
+					return -1;
+			}
+			return -1;
+		}
 #endif
 
-		bool writeText(const std::string& path, const std::string& text)
+		int modeOf(const std::string& path, int fallback)
 		{
-			const std::string tmp = path + ".tmp";
 #if defined(_WIN32)
+			(void) path;
+			return fallback;
+#else
+			struct stat st;
+			if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+				return fallback;
+			return (int) (st.st_mode & 07777);
+#endif
+		}
+
+		bool writeText(const std::string& path, const std::string& text, int mode)
+		{
+#if defined(_WIN32)
+			const std::string tmp = path + ".tmp";
 			{
 				std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
 				if (!out)
@@ -60,11 +101,50 @@ namespace Utils
 			}
 			return true;
 #else
-			// 0644 before umask, as the shell's redirections make it; the
-			// rename then carries the mode over to the live name.
-			int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+			// The rename puts the temporary's mode and owner on the live name,
+			// so a file being replaced gives the temporary its own first
+			// (#308 F-ES-08): system.cfg and es_settings.cfg carry the Wi-Fi
+			// key and the account passwords, and a file somebody had made 0600
+			// came back 0644 from the next save. A new file is made 0644,
+			// before umask, as the shell's redirections make one -- unless the
+			// caller names the mode, which a record of a private file does.
+			struct stat existing;
+			const bool replacing = ::stat(path.c_str(), &existing) == 0 && S_ISREG(existing.st_mode);
+
+			std::string tmp;
+			int fd = createTemporary(path, tmp, mode >= 0 ? 0600 : replacing ? 0600 : 0644);
 			if (fd < 0)
 				return false;
+			if (mode >= 0)
+			{
+				if (::fchmod(fd, (mode_t) (mode & 07777)) != 0)
+				{
+					::close(fd);
+					::unlink(tmp.c_str());
+					return false;
+				}
+			}
+			else if (replacing)
+			{
+				// The owner only where it differs and only as root, which is
+				// how ROCKNIX runs the interface; best effort, since a caller
+				// that cannot give a file away still wrote what it meant to.
+				// The mode is not best effort: a file that would come out less
+				// private than it was is not written.
+				if ((existing.st_uid != ::geteuid() || existing.st_gid != ::getegid()) && ::geteuid() == 0)
+				{
+					if (::fchown(fd, existing.st_uid, existing.st_gid) != 0)
+					{
+						// kept as it is: root that cannot chown is a filesystem without owners
+					}
+				}
+				if (::fchmod(fd, existing.st_mode & 07777) != 0)
+				{
+					::close(fd);
+					::unlink(tmp.c_str());
+					return false;
+				}
+			}
 
 			const char* data = text.data();
 			size_t left = text.size();
@@ -104,20 +184,66 @@ namespace Utils
 #endif
 		}
 
+		// Read whole, or say it was not (PL-065). This used to say ok once the
+		// stream had opened, whatever the read then did: an I/O error part way
+		// through a failing card returned the prefix as the whole file, and
+		// SystemConf parsed it and recorded it as the last known good. Now ok
+		// means every read succeeded to the end, and for a regular file that
+		// the end was no shorter than the size it had when it was opened -- a
+		// file cut under the reader is not the file. On any failure the text
+		// is "", as for a file that would not open.
 		std::string readText(const std::string& path, bool* ok)
 		{
+			if (ok != nullptr)
+				*ok = false;
+#if defined(_WIN32)
 			std::ifstream in(path, std::ios::binary);
 			if (!in)
-			{
-				if (ok != nullptr)
-					*ok = false;
 				return "";
-			}
 			std::ostringstream ss;
 			ss << in.rdbuf();
+			if (in.bad() || ss.fail())
+				return "";
 			if (ok != nullptr)
 				*ok = true;
 			return ss.str();
+#else
+			int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+			if (fd < 0)
+				return "";
+			struct stat st;
+			if (::fstat(fd, &st) != 0)
+			{
+				::close(fd);
+				return "";
+			}
+
+			std::string text;
+			if (S_ISREG(st.st_mode) && st.st_size > 0)
+				text.reserve((size_t) st.st_size);
+			char buffer[65536];
+			for (;;)
+			{
+				const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+				if (n < 0)
+				{
+					if (errno == EINTR)
+						continue;
+					::close(fd);   // EIO part way, EISDIR on a directory: not a read
+					return "";
+				}
+				if (n == 0)
+					break;
+				text.append(buffer, (size_t) n);
+			}
+			::close(fd);
+
+			if (S_ISREG(st.st_mode) && (off_t) text.size() < st.st_size)
+				return "";
+			if (ok != nullptr)
+				*ok = true;
+			return text;
+#endif
 		}
 
 		bool copy(const std::string& src, const std::string& dst)
@@ -126,7 +252,143 @@ namespace Utils
 			const std::string text = readText(src, &ok);
 			if (!ok)
 				return false;
-			return writeText(dst, text);
+			return writeText(dst, text, modeOf(src, 0644));
+		}
+
+		bool isUsableKeyValues(const std::string& text)
+		{
+			if (text.empty() || text.find('\0') != std::string::npos)
+				return false;
+			std::istringstream in(text);
+			std::string line;
+			while (std::getline(in, line))
+			{
+				auto idx = line.find('=');
+				if (idx != std::string::npos && idx > 0 && line[0] != '#' && line[0] != ';')
+					return true;
+			}
+			return false;
+		}
+
+		// Whole, as every writer of these files leaves one: each line ends in
+		// a line end -- ours, the shell's awk and sed, echo >>. A text that
+		// stops part way through a line was cut. (A cut exactly at a line end
+		// cannot be told from a shorter file; nothing here pretends to.)
+		static bool isComplete(const std::string& text)
+		{
+			return !text.empty() && text.back() == '\n';
+		}
+
+		LoadedConfig chooseConfig(const std::string& path)
+		{
+			// PL-064. The start used to delete `path`.tmp unread and take the
+			// live file whenever one key=value line survived in it. The writer
+			// before #102 wrote the temporary whole, then truncated the live
+			// file and copied the temporary in: killed in the copy, it left the
+			// live file cut short beside a whole temporary, on a device that
+			// may never have run a build that keeps the record. So the
+			// temporary is read first, and wins when it is whole and the live
+			// file is gone, unusable, or a cut prefix of it; and "usable" for
+			// the record means complete as well.
+			LoadedConfig out;
+			bool liveOk = false, tmpOk = false, backupOk = false;
+			const std::string live = readText(path, &liveOk);
+			const std::string tmp = readText(path + ".tmp", &tmpOk);
+			const bool tmpWhole = tmpOk && isUsableKeyValues(tmp) && isComplete(tmp);
+
+			// The copy stopped part way: what is there is the start of the
+			// temporary, short of its end.
+			const bool liveCut = liveOk && tmpWhole && !isComplete(live)
+				&& live.size() < tmp.size() && tmp.compare(0, live.size(), live) == 0;
+
+			if (liveOk && isUsableKeyValues(live) && !liveCut)
+			{
+				// A temporary beside a whole file is a save that never reached
+				// its rename, or the shell's own write in flight; neither is the
+				// file. A live file that is not whole is still read -- there is
+				// nothing better -- but it does not become the record.
+				out.source = LoadedConfig::Source::Live;
+				out.text = live;
+				out.record = isComplete(live);
+				return out;
+			}
+			if (liveCut)
+			{
+				out.source = LoadedConfig::Source::Temporary;
+				out.text = tmp;
+				out.record = true;
+				return out;
+			}
+
+			const std::string backup = readText(path + ".backup", &backupOk);
+			if (backupOk && isUsableKeyValues(backup))
+			{
+				out.source = LoadedConfig::Source::Backup;
+				out.text = backup;
+				return out;
+			}
+			if (tmpWhole)
+			{
+				out.source = LoadedConfig::Source::Temporary;
+				out.text = tmp;
+				out.record = true;
+				return out;
+			}
+			if (liveOk)
+			{
+				out.source = LoadedConfig::Source::Damaged;
+				out.text = live;
+			}
+			return out;
+		}
+
+		bool isFlockHeld(const std::string& path)
+		{
+#if defined(_WIN32)
+			(void) path;
+			return false;
+#else
+			int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+			if (fd < 0)
+				return errno != ENOENT;
+			int r;
+			do
+				r = ::flock(fd, LOCK_EX | LOCK_NB);
+			while (r != 0 && errno == EINTR);
+			const bool held = r != 0;   // EWOULDBLOCK: somebody has it; anything else: cannot tell
+			::close(fd);                // and the lock, if this took it, with it
+			return held;
+#endif
+		}
+
+		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			const std::function<std::string(const std::string& current)>& merge, std::string* written)
+		{
+			// Not without the lock (PL-024). This used to log and go ahead once
+			// the budget ran out -- "the player's change dropped on the floor
+			// is the worse outcome" -- and the change was dropped anyway,
+			// under the other writer's rename, or it dropped theirs. Refused,
+			// the change is not lost: the caller keeps it and writes it at the
+			// next save, which reads the other writer's file first.
+			PidLock lock(lockPath);
+			if (!lock.acquire(timeoutMs))
+				return LockedSave::LockBusy;
+
+			bool opened = false;
+			const std::string current = readText(path, &opened);
+#if !defined(_WIN32)
+			if (!opened)
+				return LockedSave::Unreadable;
+#endif
+			// (On Windows a file not there yet is merged onto nothing and made,
+			// as SystemConf always did there.)
+
+			const std::string out = merge(current);
+			if (!writeText(path, out))
+				return LockedSave::WriteFailed;
+			if (written != nullptr)
+				*written = out;
+			return LockedSave::Written;
 		}
 
 		PidLock::PidLock(const std::string& path) : mPath(path), mHeld(false)
@@ -138,6 +400,48 @@ namespace Utils
 			release();
 		}
 
+#if !defined(_WIN32)
+		// The first line of a lock file, without its line end: the holder's
+		// pid as both sides write it ("$$\n" from the shell).
+		static std::string lockHolder(const std::string& text)
+		{
+			std::string holder = text.substr(0, text.find('\n'));
+			while (!holder.empty() && (holder.back() == '\r' || holder.back() == ' '))
+				holder.pop_back();
+			return holder;
+		}
+
+		// Remove the lock at `path` only if it still names `holder`, with no
+		// other remover between that look and the unlink (PL-041). Every
+		// remover of a stale lock -- this process on any thread, and any other
+		// process that takes the same guard -- takes an flock on `path`.reap
+		// for the few instructions this lasts. Under it nothing else can
+		// change what `path` names: a stale holder is gone and cannot release
+		// it, a live holder only ever releases a lock naming itself, and every
+		// other remover waits here. So the re-read and the unlink are one step
+		// as far as the lock's users are concerned. The guard is an flock, so
+		// a remover that dies holding it frees it with its last descriptor --
+		// there is no stale guard to clear. Without a guard file (the
+		// directory will not take one) this is the re-read and remove it was.
+		static void removeIfStill(const std::string& path, const std::string& holder)
+		{
+			const std::string guard = path + ".reap";
+			int gfd = ::open(guard.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+			if (gfd >= 0)
+			{
+				while (::flock(gfd, LOCK_EX) != 0 && errno == EINTR)
+				{
+				}
+			}
+			bool again = false;
+			const std::string current = readText(path, &again);
+			if (again && lockHolder(current) == holder)
+				::unlink(path.c_str());
+			if (gfd >= 0)
+				::close(gfd);   // and the flock with it
+		}
+#endif
+
 		bool PidLock::acquire(int timeoutMs)
 		{
 #if defined(_WIN32)
@@ -148,32 +452,123 @@ namespace Utils
 				return true;
 
 			const auto started = std::chrono::steady_clock::now();
-			const std::string mine = std::to_string((long long) ::getpid()) + "\n";
+			const std::string mine = std::to_string((long long) ::getpid());
+
+			// The lock is made whole before anybody can see it (PL-041): the
+			// pid goes into a file of this call's own beside it, and that file
+			// is hard-linked to the lock's name, which fails with EEXIST exactly
+			// as the O_EXCL create did. The lock used to be created empty and
+			// the pid written after, with the write's result thrown away, so a
+			// waiter reading in between saw an empty lock -- which both sides
+			// take for nobody's -- and a failed write left one for good.
+			static std::atomic<unsigned long> counter(0);
+			const std::string staging = mPath + ".new." + mine + "." + std::to_string(counter++);
+			bool linkable = true;
+			{
+				int fd = ::open(staging.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+				if (fd < 0)
+					return false;   // the directory is missing or not writable: nothing to hold
+				const std::string line = mine + "\n";
+				ssize_t n;
+				do
+					n = ::write(fd, line.data(), line.size());
+				while (n < 0 && errno == EINTR);
+				const bool written = n == (ssize_t) line.size();
+				if (::close(fd) != 0 || !written)
+				{
+					::unlink(staging.c_str());
+					return false;
+				}
+			}
+
+			// The clock is read on every pass, whichever way the pass went
+			// (#308 F-ES-07): the budget used to be checked only after a live
+			// holder was found, so a lock that could never be read or never
+			// be removed -- a directory where the lock goes -- kept the
+			// interface thread in this loop for good.
+			auto expired = [&]() {
+				const long elapsed = (long) std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - started).count();
+				if (elapsed < timeoutMs)
+					return false;
+				::unlink(staging.c_str());
+				return true;
+			};
+
 			for (;;)
 			{
-				int fd = ::open(mPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
-				if (fd >= 0)
+				int made = -1;
+				if (linkable)
 				{
-					// The pid is what tells the next waiter whether to wait
-					// or to clear a lock its owner never released.
-					ssize_t n = ::write(fd, mine.data(), mine.size());
-					::close(fd);
-					(void) n;
+					made = ::link(staging.c_str(), mPath.c_str());
+					if (made != 0 && errno != EEXIST)
+					{
+						// A filesystem with no hard links (EPERM, ENOTSUP): the
+						// create the shell makes, then the pid, and the write's
+						// result checked this time.
+						if (errno == EPERM || errno == ENOTSUP || errno == EOPNOTSUPP || errno == EXDEV || errno == EMLINK)
+							linkable = false;
+						else
+						{
+							::unlink(staging.c_str());
+							return false;
+						}
+					}
+				}
+				if (!linkable)
+				{
+					int fd = ::open(mPath.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+					if (fd >= 0)
+					{
+						const std::string line = mine + "\n";
+						const bool written = ::write(fd, line.data(), line.size()) == (ssize_t) line.size();
+						if (::close(fd) != 0 || !written)
+						{
+							::unlink(mPath.c_str());
+							::unlink(staging.c_str());
+							return false;
+						}
+						made = 0;
+					}
+					else if (errno != EEXIST)
+					{
+						::unlink(staging.c_str());
+						return false;
+					}
+				}
+				if (made == 0)
+				{
+					::unlink(staging.c_str());
 					mHeld = true;
 					return true;
 				}
-				// Not "already there": the directory is missing, or the path
-				// is not writable. Nothing to wait for and nothing to hold.
-				if (errno != EEXIST)
-					return false;
 
-				// Held -- or was. Read who by, and ask the kernel.
+				// Held -- or was. Something that is not a file where the lock
+				// goes is nobody's lock and never will be: nothing here or in
+				// the shell removes a directory, so there is nothing to wait
+				// for.
+				struct stat st;
+				if (::lstat(mPath.c_str(), &st) == 0 && !S_ISREG(st.st_mode))
+				{
+					::unlink(staging.c_str());
+					return false;
+				}
+
+				// Read who by, and ask the kernel.
 				bool ok = false;
-				std::string holder = readText(mPath, &ok);
+				const std::string holder = lockHolder(readText(mPath, &ok));
 				if (!ok)
-					continue;   // released between the create and the read: try again at once
-				while (!holder.empty() && (holder.back() == '\n' || holder.back() == '\r' || holder.back() == ' '))
-					holder.pop_back();
+				{
+					if (expired())
+						return false;
+					// Released between the create and the read: try again at
+					// once. Anything else that stops the read -- a lock this
+					// process may not read -- is tried again after a pause,
+					// until the budget is spent.
+					if (::access(mPath.c_str(), F_OK) == 0)
+						std::this_thread::sleep_for(std::chrono::milliseconds(50));
+					continue;
+				}
 
 				bool numeric = !holder.empty();
 				for (char c : holder)
@@ -184,10 +579,11 @@ namespace Utils
 				if (!numeric)
 				{
 					// Empty, or not a pid: nobody can be holding it. An
-					// empty file is also what a holder's own create looks
+					// empty file is also what the shell's own create looks
 					// like between its open and its write, for a few
 					// microseconds -- so give it a moment before deciding,
-					// and re-read before removing (below).
+					// and re-read before removing (below). This process's
+					// own locks are never empty (above).
 					std::this_thread::sleep_for(std::chrono::milliseconds(20));
 					stale = true;
 				}
@@ -202,22 +598,26 @@ namespace Utils
 
 				if (stale)
 				{
-					// Only if it still says what was read above: between
-					// that read and this remove the holder may have released
-					// it and another process taken it, and an unconditional
-					// remove would steal the newcomer's lock.
-					bool again = false;
-					std::string current = readText(mPath, &again);
-					while (!current.empty() && (current.back() == '\n' || current.back() == '\r' || current.back() == ' '))
-						current.pop_back();
-					if (again && current == holder)
-						::unlink(mPath.c_str());
-					continue;   // retry at once: there is nothing to wait for
+					// Only if it still says what was read above, and with no
+					// other waiter between that look and the remove: two
+					// waiters that both judged one dead holder's lock stale
+					// used to be able to remove each other's new one -- the
+					// first removed it and took it, and the second's remove,
+					// two steps after its re-read, took the first's new lock
+					// with it (PL-041).
+					removeIfStill(mPath, holder);
+					if (expired())
+						return false;
+					// Retry at once, there is nothing to wait for -- unless the
+					// remove did not take (a directory that will not let go of
+					// the name), which a pause keeps from spinning.
+					bool still = false;
+					if (lockHolder(readText(mPath, &still)) == holder && still)
+						std::this_thread::sleep_for(std::chrono::milliseconds(50));
+					continue;
 				}
 
-				const long elapsed = (long) std::chrono::duration_cast<std::chrono::milliseconds>(
-					std::chrono::steady_clock::now() - started).count();
-				if (elapsed >= timeoutMs)
+				if (expired())
 					return false;
 				std::this_thread::sleep_for(std::chrono::milliseconds(50));
 			}
@@ -231,13 +631,25 @@ namespace Utils
 			mHeld = false;
 #if !defined(_WIN32)
 			// Only a lock this process still holds: another process may own
-			// the file by now if this one's was removed as stale.
-			bool ok = false;
-			std::string holder = readText(mPath, &ok);
-			while (!holder.empty() && (holder.back() == '\n' || holder.back() == '\r' || holder.back() == ' '))
-				holder.pop_back();
-			if (ok && holder == std::to_string((long long) ::getpid()))
-				::unlink(mPath.c_str());
+			// the file by now if this one's was removed as stale. A lock that
+			// is not there at all is looked for again for a moment: a waiter
+			// that moves a lock aside to judge it (the shell's own reaper may)
+			// puts a live holder's back within microseconds, and a release
+			// that gave up in that instant would leave a lock naming this
+			// process -- alive, and never going to release it.
+			const std::string mine = std::to_string((long long) ::getpid());
+			for (int attempt = 0; attempt < 20; attempt++)
+			{
+				bool ok = false;
+				const std::string holder = lockHolder(readText(mPath, &ok));
+				if (ok)
+				{
+					if (holder == mine)
+						::unlink(mPath.c_str());
+					return;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
 #endif
 		}
 	}

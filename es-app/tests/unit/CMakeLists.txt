@@ -27,7 +27,10 @@ get_filename_component(ES_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUTE)
 # (fork #199), the save state manager's job queue (fork #205 / #206: one job
 # at a time, a file pending deletion hides its tile, a copy hides nothing) -- plus the
 # log's header-only rules (es-core/src/LogPolicy.h,
-# fork #178). Anything that needs a window, a font or a file does not belong
+# fork #178), and the header-only option swap the save state manager makes
+# in a launch command (es-core/src/utils/CommandLineUtil.h, #308 F-CS-33), and
+# where a tabbed text's columns start (es-core/src/resources/TabStops.h,
+# header-only, #308 F-ES-11). Anything that needs a window, a font or a file does not belong
 # in this binary -- see README.md.
 add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/CloudTextTests.cpp
@@ -42,6 +45,8 @@ add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/SaveStateJobQueueTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/CaptureRotationTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/DisplayAspectTextTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/CommandLineTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/TabStopsTests.cpp
 	${ES_ROOT}/es-app/src/CloudText.cpp
 	${ES_ROOT}/es-app/src/CheevosRetry.cpp
 	${ES_ROOT}/es-app/src/OfflineAchievementsText.cpp
@@ -73,6 +78,28 @@ target_include_directories(es-unit-tests PRIVATE
 )
 
 set_target_properties(es-unit-tests PROPERTIES
+	CXX_STANDARD 17
+	CXX_STANDARD_REQUIRED ON
+	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
+# The settings files' writer, reader and lock (audit #307: PL-024, PL-041,
+# PL-063, PL-064, PL-065; #308 F-ES-07, F-ES-08), against real files: a
+# binary of its own, so es-unit-tests stays the one that touches nothing.
+# es-file-tests makes a scratch directory under $TMPDIR (or /tmp), forks
+# the processes that play the other writer or the other waiter, and removes
+# the directory again. POSIX only, like AtomicFileUtil's own guarantees.
+add_executable(es-file-tests
+	${CMAKE_CURRENT_SOURCE_DIR}/AtomicFileTests.cpp
+	${ES_ROOT}/es-core/src/utils/AtomicFileUtil.cpp
+)
+target_include_directories(es-file-tests PRIVATE
+	${ES_ROOT}/es-core/src
+	${ES_ROOT}/external
+)
+find_package(Threads REQUIRED)
+target_link_libraries(es-file-tests PRIVATE Threads::Threads)
+set_target_properties(es-file-tests PROPERTIES
 	CXX_STANDARD 17
 	CXX_STANDARD_REQUIRED ON
 	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}

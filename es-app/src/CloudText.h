@@ -143,6 +143,33 @@ namespace CloudText
 	// gets the single candidate it has today.
 	std::vector<std::string> outcomeCandidates(const std::string& outcome);
 
+	// The sentences the cloud scripts print as ">>> why <SENTENCE>" -- and
+	// the rc-keyed ones their why_for prints -- each paired with its
+	// translation in the interface's language (#308 F-CS-31). The scripts
+	// speak English whatever the language; the card put their sentence
+	// beside a translated outcome word. localizedWhy returns the pair's
+	// translation, or the sentence as it came for one this build does not
+	// list (a script newer than the interface): never worse than before.
+	// The stamps keep the English: their readers translate.
+	std::vector<std::pair<std::string, std::string>> whySentences();
+	std::string localizedWhy(const std::string& why);
+	bool isKnownWhy(const std::string& why);
+
+	// One line of a cloud script's output as the card reads it: ANSI escape
+	// sequences and C0 controls and DEL dropped, every other byte kept --
+	// UTF-8 included, since a folder name in the player's language arrives
+	// in a ">>> offer" line and must reach the offer whole -- then trimmed.
+	std::string cleanLine(const std::string& raw);
+
+	// The sync card's action line when a run did not complete (D-CLOUD-077),
+	// longest first: what is in place and how to recover, then the recovery
+	// alone. `recoveries` are the recovery sentence's own forms, longest
+	// first. The in-place clause is the part that goes first when the line
+	// is short of room (es-player-text.md) -- unless keepInPlace, when every
+	// candidate carries it and the in-place clause alone is the last.
+	std::vector<std::string> actionCandidates(const std::string& inPlace,
+		const std::vector<std::string>& recoveries, bool keepInPlace);
+
 	// The ">>> " lines are the scripts talking to the interface, not to the
 	// player. Classification only: what the line is and what it carries.
 	// Acting on it -- the pid to signal, the card's waiting text, the why

@@ -1,4 +1,5 @@
 #include "resources/Font.h"
+#include "resources/TabStops.h"
 
 #include "renderers/Renderer.h"
 #include "utils/FileSystemUtil.h"
@@ -831,24 +832,27 @@ Vector2f Font::sizeWrappedText(const std::string& text, float xLen, float lineSp
 
 std::map<int, float> Font::getTabStops(const std::string& text, float lineSpacing)
 {
-	std::map<int, float> stops;
 	if (text.find('\t') == std::string::npos)
-		return stops;
+		return std::map<int, float>();
 
-	// Each line is scanned on its own, from its own start. The scan this
-	// replaces walked the whole text once per line, so every column's stop
-	// was the FIRST line's text before its tab: a longer label on a later
-	// line ("Achievements (hardcore): ", "Succes (mode difficile): ") ran
-	// into the value beside it.
+	// Each line is measured on its own, piece by piece between its tabs:
+	// the widths of what sits in each column, from which TabStops works the
+	// stops out column by column (#308 F-ES-11). The scan before this
+	// measured the run of text before each tab from the line's own start --
+	// right for one tab, and for two a stop that fell inside another line's
+	// column. The one before that walked the whole text once per line, so
+	// every stop was the FIRST line's ("Achievements (hardcore): ", "Succes
+	// (mode difficile): " ran into the value beside it).
 	const float lineHeight = getHeight(lineSpacing);
 
+	std::vector<std::vector<float>> columns;
 	for (auto line : Utils::String::split(text, '\n', true))
 	{
 		if (line.find('\t') == std::string::npos)
 			continue;
 
-		int tabIndex = 0;
-		float xpos = 0.0f;
+		std::vector<float> pieces;
+		float width = 0.0f;
 
 		size_t pos = 0;
 		while (pos < line.length())
@@ -857,30 +861,27 @@ std::map<int, float> Font::getTabStops(const std::string& text, float lineSpacin
 			if (character == 0 || character == '\r')
 				continue;
 
-			if (substituableChars.find(character) != substituableChars.cend())
+			if (character == '\t')
 			{
-				xpos += lineHeight;
+				pieces.push_back(width);   // the piece before this tab is a column
+				width = 0.0f;
 				continue;
 			}
 
-			if (character == '\t')
+			if (substituableChars.find(character) != substituableChars.cend())
 			{
-				auto it = stops.find(tabIndex);
-				if (it != stops.cend())
-					it->second = Math::max(it->second, xpos);
-				else
-					stops[tabIndex] = xpos;
-
-				tabIndex++;
+				width += lineHeight;
+				continue;
 			}
 
 			Glyph* glyph = getGlyph(character);
 			if (glyph != NULL)
-				xpos += glyph->advance.x();
+				width += glyph->advance.x();
 		}
+		columns.push_back(pieces);   // what follows the last tab is no column's
 	}
 
-	return stops;
+	return TabStops::fromColumns(columns, TAB_STOP_GAP);
 }
 
 Vector2f Font::sizeTabbedText(const std::string& text, float lineSpacing)

@@ -14,7 +14,7 @@
 #include "utils/StringUtil.h"
 
 GuiWifi::GuiWifi(Window* window, const std::string& title, const std::function<void()>& onJoined)
-	: GuiComponent(window), mMenu(window, title.c_str()), mTitle(title), mOnJoined(onJoined), mWaitingLoad(false)
+	: GuiComponent(window), mMenu(window, title.c_str()), mTitle(title), mOnJoined(onJoined), mSavedKnown(true), mWaitingLoad(false)
 {
 	addChild(&mMenu);
 
@@ -40,6 +40,11 @@ GuiWifi::GuiWifi(Window* window, const std::string& title, const std::function<v
 void GuiWifi::load(const std::vector<WifiText::PickerRow>& rows)
 {
 	mMenu.clear();
+
+	// A list whose SAVED marks could not be read says so, once, under the
+	// title (#308 F-WF-03): the rows are then neither saved nor unsaved, and
+	// a press on one asks before it acts.
+	mMenu.setSubTitle(mSavedKnown ? "" : _("COULDN'T CHECK WHICH NETWORKS ARE SAVED."));
 
 	if (rows.empty())
 		mMenu.addEntry(_("NO WI-FI NETWORKS FOUND"), false, [this] { onRefresh(); });
@@ -83,23 +88,39 @@ void GuiWifi::addRow(const WifiText::PickerRow& network)
 	mMenu.addRow(row);
 }
 
-// A press: the network the device is on needs nothing; a saved one joins
-// with the key NetworkManager holds; any other is asked for its key.
+// A press: the network the device is on, and a saved one, join with the
+// key NetworkManager holds -- the one it is on answers at once, or comes
+// back if it had dropped (#308 F-WF-05: this used to close on the list's
+// snapshot); any other is asked for its key; one whose profile could not be
+// asked about is asked about again first (F-WF-03/06). WifiText::pressAction
+// decides.
 void GuiWifi::onSelect(const WifiText::PickerRow& row)
 {
 	if (mWaitingLoad)
 		return;
 
-	if (row.connected)
-	{
-		delete this;
-		return;
-	}
+	act(WifiText::pressAction(row), row.name);
+}
 
-	if (row.saved)
-		join(row.name);
-	else
-		askKeyAndConnect(row.name);
+void GuiWifi::act(WifiText::PressAction action, const std::string& name)
+{
+	switch (action)
+	{
+	case WifiText::PressAction::Join:
+		join(name);
+		break;
+	case WifiText::PressAction::AskKey:
+		askKeyAndConnect(name);
+		break;
+	case WifiText::PressAction::CheckAgain:
+		// Never taken for a network with no profile: the key path rebuilds a
+		// profile of that name from what is typed.
+		mWindow->pushGui(new GuiMsgBox(mWindow,
+			_("COULDN'T CHECK WHICH NETWORKS ARE SAVED.") + std::string("\n\n") + _("CHECK AGAIN NOW?"),
+			_("YES"), [this] { onRefresh(false); },
+			_("NO"), nullptr));
+		break;
+	}
 }
 
 // INPUT MANUALLY: a hidden network's name, taken as a row would be -- a
@@ -112,20 +133,7 @@ void GuiWifi::onManualInput()
 	{
 		if (name.empty())
 			return;
-		if (name == mCurrent)
-		{
-			delete this;
-			return;
-		}
-		for (const auto& saved : mSaved)
-		{
-			if (saved.name == name)
-			{
-				join(name);
-				return;
-			}
-		}
-		askKeyAndConnect(name);
+		act(WifiText::manualAction(name, mCurrent, mSaved, mSavedKnown), name);
 	};
 
 	if (Settings::getInstance()->getBool("UseOSK"))
@@ -216,7 +224,9 @@ void GuiWifi::joined(const std::string& name)
 {
 	Window* window = mWindow;
 	auto onJoined = mOnJoined;
-	window->displayNotificationMessage(_U("\uF058  ") + _("CONNECTED TO") + " " + name);
+	// <glyph> <subject> : <outcome>, one space after the glyph, as every
+	// toast (#308 F-WF-08); CONNECTED is the row's word for the same fact.
+	window->displayNotificationMessage(_U("\uF058 ") + WifiText::joinedNotice(name, _("CONNECTED")));
 	delete this;
 	if (onJoined != nullptr)
 		onJoined();
@@ -257,10 +267,13 @@ void GuiWifi::onRefresh(bool rescan)
 	window->pushGui(new GuiLoading<Answer>(window, _("SEARCHING WI-FI NETWORKS"),
 		[rescan](IGuiLoadingHandler*)
 		{
+			// Each getter says whether it could ask at all (true for an
+			// answer, "none" included), and that is kept: "could not ask"
+			// used to be read as "none" (#308 F-WF-03/06).
 			Answer answer;
 			answer.inRange = ApiSystem::getInstance()->getWifiNetworks(rescan);
-			ApiSystem::getInstance()->getSavedWifiNetworks(answer.saved);
-			ApiSystem::getInstance()->getCurrentWifiSsid(answer.current);
+			answer.savedKnown = ApiSystem::getInstance()->getSavedWifiNetworks(answer.saved);
+			answer.currentKnown = ApiSystem::getInstance()->getCurrentWifiSsid(answer.current);
 			return answer;
 		},
 		[this, rescan](Answer answer)
@@ -271,8 +284,16 @@ void GuiWifi::onRefresh(bool rescan)
 				onRefresh(true);
 				return;
 			}
+			const std::vector<WifiText::PickerRow> rows = WifiText::pickerRows(answer.inRange, answer.saved, answer.current,
+				answer.savedKnown, answer.currentKnown);
 			mSaved = answer.saved;
-			mCurrent = answer.current;
-			load(WifiText::pickerRows(answer.inRange, answer.saved, answer.current));
+			mSavedKnown = answer.savedKnown;
+			// The network the device is on, as the rows have it: from the
+			// saved list's active profile when current could not say.
+			mCurrent.clear();
+			for (const auto& row : rows)
+				if (row.connected)
+					mCurrent = row.name;
+			load(rows);
 		}));
 }

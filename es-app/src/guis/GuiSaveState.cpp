@@ -13,7 +13,24 @@
 #include "ThreadedCloudSync.h"
 #include "Log.h"
 #include "SaveStateBookkeeper.h"
+#include "utils/AtomicFileUtil.h"
 #include <algorithm>
+
+// Every writer of the saves tree is gated by the transfer lock (D-CLOUD-053),
+// and the interface's own sync card is not the only holder of it: a
+// cloud_backup started from a shell, a restore or a content run holds
+// /var/run/cloud_sync.lock for its whole length with no card on screen
+// (#307 PL-068). So DELETE and COPY ask both -- the card first, for its
+// words, which point at the card; then the lock, whose words cannot. "" when
+// the saves tree is free; else what the refusal says.
+static std::string savesTreeBusy(const std::string& cardWords)
+{
+	if (ThreadedCloudSync::isRunning())
+		return cardWords;
+	if (Utils::AtomicFile::isFlockHeld("/var/run/cloud_sync.lock"))
+		return _("A SYNC IS ALREADY RUNNING.") + std::string("\n\n") + _("WAIT FOR IT TO FINISH, THEN TRY AGAIN.");
+	return "";
+}
 
 // 0.55 of the screen: the sheet has to hold a tile whose label is two
 // lines of the small font over a thumbnail still worth looking at. At 0.40
@@ -415,19 +432,29 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 		// named -- exit a game, the backup starts, delete a save under it.
 		// Refused, never waited for (nobody waits, #22 R6), in the words the
 		// launch gate uses for the same state.
-		if (ThreadedCloudSync::isRunning())
+		const std::string deleteBusy = _("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE DELETING A SAVE STATE - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.");
+		const std::string busy = savesTreeBusy(deleteBusy);
+		if (!busy.empty())
 		{
-			mWindow->pushGui(new GuiMsgBox(mWindow,
-				_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE DELETING A SAVE STATE - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));
+			mWindow->pushGui(new GuiMsgBox(mWindow, busy));
 			return true;
 		}
 
 		if (mGrid->size())
 		{
+			Window* window = mWindow;
 			mWindow->pushGui(new GuiMsgBox(mWindow, _("ARE YOU SURE YOU WANT TO DELETE THIS ITEM?"), _("YES"), 
-				[this]
+				[this, window, deleteBusy]
 				{
-					
+					// Asked again at YES: a sync can start while the question
+					// is up, and the deletion is queued from here (#307 PL-068).
+					const std::string busyNow = savesTreeBusy(deleteBusy);
+					if (!busyNow.empty())
+					{
+						window->pushGui(new GuiMsgBox(window, busyNow));
+						return;
+					}
+
 					const SaveStateItem& toDelete = mGrid->getSelected();
 
 					// The grid also holds the START NEW GAME / START NEW AUTO SAVE
@@ -466,10 +493,11 @@ bool GuiSaveState::input(InputConfig* config, Input input)
 		// The same gate DELETE carries (D-CLOUD-053): a copy is a writer of
 		// the saves tree, and a sync reading that tree must not meet it. It
 		// had none until #206.
-		if (ThreadedCloudSync::isRunning())
+		const std::string busy = savesTreeBusy(
+			_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE COPYING A SAVE STATE - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE."));
+		if (!busy.empty())
 		{
-			mWindow->pushGui(new GuiMsgBox(mWindow,
-				_("YOUR SAVES ARE SYNCING WITH THE CLOUD.\n\nWAIT FOR IT TO FINISH BEFORE COPYING A SAVE STATE - THE NOTIFICATION AT THE TOP SAYS WHEN IT IS DONE.")));
+			mWindow->pushGui(new GuiMsgBox(mWindow, busy));
 			return true;
 		}
 

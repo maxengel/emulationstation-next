@@ -157,7 +157,8 @@ private:
 
 	float getNewlineStartOffset(const std::string& text, const unsigned int& charStart, const float& xLen, const Alignment& alignment);
 	// One stop per tab column, in pixels from the start of a line: the widest
-	// text before that tab on any line. Empty when the text has no tab.
+	// first column, then each stop the last plus the gap plus its own column's
+	// widest text (TabStops::fromColumns). Empty when the text has no tab.
 	std::map<int, float> getTabStops(const std::string& text, float lineSpacing);
 
 	friend TextCache;

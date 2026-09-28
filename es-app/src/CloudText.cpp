@@ -1,6 +1,7 @@
 #include "CloudText.h"
 
 #include "CloudExit.h"
+#include "LocaleES.h"
 #include "utils/StringUtil.h"
 
 #include <cctype>
@@ -152,6 +153,25 @@ bool isOutcomeToken(const std::string& token)
 	return ourTokens.find(token) != ourTokens.cend();
 }
 
+// A field that is a whole number and nothing else -- an optional minus,
+// then digits -- within [lo, hi]. atoi read "garbage" as 0, and 0 is
+// success; a status that cannot be read is not one (#308 F-CS-27).
+static bool wholeNumber(const std::string& field, long long lo, long long hi, long long& out)
+{
+	const std::string f = Utils::String::trim(field);
+	size_t i = (!f.empty() && f[0] == '-') ? 1 : 0;
+	if (i >= f.size() || f.size() - i > 12)
+		return false;
+	for (size_t j = i; j < f.size(); j++)
+		if (f[j] < '0' || f[j] > '9')
+			return false;
+	const long long value = atoll(f.c_str());
+	if (value < lo || value > hi)
+		return false;
+	out = value;
+	return true;
+}
+
 bool exitSyncOwed(const std::string& exitStamp, const std::string& startupStamp, const std::string& backupStamp)
 {
 	const LastRun e = parseLastRun(exitStamp);
@@ -172,9 +192,12 @@ LastRun parseLastRun(const std::string& text)
 	auto parts = Utils::String::split(Utils::String::trim(text), ' ', true);
 	if (parts.size() < 2)
 		return r;
-	time_t when = (time_t) atoll(parts[0].c_str());
-	if (when <= 0)
+	// Both fields whole numbers, or this is not a stamp: the epoch positive,
+	// the code an exit status (-1 where there was none) (#308 F-CS-27).
+	long long epoch = 0, status = 0;
+	if (!wholeNumber(parts[0], 1, 99999999999LL, epoch) || !wholeNumber(parts[1], -1, 255, status))
 		return r;
+	time_t when = (time_t) epoch;
 	r.ran = true;
 	r.when = when;
 	// "<epoch> <rc>[ <token>[ <why...>]]" (D-UI-028). The first two fields
@@ -192,7 +215,7 @@ LastRun parseLastRun(const std::string& text)
 	// (last-sync-startup, -exit, -manual; fork #94) do, because under SYNC
 	// SAVES DURING STARTUP the player's question is what happened this
 	// morning, and "nothing, there was no network" answers it.
-	const int code = atoi(parts[1].c_str());
+	const int code = (int) status;
 	r.code = code;
 	//
 	// Two writers, two shapes of third field. EmulationStation's stamps
@@ -291,6 +314,102 @@ std::vector<std::string> outcomeCandidates(const std::string& outcome)
 	return candidates;
 }
 
+std::vector<std::pair<std::string, std::string>> whySentences()
+{
+	// Each sentence twice: as the script prints it, to match, and inside
+	// _(""), so xgettext carries it into the catalog and the French in
+	// locale/lang/fr reaches the card. Built on each call, after the
+	// language is chosen. The list is the emitter table in
+	// es-app/tests/unit/CloudTextTests.cpp, which fails on a why a script
+	// prints that is not here; a sentence a script changes wants its pair
+	// changed in the same change, or the card shows it in English again.
+	return {
+		{ "YOUR CLOUD STORAGE ISN'T SET UP YET", _("YOUR CLOUD STORAGE ISN'T SET UP YET") },
+		{ "COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN", _("COULDN'T REACH YOUR CLOUD - CHECK YOUR SIGN-IN") },
+		{ "YOUR CLOUD STOPPED ANSWERING", _("YOUR CLOUD STOPPED ANSWERING") },
+		{ "YOUR CLOUD SYNC SETTINGS COULDN'T BE READ", _("YOUR CLOUD SYNC SETTINGS COULDN'T BE READ") },
+		{ "AN OLD FOLDER SETTING IS IN THE WAY", _("AN OLD FOLDER SETTING IS IN THE WAY") },
+		{ "YOUR SAVES FOLDER ISN'T ON THIS DEVICE", _("YOUR SAVES FOLDER ISN'T ON THIS DEVICE") },
+		{ "THIS DEVICE'S SETTINGS BACKUP IS DAMAGED", _("THIS DEVICE'S SETTINGS BACKUP IS DAMAGED") },
+		{ "THE COPY IN YOUR CLOUD ISN'T COMPLETE", _("THE COPY IN YOUR CLOUD ISN'T COMPLETE") },
+		{ "COULDN'T FIND YOUR CLOUD FOLDER", _("COULDN'T FIND YOUR CLOUD FOLDER") },
+		{ "SOME FILES DIDN'T FINISH", _("SOME FILES DIDN'T FINISH") },
+		{ "YOUR CLOUD WOULDN'T TAKE THE FILES", _("YOUR CLOUD WOULDN'T TAKE THE FILES") },
+		{ "IT WAS STOPPED", _("IT WAS STOPPED") },
+		{ "THE CLOUD TOOK TOO LONG - IT'LL TRY AGAIN NEXT TIME", _("THE CLOUD TOOK TOO LONG - IT'LL TRY AGAIN NEXT TIME") },
+		{ "SOMETHING WENT WRONG", _("SOMETHING WENT WRONG") },
+		{ "COULDN'T TELL WHICH CARD YOUR SAVES ARE ON", _("COULDN'T TELL WHICH CARD YOUR SAVES ARE ON") },
+		{ "YOUR SAVES ARE ON A DIFFERENT CARD", _("YOUR SAVES ARE ON A DIFFERENT CARD") },
+		{ "YOUR SAVES CHANGED CARDS PART-WAY THROUGH", _("YOUR SAVES CHANGED CARDS PART-WAY THROUGH") },
+		{ "THERE'S NO SETTINGS BACKUP ON THIS DEVICE YET", _("THERE'S NO SETTINGS BACKUP ON THIS DEVICE YET") },
+		{ "COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS", _("COULDN'T KEEP A COPY OF YOUR CURRENT SETTINGS") },
+		{ "THE RESTORE COULDN'T FINISH", _("THE RESTORE COULDN'T FINISH") },
+		{ "THIS DEVICE CAN'T MAKE A SETTINGS BACKUP", _("THIS DEVICE CAN'T MAKE A SETTINGS BACKUP") },
+		{ "THE BACKUP COULDN'T FINISH WHILE GATHERING YOUR SETTINGS", _("THE BACKUP COULDN'T FINISH WHILE GATHERING YOUR SETTINGS") },
+		{ "THE BACKUP COULDN'T FINISH", _("THE BACKUP COULDN'T FINISH") },
+	};
+}
+
+std::string localizedWhy(const std::string& why)
+{
+	for (auto& sentence : whySentences())
+		if (sentence.first == why)
+			return sentence.second;
+	return why;
+}
+
+bool isKnownWhy(const std::string& why)
+{
+	for (auto& sentence : whySentences())
+		if (sentence.first == why)
+			return true;
+	return false;
+}
+
+std::string cleanLine(const std::string& raw)
+{
+	// The transfer page's rule (CloudTransferJob::cleanLine, #85), which the
+	// card did not share: it kept printable ASCII only, and a folder name in
+	// the player's language lost its accented letters on the way to the
+	// offer (#308 F-CS-19). A terminal escape is an instruction to a
+	// terminal that is not here, and goes whole.
+	std::string clean;
+	for (size_t i = 0; i < raw.size(); ++i)
+	{
+		const unsigned char c = (unsigned char) raw[i];
+		if (c == 0x1B)
+		{
+			while (i + 1 < raw.size() && !isalpha((unsigned char) raw[i + 1]))
+				i++;
+			i++;   // the letter that ends the sequence
+			continue;
+		}
+		if ((c >= 32 && c < 127) || c >= 0x80)
+			clean += (char) c;
+	}
+	return Utils::String::trim(clean);
+}
+
+std::vector<std::string> actionCandidates(const std::string& inPlace,
+	const std::vector<std::string>& recoveries, bool keepInPlace)
+{
+	std::vector<std::string> out;
+	if (keepInPlace && !inPlace.empty())
+	{
+		// The recovery gives way instead (#307 PL-072): each of its forms
+		// with the in-place clause, then the clause alone.
+		for (auto& r : recoveries)
+			out.push_back(inPlace + " " + r);
+		out.push_back(inPlace);
+		return out;
+	}
+	if (!inPlace.empty() && !recoveries.empty())
+		out.push_back(inPlace + " " + recoveries.front());
+	for (auto& r : recoveries)
+		out.push_back(r);
+	return out;
+}
+
 ProtocolLine classifyProtocolLine(const std::string& clean)
 {
 	ProtocolLine out;
@@ -330,7 +449,10 @@ ProtocolLine classifyProtocolLine(const std::string& clean)
 		out.kind = ProtocolKind::Tier;
 		auto parts = Utils::String::split(clean.substr(9), '|', false);
 		out.text = parts.size() > 0 ? Utils::String::toUpper(Utils::String::trim(parts[0])) : "";
-		out.number = parts.size() > 1 ? atoi(Utils::String::trim(parts[1]).c_str()) : -1;
+		// The part's exit status, 0-255; anything else -- nothing, junk -- is
+		// -1, which is not a success and not one of rclone's (#308 F-CS-27).
+		long long code = -1;
+		out.number = (parts.size() > 1 && wholeNumber(parts[1], 0, 255, code)) ? (int) code : -1;
 	}
 	// ">>> unit nes|2|5" -- an item starts: a system, or a phase whose
 	// counts are empty ("SAVES||"). The label keeps the case it came in,

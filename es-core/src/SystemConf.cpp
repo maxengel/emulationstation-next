@@ -68,28 +68,6 @@ SystemConf *SystemConf::getInstance()
     return sInstance;
 }
 
-// Whether a system.cfg text is one worth reading and worth keeping as the
-// last-known-good record: something in it, no NUL bytes (a file cut by a
-// power failure reads as a run of them, which is what the boot check's
-// "binary" test used to catch), and at least one key=value line. A file that
-// is merely truncated at the tail still passes -- there is no way to tell a
-// short file from a shorter configuration -- so this is the floor, not a
-// proof; the shell's boot check applies its own on top (D-CLOUD-079).
-static bool isUsableSystemConf(const std::string& text)
-{
-	if (text.empty() || text.find('\0') != std::string::npos)
-		return false;
-	std::istringstream in(text);
-	std::string line;
-	while (std::getline(in, line))
-	{
-		auto idx = line.find('=');
-		if (idx != std::string::npos && idx > 0 && line[0] != '#' && line[0] != ';')
-			return true;
-	}
-	return false;
-}
-
 void SystemConf::parseSystemConf(const std::string& text)
 {
 	std::istringstream in(text);
@@ -113,18 +91,24 @@ void SystemConf::parseSystemConf(const std::string& text)
 // every start and after every save, and most of those change nothing.
 void SystemConf::recordLastGood(const std::string& text)
 {
+	// No less private than the live file it copies (#308 F-ES-08): a record
+	// an earlier build made 0644 beside a 0600 file is rewritten for its mode
+	// even when its text is the same.
 	const std::string backup = mSystemConfFile + ".backup";
-	if (Utils::AtomicFile::readText(backup) == text)
+	const int mode = Utils::AtomicFile::modeOf(mSystemConfFile, 0644);
+	if (Utils::AtomicFile::readText(backup) == text && Utils::AtomicFile::modeOf(backup, mode) == mode)
 		return;
-	if (!Utils::AtomicFile::writeText(backup, text))
+	if (!Utils::AtomicFile::writeText(backup, text, mode))
 		LOG(LogWarning) << "Unable to write the last-known-good record " << backup;
 }
 
-// Read the live file if it is usable; else the last-known-good record, and
-// put that back as the live file; else whatever is there, so a device whose
-// file fails this check but was fine for years reads exactly as before, and
-// nothing is written over it (D-CLOUD-078: never defaults over a file that
-// failed to parse before the recovery was tried).
+// Read the live file if it is usable; else an unfinished save's whole
+// temporary where the live file was cut (PL-064); else the last-known-good
+// record, and put that back as the live file; else whatever is there, so a
+// device whose file fails this check but was fine for years reads exactly as
+// before, and nothing is written over it (D-CLOUD-078: never defaults over a
+// file that failed to parse before the recovery was tried). Which one is
+// Utils::AtomicFile::chooseConfig's call; the writes and the words are here.
 bool SystemConf::loadSystemConf()
 {
 	if (mSystemConfFile.empty())
@@ -132,47 +116,65 @@ bool SystemConf::loadSystemConf()
 
 	changedConf.clear();
 
-	// A temporary left by a save that never reached its rename is litter,
-	// not a record: nothing reads it, and the next save replaces it. The
-	// record's own temporary likewise.
-	std::remove((mSystemConfFile + ".tmp").c_str());
+	// The record's own temporary, from a build before PL-063 gave every
+	// write a temporary of its own, is litter: nothing else writes that name.
+	// system.cfg.tmp is not removed any more (PL-064): it is read below, and
+	// it is also the name the shell's set_setting writes and renames -- a
+	// start that deleted it under a script's write made the script's rename
+	// fail and its key vanish. chksysconfig sweeps it at boot, before any
+	// script runs.
 	std::remove((mSystemConfFile + ".backup.tmp").c_str());
 
-	bool liveOpened = false;
-	const std::string live = Utils::AtomicFile::readText(mSystemConfFile, &liveOpened);
-	if (liveOpened && isUsableSystemConf(live))
-	{
-		parseSystemConf(live);
-		recordLastGood(live);
-		return true;
-	}
+	const Utils::AtomicFile::LoadedConfig chosen = Utils::AtomicFile::chooseConfig(mSystemConfFile);
+	const int mode = Utils::AtomicFile::modeOf(mSystemConfFile, Utils::AtomicFile::modeOf(mSystemConfFile + ".backup", 0644));
 
-	const std::string backupPath = mSystemConfFile + ".backup";
-	bool backupOpened = false;
-	const std::string backup = Utils::AtomicFile::readText(backupPath, &backupOpened);
-	if (backupOpened && isUsableSystemConf(backup))
+	switch (chosen.source)
 	{
-		LOG(LogWarning) << mSystemConfFile << " is " << (liveOpened ? (live.empty() ? "empty" : "damaged") : "missing")
-			<< " -- loading the last-known-good record " << backupPath << " and writing it back";
-		parseSystemConf(backup);
-		if (!Utils::AtomicFile::writeText(mSystemConfFile, backup))
+	case Utils::AtomicFile::LoadedConfig::Source::Live:
+		parseSystemConf(chosen.text);
+		// "Usable" for the record means complete too: a file that stops part
+		// way through a line is read -- nothing better is there -- but never
+		// replaces a whole record (PL-064, PL-065).
+		if (chosen.record)
+			recordLastGood(chosen.text);
+		else
+			LOG(LogWarning) << mSystemConfFile << " does not end in a line end -- read as it is, and not recorded as the last known good";
+		return true;
+
+	case Utils::AtomicFile::LoadedConfig::Source::Temporary:
+		LOG(LogWarning) << mSystemConfFile << " is cut short or unreadable beside a whole " << mSystemConfFile
+			<< ".tmp that an interrupted save left -- loading that and writing it back";
+		parseSystemConf(chosen.text);
+		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
+			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from " << mSystemConfFile << ".tmp";
+		recordLastGood(chosen.text);
+		sRecovered = true;
+		return true;
+
+	case Utils::AtomicFile::LoadedConfig::Source::Backup:
+		LOG(LogWarning) << mSystemConfFile << " is missing, empty, unreadable or damaged -- loading the last-known-good record "
+			<< mSystemConfFile << ".backup and writing it back";
+		parseSystemConf(chosen.text);
+		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
 			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from its last-known-good record";
 		sRecovered = true;
 		return true;
+
+	case Utils::AtomicFile::LoadedConfig::Source::Damaged:
+		// Unusable by the check, with no usable record and no whole
+		// temporary. Read the live file as it always was read -- a file this
+		// check is wrong about still works -- and record nothing: there is no
+		// good copy to record.
+		LOG(LogError) << mSystemConfFile << " has no usable key=value line and no usable last-known-good record; reading it as it is";
+		parseSystemConf(chosen.text);
+		return true;
+
+	case Utils::AtomicFile::LoadedConfig::Source::Missing:
+		break;
 	}
 
-	if (!liveOpened)
-	{
-		LOG(LogError) << "Unable to open " << mSystemConfFile;
-		return false;
-	}
-
-	// Both unusable by the check above. Read the live file as it always was
-	// read -- a file this check is wrong about still works -- and record
-	// nothing: there is no good copy to record.
-	LOG(LogError) << mSystemConfFile << " has no usable key=value line and no usable last-known-good record; reading it as it is";
-	parseSystemConf(live);
-	return true;
+	LOG(LogError) << "Unable to open " << mSystemConfFile;
+	return false;
 }
 
 bool SystemConf::saveSystemConf()
@@ -183,39 +185,60 @@ bool SystemConf::saveSystemConf()
 	if (changedConf.empty())
 		return false;
 
-	// The shell's settings lock (wait_lock in profile.d/001-functions), taken
-	// around the read-modify-write below: set_setting deletes a key and
-	// re-adds it under the same lock, and a save that read the file between
-	// its two steps would write the key's absence back over its new value.
-	// Five seconds is the budget, on the interface thread; a live holder
-	// still on the lock past it is logged and the save goes ahead -- the
-	// player's change dropped on the floor is the worse outcome, and the
-	// shell side's writes are a few milliseconds long.
-	Utils::AtomicFile::PidLock lock("/tmp/.system.cfg.lock");
-	if (!lock.acquire(5000))
-		LOG(LogWarning) << "saveSystemConf: the settings lock was not free within 5s; saving without it";
+	// The shell's settings lock (wait_lock in profile.d/001-functions), held
+	// across the read-modify-write: set_setting reads the file, writes a
+	// temporary and renames it under the same lock, and a save that read or
+	// renamed beside it put one writer's snapshot over the other's. Five
+	// seconds is the budget, on the interface thread. A live holder still on
+	// the lock past it is logged and nothing is written (PL-024): this used to
+	// save anyway, and lost either the script's key or the player's. The
+	// changes stay in changedConf, and the next save -- any page closing,
+	// any set-and-save -- writes them over whatever the script left.
+	std::string out;
+	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, "/tmp/.system.cfg.lock", 5000,
+		[this](const std::string& current) { return applyChanges(current); }, &out);
 
-	bool opened = false;
-	const std::string current = Utils::AtomicFile::readText(mSystemConfFile, &opened);
-
-#ifndef WIN32
-	if (!opened)
+	switch (saved)
 	{
-		LOG(LogError) << "Unable to open for saving :  " << mSystemConfFile << "\n";
+	case Utils::AtomicFile::LockedSave::LockBusy:
+		LOG(LogWarning) << "saveSystemConf: the settings lock was not free within 5s; nothing written -- the changes are kept for the next save";
 		return false;
+	case Utils::AtomicFile::LockedSave::Unreadable:
+		LOG(LogError) << "Unable to open for saving :  " << mSystemConfFile << " -- the changes are kept for the next save";
+		return false;
+	case Utils::AtomicFile::LockedSave::WriteFailed:
+		// Written to a temporary of its own, synced, and renamed over the
+		// live file (D-CLOUD-079, PL-063); a failure leaves the file whole.
+		LOG(LogError) << "Unable to write " << mSystemConfFile << " -- the changes are kept for the next save";
+		return false;
+	case Utils::AtomicFile::LockedSave::Written:
+		break;
 	}
-#endif
 
+	changedConf.clear();
+
+	// What was just written is, by construction, the newest good state, so
+	// it becomes the record (D-CLOUD-078: a success becomes the last known
+	// good). Outside the lock: the shell never takes it for the record.
+	recordLastGood(out);
+
+	return true;
+}
+
+// This save's keys, applied to the file as it is on disk now (read under
+// the lock): a key already there is rewritten in place, or removed when it
+// went back to its default or to nothing; a new one goes at the end. Every
+// other line is left exactly as the file had it -- the shell's writes
+// included.
+std::string SystemConf::applyChanges(const std::string& current)
+{
 	/* Read all lines in a vector */
 	std::vector<std::string> fileLines;
 	std::string line;
 
-	if (opened)
-	{
-		std::istringstream filein(current);
-		while (std::getline(filein, line))
-			fileLines.push_back(line);
-	}
+	std::istringstream filein(current);
+	while (std::getline(filein, line))
+		fileLines.push_back(line);
 
 	static std::string removeID = "$^�(p$^mpv$�rpver$^vper$vper$^vper$vper$vper$^vperv^pervncvizn";
 
@@ -278,27 +301,7 @@ bool SystemConf::saveSystemConf()
 		if (fileLines[i] != removeID)
 			out += fileLines[i] + "\n";
 	}
-
-	// Written to system.cfg.tmp, synced, and renamed over the live file
-	// (D-CLOUD-079). This used to write the temporary and then copy it into
-	// the live file through a truncating stream, which bought nothing: a
-	// process killed during the copy left an empty system.cfg beside a
-	// complete .tmp that nothing read.
-	if (!Utils::AtomicFile::writeText(mSystemConfFile, out))
-	{
-		LOG(LogError) << "Unable to write " << mSystemConfFile << " -- the changes are kept for the next save";
-		return false;
-	}
-	lock.release();
-
-	changedConf.clear();
-
-	// What was just written is, by construction, the newest good state, so
-	// it becomes the record (D-CLOUD-078: a success becomes the last known
-	// good). Outside the lock: the shell never takes it for the record.
-	recordLastGood(out);
-
-	return true;
+	return out;
 }
 
 std::string SystemConf::get(const std::string &name) 

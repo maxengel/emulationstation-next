@@ -33,11 +33,16 @@ private:
 		std::vector<std::string> inRange;
 		std::vector<WifiText::SavedNetwork> saved;
 		std::string current;
+		// Whether `wifictl saved` and `wifictl current` answered at all: an
+		// empty list and no list are different answers (#308 F-WF-03/06).
+		bool savedKnown = false;
+		bool currentKnown = false;
 	};
 
 	void load(const std::vector<WifiText::PickerRow>& rows);
 	void addRow(const WifiText::PickerRow& row);
 	void onSelect(const WifiText::PickerRow& row);
+	void act(WifiText::PressAction action, const std::string& name);
 	void onManualInput();
 	void onRefresh(bool rescan = true);
 	void join(const std::string& name);
@@ -50,5 +55,6 @@ private:
 	std::function<void()> mOnJoined;
 	std::vector<WifiText::SavedNetwork> mSaved;
 	std::string mCurrent;
+	bool mSavedKnown;
 	bool mWaitingLoad;
 };

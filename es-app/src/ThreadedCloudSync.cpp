@@ -24,7 +24,7 @@
 
 #define ICONINDEX _U("\uF0C2 ")
 
-ThreadedCloudSync* ThreadedCloudSync::mInstance = nullptr;
+std::atomic<ThreadedCloudSync*> ThreadedCloudSync::mInstance(nullptr);
 std::mutex ThreadedCloudSync::sInstanceLock;
 
 ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
@@ -43,7 +43,12 @@ ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
 	mWndNotification->updateText(_("STARTING..."));
 	mWndNotification->updatePercent(-1);
 
-	mHandle = new std::thread(&ThreadedCloudSync::run, this);
+	// Detached: run() ends with `delete this`, so nothing is left to join
+	// it, and a joinable thread that has ended keeps its stack and control
+	// block until somebody does -- one per sync, two a game, for the life of
+	// the interface (#307 PL-069). This was `mHandle = new std::thread(...)`,
+	// never joined, detached or deleted.
+	std::thread(&ThreadedCloudSync::run, this).detach();
 }
 
 ThreadedCloudSync::~ThreadedCloudSync()
@@ -53,7 +58,9 @@ ThreadedCloudSync::~ThreadedCloudSync()
 
 	// Only if it is still us. run() clears this as soon as the work ends so
 	// another sync can start during the few seconds the card holds its
-	// result -- and if one has, the static belongs to that one now.
+	// result -- and if one has, the static belongs to that one now. Under
+	// the lock, like every other change to it (#308 F-CS-25).
+	std::lock_guard<std::mutex> lock(sInstanceLock);
 	if (ThreadedCloudSync::mInstance == this)
 		ThreadedCloudSync::mInstance = nullptr;
 }
@@ -196,15 +203,9 @@ void ThreadedCloudSync::run()
 		char line[512];
 		while (fgets(line, sizeof(line), pipe) != nullptr)
 		{
-			std::string text(line);
-
-			// keep it single-line and printable
-			std::string clean;
-			for (char c : text)
-				if (c >= 32 && c < 127)
-					clean += c;
-
-			clean = Utils::String::trim(clean);
+			// One line, without controls or a terminal's escapes, its UTF-8
+			// kept (CloudText::cleanLine, #308 F-CS-19).
+			const std::string clean = CloudText::cleanLine(line);
 
 			// ">>> " lines are the scripts talking to the UI, not to the
 			// player. ">>> pid N" is the wrapper above saying which process
@@ -474,7 +475,9 @@ void ThreadedCloudSync::run()
 		(t.second == 0 || t.second == 9 ? okTiers : badTiers).push_back(t.first);
 	const bool completed = !cancelled && (ret == 0 || ret == 9);
 	const bool gaps = !cancelled && !completed && !okTiers.empty() && !badTiers.empty();
-	const std::string why = mWhy.empty() ? whyForCode(ret) : mWhy;
+	// In the player's language: the scripts speak English whatever the
+	// interface does (#308 F-CS-31). The stamp below keeps mWhy as printed.
+	const std::string why = mWhy.empty() ? whyForCode(ret) : CloudText::localizedWhy(mWhy);
 
 	std::string outcome, token;
 	if (cancelled)
@@ -548,6 +551,7 @@ void ThreadedCloudSync::run()
 	// appeared where one thing happened. Say it in the card that has been
 	// reporting all along, hold it long enough to read, and let that same
 	// card fade.
+	bool lingerShort = false;   // a completed run with nothing to act on: a shorter linger, below
 	if (mWndNotification != nullptr)
 	{
 		mWndNotification->updateTitle(ICONINDEX + mTitle);
@@ -557,6 +561,12 @@ void ThreadedCloudSync::run()
 		// is whether rclone's byte totals ever left zero. The recovery
 		// clause names the surface that runs it again: for an automatic
 		// sync, when that is; for one the player pressed, the row.
+		// A run that ended for want of a network after bytes had left
+		// (cloud_backup exits 69 when the link goes part way, the S3 case):
+		// its outcome word is SKIPPED, which says nothing moved, so the
+		// in-place clause -- THE SAVES THAT MADE IT ARE ON BOTH SIDES -- is
+		// kept in every candidate rather than dropped first (#307 PL-072).
+		const bool keepInPlace = mMoved && ret == CloudExit::NoNetwork && !cancelled && !gaps;
 		std::vector<std::string> action;
 		if (completed)
 		{
@@ -584,10 +594,13 @@ void ThreadedCloudSync::run()
 			const std::string savesWaiting = awardsWaiting
 				? _("THEY'LL GO UP NEXT TIME YOU'RE CONNECTED, WITH YOUR ACHIEVEMENTS.")
 				: _("THEY'LL GO UP NEXT TIME YOU'RE CONNECTED.");
-			action.push_back(inPlace + " " + savesWaiting);
-			action.push_back(savesWaiting);
+			std::vector<std::string> recoveries = { savesWaiting };
 			if (awardsWaiting)
-				action.push_back(_("THEY GO UP WITH YOUR ACHIEVEMENTS WHEN YOU'RE BACK."));
+				recoveries.push_back(_("THEY GO UP WITH YOUR ACHIEVEMENTS WHEN YOU'RE BACK."));
+			// A run that moved saves before the link went keeps saying so
+			// in every candidate: SKIPPED above says nothing moved (#307
+			// PL-072, CloudText::actionCandidates).
+			action = CloudText::actionCandidates(inPlace, recoveries, keepInPlace);
 		}
 		else
 		{
@@ -623,11 +636,10 @@ void ThreadedCloudSync::run()
 			// it, and the recovery is the part nobody can guess. The
 			// startup sentence has a short form for a panel where even it
 			// alone does not fit.
-			if (!inPlace.empty())
-				action.push_back(inPlace + " " + recover);
-			action.push_back(recover);
+			std::vector<std::string> recoveries = { recover };
 			if (mOrigin == Origin::Startup)
-				action.push_back(_("IT'LL TRY AGAIN NEXT STARTUP."));
+				recoveries.push_back(_("IT'LL TRY AGAIN NEXT STARTUP."));
+			action = CloudText::actionCandidates(inPlace, recoveries, keepInPlace);
 		}
 		// The outcome line, from candidates too, and for the same reason
 		// as the action line (#115): it is composed -- the outcome word,
@@ -642,18 +654,24 @@ void ThreadedCloudSync::run()
 		// bar left standing under COULDN'T FINISH reads as a measure of how
 		// much of the failure has completed.
 		mWndNotification->updatePercent(completed ? 100 : -1);
+		lingerShort = completed && action.empty();
+	}
 
-		// Nothing is running any more, so stop claiming otherwise: somebody
-		// who wants to start another sync while the card is still up should
-		// not be told one is already going. Under the lock, so a
-		// cancelForLaunch that has just taken the pointer finishes
-		// with it before it goes -- and the delete below is a linger later.
-		{
-			std::lock_guard<std::mutex> lock(sInstanceLock);
-			if (ThreadedCloudSync::mInstance == this)
-				ThreadedCloudSync::mInstance = nullptr;
-		}
+	// Nothing is running any more, so stop claiming otherwise: somebody who
+	// wants to start another sync while the card is still up should not be
+	// told one is already going. Under the lock, so a cancelForLaunch that
+	// has just taken the pointer finishes with it before it goes -- and the
+	// delete below is a linger later. Whether or not there was a card: this
+	// used to happen only inside the card's branch, leaving a run with no
+	// card to the destructor's unlocked clear (#308 F-CS-25).
+	{
+		std::lock_guard<std::mutex> lock(sInstanceLock);
+		if (ThreadedCloudSync::mInstance == this)
+			ThreadedCloudSync::mInstance = nullptr;
+	}
 
+	if (mWndNotification != nullptr)
+	{
 		// Hold the outcome long enough to read, then let the card fade.
 		// Success is one word and a full bar, and somebody who just exited
 		// a game is standing there watching it, so a second and a half (two
@@ -661,7 +679,7 @@ void ThreadedCloudSync::run()
 		// act on, so five. Five for everything dated from when a sync took
 		// 18 seconds -- once the exit sync came down to about five, the card
 		// spent as long saying it was done as it had spent working.
-		std::this_thread::sleep_for(std::chrono::milliseconds(completed && action.empty() ? 1500 : 5000));
+		std::this_thread::sleep_for(std::chrono::milliseconds(lingerShort ? 1500 : 5000));
 	}
 
 	// A question the run asked us to put to the player, once its card has
@@ -699,14 +717,19 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 	// this run with CloudExit::LockHeld and the card would say these same
 	// words after starting; said here, before, in the words the flock's
 	// code reads as.
-	if (ThreadedCloudSync::mInstance != nullptr || CloudTransferJob::running())
+	//
+	// The check and the install are one hold of the lock (#308 F-CS-25): the
+	// check used to be made before the lock was taken, so two starts at once
+	// could both find nothing running and both install a sync.
 	{
-		window->pushGui(new GuiMsgBox(window, _("A SYNC IS ALREADY RUNNING.")));
-		return;
+		std::lock_guard<std::mutex> lock(sInstanceLock);
+		if (ThreadedCloudSync::mInstance == nullptr && !CloudTransferJob::running())
+		{
+			ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
+			return;
+		}
 	}
-
-	std::lock_guard<std::mutex> lock(sInstanceLock);
-	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
+	window->pushGui(new GuiMsgBox(window, _("A SYNC IS ALREADY RUNNING.")));
 }
 
 bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal, bool evenIfPlayerStarted)
