@@ -481,6 +481,12 @@ namespace CloudText
 	std::string scanWhy(const std::string& token);
 	std::string topUpWhy(const std::string& token);
 
+	// A match that did not complete, on the transfer page's done lines
+	// (#308 5-cloud-sync-and-saves gpt F-CS-26, the page's half): what it
+	// removed, and the way on.
+	std::string matchRemovedNote(int removedFiles);
+	std::string matchRecovery();
+
 	// "route=<scan|topup> at=<epoch> index=<i> total=<n> name=<game>" from
 	// raofflineproxy-ctl's running file (fork #189): the one line the ctl
 	// keeps beside its stamp while a scan or top-up runs its jobs, rewritten

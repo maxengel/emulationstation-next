@@ -123,6 +123,8 @@ private:
 		std::string word; // line 1
 	};
 	static Outcome outcome(const CloudTransferJob& job);
+	// Whether TRY AGAIN, the same command again, is offered: not for a match.
+	static bool retries(const CloudTransferJob& job);
 	// BACKING UP... / RESTORING... / MATCHING..., from the run's command.
 	static std::string verbWord(const CloudTransferJob& job);
 	// The rows only the done state writes, cleared for a TRY AGAIN so the

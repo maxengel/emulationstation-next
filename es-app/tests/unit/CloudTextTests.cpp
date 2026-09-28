@@ -1487,3 +1487,26 @@ TEST_CASE("scan and top-up whys: every token the ctl stamps has words")
 	CHECK(chooseThatFits({ why, shortenWhy(why) }, 400.0f, measure) == "SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED");
 	CHECK(chooseThatFits({ why, shortenWhy(why) }, 600.0f, measure) == why);
 }
+
+// A match's done page (#308 5-cloud-sync-and-saves gpt F-CS-26, the page's
+// half; the script's is stream A's 258b5eca38, whose `>>> removed` now counts
+// rclone's own Deleted lines, not the plan). A match removes only what the
+// cloud does not have (D-CLOUD-023), so the line that followed the count --
+// YOUR CLOUD STILL HAS THEM -- said the opposite of what happened. And an
+// apply spends its preview's plan (PL-001): the same command again is
+// refused with SOMETHING CHANGED SINCE YOU CHECKED, so the way on is the
+// match's own row, which checks again first.
+TEST_CASE("a match's done page: what it removed, nothing about the cloud having it, and the row to start again from")
+{
+	CHECK(matchRemovedNote(0) == "NOTHING WAS REMOVED FROM THIS DEVICE.");
+	CHECK(matchRemovedNote(1) == "1 FILE WAS REMOVED FROM THIS DEVICE.");
+	CHECK(matchRemovedNote(12) == "12 FILES WERE REMOVED FROM THIS DEVICE.");
+	for (int n : { 0, 1, 12 })
+	{
+		INFO(n);
+		CHECK(matchRemovedNote(n).find("CLOUD") == std::string::npos);
+	}
+	CHECK(matchRecovery() == "TRY AGAIN: MATCH THIS DEVICE TO THE CLOUD");
+	// And the refusal it answers is a sentence the page can translate.
+	CHECK(isKnownWhy("SOMETHING CHANGED SINCE YOU CHECKED"));
+}

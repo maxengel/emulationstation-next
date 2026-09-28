@@ -225,8 +225,9 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	}
 	const Outcome o = outcome(job);
 	// OK, the player's mapping: the literal "a" was back's own button on a
-	// swapped one, so back retried (#308 5-cloud claude F-CS-07).
-	if (!o.completed && config->isMappedTo(BUTTON_OK, input))
+	// swapped one, so back retried (#308 5-cloud claude F-CS-07). Not a
+	// match: the same apply again is always refused (retries(), below).
+	if (!o.completed && retries(job) && config->isMappedTo(BUTTON_OK, input))
 	{
 		// A new run of the same command; the finished one is let go, and the
 		// page shows the new run from its first line. The command is
@@ -312,6 +313,16 @@ void GuiCloudTransfer::askCancel()
 		_("NO"), nullptr));
 }
 
+// Whether the same command again can do what this run did not. A match
+// cannot: its apply spends the preview's plan before anything runs
+// (cloud_content_restore, PL-001), so a second apply is refused with
+// SOMETHING CHANGED SINCE YOU CHECKED, and the page names the match's row
+// instead (CloudText::matchRecovery, #308 gpt F-CS-26).
+bool GuiCloudTransfer::retries(const CloudTransferJob& job)
+{
+	return CloudText::transferKind(job.mCommand) != CloudText::TransferKind::Match;
+}
+
 std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 {
 	std::vector<HelpPrompt> prompts;
@@ -324,7 +335,7 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 		return prompts;
 	}
 	const Outcome o = outcome(job);
-	if (!o.completed)
+	if (!o.completed && retries(job))
 		prompts.push_back(HelpPrompt(BUTTON_OK, _("TRY AGAIN")));
 	// The page's one exit says what it does: CLOSE, or the word the
 	// action was given (setCompletedAction).
@@ -795,10 +806,11 @@ void GuiCloudTransfer::update(int deltaTime)
 			// megabytes of one archive has put nothing anywhere (#153).
 			// mUnitFiles is the last unit's count where foldUnit has not run.
 			const bool moved = job.mRunFiles > 0 || job.mUnitFiles > 0;
+			// A match: what it removed, counted from what rclone deleted
+			// (#308 gpt F-CS-26), and nothing about the cloud having it --
+			// a match removes only what the cloud does not have.
 			if (match)
-				note = job.mRemovedFiles == 0 ? _("NOTHING WAS REMOVED FROM THIS DEVICE.")
-					: job.mRemovedFiles == 1 ? _("1 FILE WAS REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS IT.")
-					: std::to_string(job.mRemovedFiles) + " " + std::string(_("FILES WERE REMOVED FROM THIS DEVICE. YOUR CLOUD STILL HAS THEM."));
+				note = CloudText::matchRemovedNote(job.mRemovedFiles);
 			else if (restore)
 				note = moved ? _("WHAT MADE IT IS ON THIS DEVICE. NOTHING ELSE CHANGED.") : _("DON'T WORRY, NOTHING CHANGED.");
 			else
@@ -822,7 +834,12 @@ void GuiCloudTransfer::update(int deltaTime)
 		// own buttons, which may be swapped; the line named them A and B
 		// (#308 5-cloud claude F-CS-07, gpt F-CS-36). A run that completed
 		// has nothing to retry.
-		mFooter  ->setText(!o.completed ? std::string()
+		//
+		// Not for a match: its apply spends the preview's plan (PL-001), so
+		// the same command again is refused with SOMETHING CHANGED SINCE YOU
+		// CHECKED. Line 7 names the row that checks again instead, as the
+		// card names its row (#308 gpt F-CS-26).
+		mFooter  ->setText(!o.completed ? (match ? CloudText::matchRecovery() : std::string())
 			: mCompletedAction && !mCompletedFooter.empty() ? mCompletedFooter
 			: _("PRESS ANY BUTTON TO CLOSE"));
 	}

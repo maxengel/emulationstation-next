@@ -969,6 +969,30 @@ std::string CloudText::topUpWhy(const std::string& token)
 	return scanWhy(token);
 }
 
+// What a match that did not complete removed. The count is the one
+// cloud_content_restore's ">>> removed" reports from rclone's own Deleted
+// lines (stream A's 258b5eca38), no longer its plan. Nothing about the
+// cloud: a match removes only what the cloud does not have (D-CLOUD-023),
+// and the clause that followed -- YOUR CLOUD STILL HAS THEM -- said the
+// opposite of what had happened.
+std::string CloudText::matchRemovedNote(int removedFiles)
+{
+	if (removedFiles <= 0)
+		return _("NOTHING WAS REMOVED FROM THIS DEVICE.");
+	if (removedFiles == 1)
+		return _("1 FILE WAS REMOVED FROM THIS DEVICE.");
+	return Utils::String::format(_("%d FILES WERE REMOVED FROM THIS DEVICE.").c_str(), removedFiles);
+}
+
+// The way on, named as the card names its row (TRY AGAIN: <row>): an apply
+// spends its preview's plan (PL-001), so the same command again is refused
+// with SOMETHING CHANGED SINCE YOU CHECKED; the match's own row checks
+// again first.
+std::string CloudText::matchRecovery()
+{
+	return _("TRY AGAIN: MATCH THIS DEVICE TO THE CLOUD");
+}
+
 CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 {
 	ScanStamp stamp;
