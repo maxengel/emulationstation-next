@@ -1095,8 +1095,18 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 
 	// What the display did with this game's frame, for its captures (fork
 	// #245, D-UI-081): the core's rotation request is in the launch log
-	// only while the log is this session's, so it is read here.
-	CaptureRotation::recordAfterSession(gameToUpdate, options.launchedEmulator);
+	// only while the log is this session's, so it is read here. Only after a
+	// session that ran: a launch that failed before RetroArch's banner (a
+	// missing core, a bad ROM) exits non-zero, and its log is the previous
+	// game's section or no banner at all -- recordAfterSession then wrote
+	// that game's turn, or 0, as this game's own, from=own-launch (#308
+	// 8-es claude F-ES-08). A crash after a real session keeps the record it
+	// had. The rest of that finding -- a missing banner folded into 0, the
+	// log's age -- is CaptureRotation's.
+	if (exitCode == 0)
+		CaptureRotation::recordAfterSession(gameToUpdate, options.launchedEmulator);
+	else
+		LOG(LogInfo) << "capture rotation: not recorded, the launch exited " << exitCode;
 
 	if (!p2kConv.empty()) // delete .keys file if it has been converted from p2k
 		Utils::FileSystem::removeFile(p2kConv);
