@@ -143,6 +143,15 @@ namespace CloudText
 	// gets the single candidate it has today.
 	std::vector<std::string> outcomeCandidates(const std::string& outcome);
 
+	// The sync card's action line when a run did not complete (D-CLOUD-077),
+	// longest first: what is in place and how to recover, then the recovery
+	// alone. `recoveries` are the recovery sentence's own forms, longest
+	// first. The in-place clause is the part that goes first when the line
+	// is short of room (es-player-text.md) -- unless keepInPlace, when every
+	// candidate carries it and the in-place clause alone is the last.
+	std::vector<std::string> actionCandidates(const std::string& inPlace,
+		const std::vector<std::string>& recoveries, bool keepInPlace);
+
 	// The ">>> " lines are the scripts talking to the interface, not to the
 	// player. Classification only: what the line is and what it carries.
 	// Acting on it -- the pid to signal, the card's waiting text, the why

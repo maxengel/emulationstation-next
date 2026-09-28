@@ -291,6 +291,26 @@ std::vector<std::string> outcomeCandidates(const std::string& outcome)
 	return candidates;
 }
 
+std::vector<std::string> actionCandidates(const std::string& inPlace,
+	const std::vector<std::string>& recoveries, bool keepInPlace)
+{
+	std::vector<std::string> out;
+	if (keepInPlace && !inPlace.empty())
+	{
+		// The recovery gives way instead (#307 PL-072): each of its forms
+		// with the in-place clause, then the clause alone.
+		for (auto& r : recoveries)
+			out.push_back(inPlace + " " + r);
+		out.push_back(inPlace);
+		return out;
+	}
+	if (!inPlace.empty() && !recoveries.empty())
+		out.push_back(inPlace + " " + recoveries.front());
+	for (auto& r : recoveries)
+		out.push_back(r);
+	return out;
+}
+
 ProtocolLine classifyProtocolLine(const std::string& clean)
 {
 	ProtocolLine out;

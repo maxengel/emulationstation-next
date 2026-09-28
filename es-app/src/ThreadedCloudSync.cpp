@@ -565,6 +565,12 @@ void ThreadedCloudSync::run()
 		// is whether rclone's byte totals ever left zero. The recovery
 		// clause names the surface that runs it again: for an automatic
 		// sync, when that is; for one the player pressed, the row.
+		// A run that ended for want of a network after bytes had left
+		// (cloud_backup exits 69 when the link goes part way, the S3 case):
+		// its outcome word is SKIPPED, which says nothing moved, so the
+		// in-place clause -- THE SAVES THAT MADE IT ARE ON BOTH SIDES -- is
+		// kept in every candidate rather than dropped first (#307 PL-072).
+		const bool keepInPlace = mMoved && ret == CloudExit::NoNetwork && !cancelled && !gaps;
 		std::vector<std::string> action;
 		if (completed)
 		{
@@ -592,10 +598,13 @@ void ThreadedCloudSync::run()
 			const std::string savesWaiting = awardsWaiting
 				? _("THEY'LL GO UP NEXT TIME YOU'RE CONNECTED, WITH YOUR ACHIEVEMENTS.")
 				: _("THEY'LL GO UP NEXT TIME YOU'RE CONNECTED.");
-			action.push_back(inPlace + " " + savesWaiting);
-			action.push_back(savesWaiting);
+			std::vector<std::string> recoveries = { savesWaiting };
 			if (awardsWaiting)
-				action.push_back(_("THEY GO UP WITH YOUR ACHIEVEMENTS WHEN YOU'RE BACK."));
+				recoveries.push_back(_("THEY GO UP WITH YOUR ACHIEVEMENTS WHEN YOU'RE BACK."));
+			// A run that moved saves before the link went keeps saying so
+			// in every candidate: SKIPPED above says nothing moved (#307
+			// PL-072, CloudText::actionCandidates).
+			action = CloudText::actionCandidates(inPlace, recoveries, keepInPlace);
 		}
 		else
 		{
@@ -631,11 +640,10 @@ void ThreadedCloudSync::run()
 			// it, and the recovery is the part nobody can guess. The
 			// startup sentence has a short form for a panel where even it
 			// alone does not fit.
-			if (!inPlace.empty())
-				action.push_back(inPlace + " " + recover);
-			action.push_back(recover);
+			std::vector<std::string> recoveries = { recover };
 			if (mOrigin == Origin::Startup)
-				action.push_back(_("IT'LL TRY AGAIN NEXT STARTUP."));
+				recoveries.push_back(_("IT'LL TRY AGAIN NEXT STARTUP."));
+			action = CloudText::actionCandidates(inPlace, recoveries, keepInPlace);
 		}
 		// The outcome line, from candidates too, and for the same reason
 		// as the action line (#115): it is composed -- the outcome word,

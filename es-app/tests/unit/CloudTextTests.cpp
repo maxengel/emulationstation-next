@@ -506,6 +506,50 @@ TEST_CASE("classifyProtocolLine reads a removed line")
 // offer never reached the transfer page: that page's own parser knew
 // ">>> unit" and ">>> removed" and had never heard of ">>> offer" (#145).
 // A new marker added to a script without a kind here fails this case.
+TEST_CASE("the card's action line drops the in-place clause first, as the house rule says")
+{
+	const std::string inPlace = "WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.";
+	const std::string recover = "TRY AGAIN FROM GAME SETTINGS > BACK UP SAVES TO THE CLOUD";
+	const auto c = actionCandidates(inPlace, { recover }, false);
+	REQUIRE(c.size() == 2);
+	CHECK(c[0] == inPlace + " " + recover);
+	CHECK(c[1] == recover);
+
+	// The startup sync's recovery has a short form of its own, last.
+	const auto s = actionCandidates("DON'T WORRY, NOTHING CHANGED.",
+		{ "IT'LL TRY AGAIN AT STARTUP, OR SYNC NOW FROM GAME SETTINGS.", "IT'LL TRY AGAIN NEXT STARTUP." }, false);
+	REQUIRE(s.size() == 3);
+	CHECK(s[2] == "IT'LL TRY AGAIN NEXT STARTUP.");
+
+	// A command with no verb has no in-place clause: the recovery alone.
+	const auto none = actionCandidates("", { recover }, false);
+	REQUIRE(none.size() == 1);
+	CHECK(none[0] == recover);
+}
+
+TEST_CASE("a sync that moved saves and then lost the network keeps what moved in every candidate (#307 PL-072)")
+{
+	// cloud_backup ends a run that lost the link part way with 69, whose
+	// outcome word is SKIPPED - YOU'RE NOT ONLINE: it says nothing moved.
+	// When the byte totals had left zero, the in-place clause is the one
+	// true thing the line has to add, and the card used to drop it first --
+	// on a small panel the player read SKIPPED over THEY'LL GO UP NEXT TIME
+	// YOU'RE CONNECTED, as if the run had never started.
+	const std::string inPlace = "THE SAVES THAT MADE IT ARE ON BOTH SIDES. NOTHING ELSE CHANGED.";
+	const std::vector<std::string> waiting = {
+		"THEY'LL GO UP NEXT TIME YOU'RE CONNECTED, WITH YOUR ACHIEVEMENTS.",
+		"THEY GO UP WITH YOUR ACHIEVEMENTS WHEN YOU'RE BACK." };
+	const auto c = actionCandidates(inPlace, waiting, true);
+	REQUIRE(c.size() >= 2);
+	for (auto& candidate : c)
+	{
+		INFO(candidate);
+		CHECK(candidate.find(inPlace) != std::string::npos);
+	}
+	CHECK(c.front() == inPlace + " " + waiting.front());
+	CHECK(c.back() == inPlace);   // the shortest still says what moved
+}
+
 TEST_CASE("every protocol shape an emitter prints classifies to a known kind")
 {
 	struct Shape { const char* line; ProtocolKind kind; const char* from; };
