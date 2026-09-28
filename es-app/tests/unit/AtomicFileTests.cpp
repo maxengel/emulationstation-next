@@ -35,6 +35,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 
 namespace
 {
@@ -216,6 +217,49 @@ TEST_CASE("a read that fails after the file opened is not a read (PL-065)")
 	put(dir / "empty", "");
 	CHECK(readText(dir / "empty", &ok).empty());
 	CHECK(ok);   // empty and missing are different answers
+}
+
+// A read() that fails part way, for readText's case below: this binary's
+// own read(), which AtomicFileUtil.cpp's calls resolve to, passes every
+// call through to the kernel unless a test on this thread has armed it, and
+// then lets `readsLeft` reads through and fails the next with EIO -- the
+// failing card the finding describes, on a file that opened and began to
+// read (the audit of the fixes: PL-065's fixture failed on the first read).
+namespace
+{
+	thread_local int readsLeft = -1;   // -1: not armed
+}
+extern "C" ssize_t read(int fd, void* buf, size_t count)
+{
+	if (readsLeft == 0)
+	{
+		readsLeft = -1;
+		errno = EIO;
+		return -1;
+	}
+	if (readsLeft > 0)
+		readsLeft--;
+	return (ssize_t) syscall(SYS_read, fd, buf, count);
+}
+
+TEST_CASE("a read that fails after part of the file came is not a read (PL-065)")
+{
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	put(path, lines('a', 2000));   // 200000 bytes: more than one 64 KiB read
+	bool ok = true;
+	readsLeft = 1;                 // the first read succeeds, the second fails
+	const std::string text = readText(path, &ok);
+	const int left = readsLeft;
+	readsLeft = -1;
+	CHECK(left == -1);             // the failure was reached: the fixture ran
+	CHECK_FALSE(ok);
+	CHECK(text.empty());           // not the 65536 bytes that came first
+
+	// Unarmed, the same file reads whole.
+	ok = false;
+	CHECK(readText(path, &ok).size() == 200000);
+	CHECK(ok);
 }
 
 // ------------------------------------------------------------ F-ES-08
