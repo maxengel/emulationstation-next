@@ -79,20 +79,32 @@ std::string Utils::FileSystem::getFileName(const std::string& path)
 // arrives.
 static void stopBeforeThePid(const std::string& who, const std::function<bool()>& stop)
 {
-	clearLog();
-	const auto started = std::chrono::steady_clock::now();
-	auto job = CloudTransferJob::start("sleep 4", "TEST", 1, 0);
-	REQUIRE(job != nullptr);
-	REQUIRE(stop());
-	// The case is the seam: the stop found no pid yet. If the line had
-	// already arrived this run proves nothing, so it does not pass.
-	REQUIRE_MESSAGE(logged("group 0"), who << ": the pid had arrived before the stop; the case did not happen");
-
-	REQUIRE(waitFor([&] { return job->finished(); }, 10));
-	const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
-	INFO(who << ": the run took " << ms << " ms");
-	CHECK(ms < 2000);
-	CloudTransferJob::dismiss(job);
+	// The case is the seam: the stop finds no pid yet. The race is the
+	// test's to win, and on a loaded runner it can lose -- so a run where
+	// the pid came first is stopped, let go and tried again, up to five
+	// times (audit of the fixes, E2 claude G-E2-09); five losses fail,
+	// since a run that never reproduced the seam proves nothing.
+	for (int attempt = 1; attempt <= 5; attempt++)
+	{
+		clearLog();
+		const auto started = std::chrono::steady_clock::now();
+		auto job = CloudTransferJob::start("sleep 4", "TEST", 1, 0);
+		REQUIRE(job != nullptr);
+		REQUIRE(stop());
+		const bool seam = logged("group 0");
+		REQUIRE(waitFor([&] { return job->finished(); }, 10));
+		const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+		CloudTransferJob::dismiss(job);
+		if (!seam)
+		{
+			MESSAGE(who << ": attempt " << attempt << " -- the pid came before the stop; trying again");
+			continue;
+		}
+		INFO(who << ": the run took " << ms << " ms (attempt " << attempt << ")");
+		CHECK(ms < 2000);
+		return;
+	}
+	FAIL(who << ": five runs, and the stop never came before the pid; the case did not happen");
 }
 
 TEST_CASE("transfer job: a cancel before the run says its pid reaches the run when it does")
