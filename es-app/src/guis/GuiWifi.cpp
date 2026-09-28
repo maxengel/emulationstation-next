@@ -64,7 +64,8 @@ void GuiWifi::load(const std::vector<WifiText::PickerRow>& rows)
 // network's name is what the player recognises it by (addEntry would
 // upper-case it) -- and, on the right at the row's own weight, CONNECTED for
 // the network the device is on or SAVED for one it holds a profile for: the
-// shape of MANAGE SAVED NETWORKS' IN USE, a fact beside the action.
+// shape and the word of MANAGE SAVED NETWORKS' mark, a fact beside the
+// action.
 void GuiWifi::addRow(const WifiText::PickerRow& network)
 {
 	auto theme = ThemeData::getMenuTheme();

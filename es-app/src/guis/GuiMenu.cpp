@@ -9841,11 +9841,14 @@ static void manageNetworksAddRow(Window* window, GuiSettings* page, const WifiTe
 
 	// The mark, on the right, at the row's own weight: a fact beside an
 	// action rather than a line under it, so every row stays one line high.
+	// CONNECTED, the word the Wi-Fi picker beside this page and its toast
+	// use for the same fact; it read IN USE (#308 2-wifi claude F-WF-11,
+	// least-surprise.md: same thing, same words).
 	if (network.inUse)
 	{
-		const std::string inUse = _("IN USE");
-		auto mark = std::make_shared<TextComponent>(window, inUse, theme->Text.font, theme->Text.color, Alignment::ALIGN_RIGHT);
-		mark->setSize(theme->Text.font->sizeText(inUse + "  ").x(), 0);
+		const std::string connected = _("CONNECTED");
+		auto mark = std::make_shared<TextComponent>(window, connected, theme->Text.font, theme->Text.color, Alignment::ALIGN_RIGHT);
+		mark->setSize(theme->Text.font->sizeText(connected + "  ").x(), 0);
 		row.addElement(mark, false);
 	}
 
