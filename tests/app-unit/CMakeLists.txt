@@ -93,6 +93,7 @@ add_executable(bookkeeper-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/BookkeeperTests.cpp
 	${CMAKE_BINARY_DIR}/under-test/SaveStateBookkeeper.cpp
 	${ES_ROOT}/es-app/src/SaveStateJobQueue.cpp
+	${ES_ROOT}/es-core/src/utils/AtomicFileUtil.cpp
 	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
 )
 target_compile_definitions(bookkeeper-tests PRIVATE CLOUD_SYNC_LOCK_PATH="${CMAKE_BINARY_DIR}/cloud_sync.lock")

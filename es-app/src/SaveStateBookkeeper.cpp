@@ -2,7 +2,7 @@
 #include "SaveStateJobQueue.h"
 #include "ApiSystem.h"
 #include "Log.h"
-#include "RunLock.h"
+#include "utils/AtomicFileUtil.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
 
@@ -48,9 +48,15 @@ namespace
 	// deletion still waiting then is not made, the file stays, and its tile
 	// is back at the next start, which is honest where deleting under the
 	// transfer would not be. True when the deletion may go ahead.
+	//
+	// Asked through Utils::AtomicFile::isFlockHeld, the check the manager's
+	// DELETE and COPY refusal makes (E1, PL-068), so the two cannot answer
+	// differently -- and it fails closed: a lock file that exists and
+	// cannot be opened is a transfer we cannot rule out. RunLock::held,
+	// which this used first, took that as free.
 	bool transferGone(Worker* w, const SaveStateJob& job)
 	{
-		if (!RunLock::held(CLOUD_SYNC_LOCK_PATH))
+		if (!Utils::AtomicFile::isFlockHeld(CLOUD_SYNC_LOCK_PATH))
 			return true;
 		LOG(LogInfo) << "save state deletion waits: a cloud transfer holds the lock (" << job.stateFile << ")";
 		bool stopping = false;
@@ -64,7 +70,7 @@ namespace
 					w->wake.wait_for(lock, std::chrono::milliseconds(500), [w] { return w->stop; });
 				stop = w->stop;
 			}
-			if (!RunLock::held(CLOUD_SYNC_LOCK_PATH))
+			if (!Utils::AtomicFile::isFlockHeld(CLOUD_SYNC_LOCK_PATH))
 			{
 				LOG(LogInfo) << "save state deletion goes ahead: the cloud transfer has ended (" << job.stateFile << ")";
 				return true;

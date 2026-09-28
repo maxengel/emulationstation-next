@@ -126,6 +126,25 @@ TEST_CASE("bookkeeper: with no transfer, a deletion goes at once")
 	CHECK(runsNamed("--retire --unlink") == before + 1);
 }
 
+// A lock the bookkeeper cannot ask is not a free one (engineering-practices.md,
+// guards fail closed): a deletion waits on a lock file it cannot open, as it
+// waits on a held one, and goes once the file can be asked again.
+TEST_CASE("bookkeeper: a lock file that cannot be opened is taken as held")
+{
+	const std::string lock = CLOUD_SYNC_LOCK_PATH;
+	{ std::ofstream touch(lock, std::ios::app); }
+	REQUIRE(::chmod(lock.c_str(), 0) == 0);
+	REQUIRE_MESSAGE(::access(lock.c_str(), R_OK) != 0, "running as a user who can read a mode-0 file; the case cannot happen");
+	const std::string state = stateFile("d");
+
+	SaveStateBookkeeper::deleteLater(state, "");
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	CHECK_MESSAGE(fileExists(state), "the state was deleted past a lock nobody could ask");
+
+	REQUIRE(::chmod(lock.c_str(), 0644) == 0);
+	REQUIRE(waitFor([&state] { return !fileExists(state); }, 5000));
+}
+
 TEST_CASE("bookkeeper: exit does not wait out a transfer, and deletes nothing under it")
 {
 	const std::string lock = CLOUD_SYNC_LOCK_PATH;
