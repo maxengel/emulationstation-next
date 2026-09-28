@@ -313,6 +313,23 @@ static void maintenanceRestart()
 	Utils::Platform::quitES(Utils::Platform::QuitMode::REBOOT);
 }
 
+// What a failed maintenance run's dialog says after COULDN'T FINISH. The
+// why is the script's `>>> why` sentence (es-player-text.md, Outcome
+// vocabulary); backuptool's fail() prints a fuller one -- the same words,
+// then what is in place and how to recover -- as its last line, and that
+// one is said when it carries the why. Any other last line is a tool's,
+// printed after the why, and the why is said over it (#308 8-es claude
+// F-ES-13: the last line used to win whatever it was). A script that
+// printed no why is said by its last line, as before.
+static std::string maintenanceWhy(const std::string& last, const std::string& why)
+{
+	if (why.empty())
+		return last;
+	if (Utils::String::startsWith(last, why))
+		return last;
+	return why;
+}
+
 static void runMaintenanceCommand(Window* window, const std::string& cmd, const std::string& busyTitle,
 	const std::string& doneText, const std::string& failText, std::function<void()> onCompleted = nullptr)
 {
@@ -338,7 +355,7 @@ static void runMaintenanceCommand(Window* window, const std::string& cmd, const 
 
 			if (rc == 0)
 				return std::pair<int, std::string>(0, "");
-			return std::pair<int, std::string>(rc, last.empty() ? why : last);
+			return std::pair<int, std::string>(rc, maintenanceWhy(last, why));
 		},
 		[window, doneText, failText, onCompleted](std::pair<int, std::string> result)
 		{
