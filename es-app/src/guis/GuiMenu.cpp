@@ -78,6 +78,7 @@
 #include "AppWindow.h"
 #include "utils/AtomicFileUtil.h"
 #include <set> 
+#include <fstream>
 
 #if !WIN32
 #include <vector>
@@ -4052,6 +4053,66 @@ static std::string cloudSetSystemsCommand(const std::vector<std::string>& names)
 		picked += (picked.empty() ? "" : " ") + name;
 	return "/usr/bin/cloud_content_restore --set-systems " + cloudShellQuote(picked);
 }
+
+// Where --set-systems keeps the selection (cloud_content_restore's
+// SELECTION), which --selected reads when the run starts. A macro so a test
+// can point it elsewhere (tests/cloud-content-selection.py).
+#ifndef CLOUD_CONTENT_SELECTION
+#define CLOUD_CONTENT_SELECTION "/storage/.cache/cloud_sync/content-systems"
+#endif
+
+// The selection file's names, one a line. An ifstream, not readAllText:
+// that reads a file under three bytes as empty (es-code-traps.md), and a
+// one-letter name makes a two-byte file.
+static std::vector<std::string> cloudSelectionRead(const std::string& path)
+{
+	std::vector<std::string> names;
+	std::ifstream in(path);
+	std::string line;
+	while (std::getline(in, line))
+	{
+		if (!line.empty() && line.back() == '\r')
+			line.pop_back();
+		if (!line.empty())
+			names.push_back(line);
+	}
+	return names;
+}
+
+// The picker's selection, saved and then read back before anything moves on
+// it (audit of the fix round PL-019). --set-systems exits 0 over a rename
+// that failed -- a full card, a folder gone read-only -- and the file then
+// still holds the last run's picks, which --selected carries: systems the
+// player did not tick, in either direction. So the answer is the file, not
+// the exit status alone. True when the file names exactly what was ticked;
+// nothing ticked is a file with nothing in it, never no file (the script
+// writes one either way).
+static bool cloudSaveSelection(const std::vector<std::string>& names)
+{
+	const int rc = ApiSystem::executeScriptLegacy(cloudSetSystemsCommand(names), nullptr).second;
+	if (rc != 0)
+	{
+		LOG(LogError) << "cloud content: --set-systems exited " << rc << "; the selection was not saved";
+		return false;
+	}
+	std::ifstream there(CLOUD_CONTENT_SELECTION);
+	const auto saved = cloudSelectionRead(CLOUD_CONTENT_SELECTION);
+	if (!there.is_open() || std::set<std::string>(saved.begin(), saved.end()) != std::set<std::string>(names.begin(), names.end()))
+	{
+		LOG(LogError) << "cloud content: --set-systems exited 0, but " << CLOUD_CONTENT_SELECTION << " does not name what was ticked";
+		return false;
+	}
+	return true;
+}
+
+// What the picker says when the selection could not be saved: the why, and
+// that nothing started. The page stays, and its verb is the way to try again.
+static std::string cloudSelectionNotSaved(bool backup)
+{
+	return backup ? _("COULDN'T SAVE WHAT YOU TICKED, SO NOTHING WAS BACKED UP.")
+	              : _("COULDN'T SAVE WHAT YOU TICKED, SO NOTHING WAS RESTORED.");
+}
+
 // Horizontal padding matching what ComponentList applies to selectable
 // rows, so informational text lines up with the actionable rows.
 #define CLOUD_SETUP_ROW_PADDING Vector4f(10, 0, 10, 0)
@@ -4199,62 +4260,25 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					continue;
 				found.push_back(f);
 			}
-			// BIOS files and no system to pick: the tier's other half still
-			// moves (#308 8a gpt F-ES-10). It used to end in NO SYSTEM ...
-			// HOLDS WHAT YOU TICKED with the BIOS files sitting there. The
-			// selection names bios alone: cloud_content_restore --selected
-			// refuses an empty selection before it adds bios, and both
-			// scripts take bios in the selection as the tier. Not for game
-			// content alone, which BIOS is not.
-			const bool biosToMove = biosListed && content
-				&& (backup ? (bios.localBytes > 0 || bios.hereNotCloud > 0) : (bios.cloudBytes > 0 || bios.cloudNotHere > 0));
-			if (found.empty() && biosToMove)
+			// One line under the label (D-UI-023), and it answers the one
+			// question this page asks: is there anything not yet on the
+			// far side, and how much? "253.9 MB NOT YET IN YOUR CLOUD . 14
+			// FILES" when there is, NOTHING NEW TO BACK UP when there is
+			// not; the restore page reads NOT YET ON THIS DEVICE / NOTHING
+			// NEW TO RESTORE. No total anywhere on the row (D-UI-027): the
+			// zero case used to read ALREADY IN YOUR CLOUD (253.9 MB), and
+			// a size beside a system reads as an amount about to move --
+			// "does that mean I'm backing up 253.9 MB?" (maintainer,
+			// 2026-09-09). The count stays because a delta of many tiny
+			// files is a different job from one big file. Sizes are the
+			// transfer page's (GuiCloudTransfer::sizeLabel): a whole KB
+			// below a megabyte, rounded up so a one-byte difference never
+			// reads "0 KB", and no decimals that could only ever be zero
+			// (#85). A difference of only empty files is carried by the
+			// count instead. The BIOS row, when it is the only thing to
+			// move (below), reads the same way.
+			auto noteFor = [backup](const Found& f)
 			{
-				LOG(LogInfo) << "cloud content: no system to pick; BIOS files alone " << (backup ? "go up" : "come down");
-				ApiSystem::executeScriptLegacy(cloudSetSystemsCommand({ "bios" }));
-				onDone();
-				return;
-			}
-			if (found.empty())
-			{
-				window->pushGui(new GuiMsgBox(window, backup
-					? _("NO SYSTEM ON THIS DEVICE HOLDS WHAT YOU TICKED.")
-					: _("NO SYSTEM IN YOUR CLOUD HOLDS WHAT YOU TICKED.\n\nPUT FILES INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
-				return;
-			}
-			// CONTENT TO ..., not SYSTEMS TO ...: settings cover the whole device
-			// and do not belong to a system, and the maintainer read a page
-			// called SYSTEMS that listed them as a contradiction (2026-09-06).
-			// Two centred lines say what this run carries: the per-system
-			// classes the choice below applies to, then the whole-device ones
-			// that ride along regardless.
-			auto s = new GuiSettings(window, backup ? _("CONTENT TO BACK UP") : _("CONTENT TO RESTORE"));
-			cloudAddCentredLine(s, window, perSystem);
-			if (!wholeDevice.empty())
-				cloudAddCentredLine(s, window, wholeDevice);
-			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
-			s->addGroup(backup ? _("SYSTEMS ON THIS DEVICE") : _("SYSTEMS IN YOUR CLOUD"));
-			for (auto& f : found)
-			{
-				auto sw = std::make_shared<SwitchComponent>(window);
-				sw->setState(chosen.find(f.name) != chosen.end());
-				switches->push_back({ f.name, sw });
-				// One line under the label (D-UI-023), and it answers the one
-				// question this page asks: is there anything not yet on the
-				// far side, and how much? "253.9 MB NOT YET IN YOUR CLOUD . 14
-				// FILES" when there is, NOTHING NEW TO BACK UP when there is
-				// not; the restore page reads NOT YET ON THIS DEVICE / NOTHING
-				// NEW TO RESTORE. No total anywhere on the row (D-UI-027): the
-				// zero case used to read ALREADY IN YOUR CLOUD (253.9 MB), and
-				// a size beside a system reads as an amount about to move --
-				// "does that mean I'm backing up 253.9 MB?" (maintainer,
-				// 2026-09-09). The count stays because a delta of many tiny
-				// files is a different job from one big file. Sizes are the
-				// transfer page's (GuiCloudTransfer::sizeLabel): a whole KB
-				// below a megabyte, rounded up so a one-byte difference never
-				// reads "0 KB", and no decimals that could only ever be zero
-				// (#85). A difference of only empty files is carried by the
-				// count instead.
 				const unsigned long total = backup ? f.localBytes : f.cloudBytes;
 				const unsigned long other = backup ? f.cloudBytes : f.localBytes;
 				// The bytes a copy in this direction would send. A six-field
@@ -4294,20 +4318,102 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					note = backup ? _("NOTHING NEW TO BACK UP") : _("NOTHING NEW TO RESTORE");
 				if (!f.supported)
 					note += " · " + _("THIS DEVICE CANNOT RUN IT");
-				s->addWithDescription(Utils::String::toUpper(f.name), note, sw);
-			}
-			s->addSaveFunc([switches]
+				return note;
+			};
+			// BIOS files and no system to pick: the tier's other half still
+			// moves (#308 8a gpt F-ES-10). It used to end in NO SYSTEM ...
+			// HOLDS WHAT YOU TICKED with the BIOS files sitting there. The
+			// selection names bios alone: cloud_content_restore --selected
+			// refuses an empty selection before it adds bios, and both
+			// scripts take bios in the selection as the tier. Not for game
+			// content alone, which BIOS is not.
+			//
+			// And it moves on the player's press, as every run from this page
+			// does (audit of the fix round PL-019): the branch wrote the
+			// selection, threw the answer away and started the run straight
+			// from the scan. So it is the same page with no system on it --
+			// NONE under the systems heading, the BIOS files under their own
+			// with what would move -- and its verb saves the selection, reads
+			// it back and only then goes on.
+			const bool biosToMove = biosListed && content
+				&& (backup ? (bios.localBytes > 0 || bios.hereNotCloud > 0) : (bios.cloudBytes > 0 || bios.cloudNotHere > 0));
+			if (found.empty() && biosToMove)
 			{
-				std::vector<std::string> picked;
+				LOG(LogInfo) << "cloud content: no system to pick; the page offers the BIOS files alone, to " << (backup ? "go up" : "come down") << " on the verb's press";
+				auto s = new GuiSettings(window, backup ? _("CONTENT TO BACK UP") : _("CONTENT TO RESTORE"));
+				cloudAddCentredLine(s, window, perSystem);
+				if (!wholeDevice.empty())
+					cloudAddCentredLine(s, window, wholeDevice);
+				s->addGroup(backup ? _("SYSTEMS ON THIS DEVICE") : _("SYSTEMS IN YOUR CLOUD"));
+				cloudSetupAddInfoRow(s, window, _("NONE"), false);
+				s->addGroup(_("BIOS FILES"));
+				s->addWithDescription(Utils::String::toUpper(bios.name), noteFor(bios), nullptr);
+				auto proceed = std::make_shared<bool>(false);
+				s->getMenu().clearButtons();
+				s->getMenu().addButton(_("BACK"), _("back"), [s] { s->close(); });
+				if (onDone)
+					s->getMenu().addButton(proceedLabel.empty() ? _("CONTINUE") : proceedLabel, _("continue"),
+						[window, s, proceed, backup]
+						{
+							if (!cloudSaveSelection({ "bios" }))
+							{
+								window->pushGui(new GuiMsgBox(window, cloudSelectionNotSaved(backup)));
+								return;
+							}
+							*proceed = true;
+							s->close();
+						});
+				window->pushGui(s);
+				s->onFinalize([proceed, onDone] { if (*proceed && onDone) onDone(); });
+				return;
+			}
+			if (found.empty())
+			{
+				window->pushGui(new GuiMsgBox(window, backup
+					? _("NO SYSTEM ON THIS DEVICE HOLDS WHAT YOU TICKED.")
+					: _("NO SYSTEM IN YOUR CLOUD HOLDS WHAT YOU TICKED.\n\nPUT FILES INTO THE ROMS FOLDER FROM A COMPUTER, THEN SCAN AGAIN.")));
+				return;
+			}
+			// CONTENT TO ..., not SYSTEMS TO ...: settings cover the whole device
+			// and do not belong to a system, and the maintainer read a page
+			// called SYSTEMS that listed them as a contradiction (2026-09-06).
+			// Two centred lines say what this run carries: the per-system
+			// classes the choice below applies to, then the whole-device ones
+			// that ride along regardless.
+			auto s = new GuiSettings(window, backup ? _("CONTENT TO BACK UP") : _("CONTENT TO RESTORE"));
+			cloudAddCentredLine(s, window, perSystem);
+			if (!wholeDevice.empty())
+				cloudAddCentredLine(s, window, wholeDevice);
+			auto switches = std::make_shared<std::vector<std::pair<std::string, std::shared_ptr<SwitchComponent>>>>();
+			s->addGroup(backup ? _("SYSTEMS ON THIS DEVICE") : _("SYSTEMS IN YOUR CLOUD"));
+			for (auto& f : found)
+			{
+				auto sw = std::make_shared<SwitchComponent>(window);
+				sw->setState(chosen.find(f.name) != chosen.end());
+				switches->push_back({ f.name, sw });
+				s->addWithDescription(Utils::String::toUpper(f.name), noteFor(f), sw);
+			}
+			auto picked = [switches]
+			{
+				std::vector<std::string> names;
 				for (auto& entry : *switches)
 					if (entry.second->getState())
-						picked.push_back(entry.first);
-				ApiSystem::executeScriptLegacy(cloudSetSystemsCommand(picked));
+						names.push_back(entry.first);
+				return names;
+			};
+			auto proceed = std::make_shared<bool>(false);
+			// BACK keeps the ticks for next time, as it always has; a save
+			// that fails there is logged (cloudSaveSelection) and the next
+			// open reads the file as it is. The verb saves them itself, and
+			// checks, before the run (PL-019), so they are not written twice.
+			s->addSaveFunc([picked, proceed]
+			{
+				if (!*proceed)
+					cloudSaveSelection(picked());
 			});
 			// SELECT ALL / SELECT NONE is one button that reads as the thing it
 			// would do next, in the bar with BACK and the verb -- rows in the
 			// list read as choices of their own (maintainer, 2026-09-06).
-			auto proceed = std::make_shared<bool>(false);
 			// Rebuilding the bar destroys its buttons, so it must never run
 			// from inside a button's own callback: the first cut did, and
 			// EmulationStation died on the SELECT ALL press (VM, 2026-09-06).
@@ -4331,7 +4437,7 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					}
 				});
 			};
-			*buttons = [s, switches, proceed, onDone, proceedLabel, quiet, later]()
+			*buttons = [window, s, switches, proceed, onDone, proceedLabel, quiet, later, picked, backup]()
 			{
 				bool allOn = !switches->empty();
 				for (auto& e : *switches)
@@ -4347,9 +4453,21 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 						*quiet = false;
 						later(true);
 					});
+				// The selection is saved and read back before the run (PL-019):
+				// one that did not stick says so, and the page stays for
+				// another press.
 				if (onDone)
 					s->getMenu().addButton(proceedLabel.empty() ? _("CONTINUE") : proceedLabel,
-						_("continue"), [s, proceed] { *proceed = true; s->close(); });
+						_("continue"), [window, s, proceed, picked, backup]
+						{
+							if (!cloudSaveSelection(picked()))
+							{
+								window->pushGui(new GuiMsgBox(window, cloudSelectionNotSaved(backup)));
+								return;
+							}
+							*proceed = true;
+							s->close();
+						});
 			};
 			for (auto& e : *switches)
 				e.second->setOnChangedCallback([quiet, later] { if (!*quiet) later(false); });
@@ -4848,9 +4966,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		int itemsAfterContent = 0;
 		if (wantContent || wantMedia)
 		{
-			for (auto& line : Utils::String::split(Utils::FileSystem::readAllText("/storage/.cache/cloud_sync/content-systems"), '\n', true))
-				if (!Utils::String::trim(line).empty())
-					items++;
+			items += (int) cloudSelectionRead(CLOUD_CONTENT_SELECTION).size();
 			itemsAfterContent = backup && wantSettings ? 1 : 0;
 		}
 
