@@ -4847,6 +4847,18 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	{
 		content->setOnChangedCallback([rebuildButtons] { rebuildButtons(); });
 		media->setOnChangedCallback([rebuildButtons] { rebuildButtons(); });
+		// Each switch's callback holds rebuildButtons, which holds both
+		// switches (and run, and the line builders, which hold them too): a
+		// cycle that kept every closed form alive, with its switches, its
+		// run and a pointer to the page it was built for (#308 8a gpt
+		// F-ES-11). The page lets go of the callbacks as it closes, and the
+		// rest goes with the page's rows. Owned by the page, as the picker's
+		// rebuild is (es-code-traps.md, a button bar rebuilt from a button).
+		s->onFinalize([content, media]
+		{
+			content->setOnChangedCallback(nullptr);
+			media->setOnChangedCallback(nullptr);
+		});
 	}
 
 	window->pushGui(s);
