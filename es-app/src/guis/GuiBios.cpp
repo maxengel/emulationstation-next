@@ -244,6 +244,8 @@ void GuiBios::loadList()
 		mList->setCursorIndex(idx);
 
 	centerWindow();
+	// DETAILS comes and goes with the list (getHelpPrompts).
+	updateHelpPrompts();
 }
 
 void GuiBios::openSystem(Window* window, const BiosSystem& system, const std::string& displayName)
@@ -265,7 +267,14 @@ void GuiBios::openSystem(Window* window, const BiosSystem& system, const std::st
 		if (f.status != "PRESENT" && !f.md5.empty() && f.md5 != "-")
 			status += " - MD5: " + f.md5;
 
-		s->addWithDescription(biosIcon(f.status) + "  " + f.path, status, nullptr);
+		// The path as the system expects it, case kept: /storage is
+		// case-sensitive, and addWithDescription upper-cases its label, so
+		// bios/scph5501.bin read BIOS/SCPH5501.BIN and a file named as the
+		// page said still read MISSING (#308 8-es claude F-ES-06). Built by
+		// hand, as MANAGE SAVED NETWORKS' rows are for a network's name.
+		ComponentListRow row;
+		row.addElement(std::make_shared<MultiLineMenuEntry>(window, biosIcon(f.status) + "  " + f.path, status, true), true);
+		s->addRow(row);
 	}
 
 	window->pushGui(s);
@@ -304,7 +313,11 @@ bool GuiBios::input(InputConfig* config, Input input)
 std::vector<HelpPrompt> GuiBios::getHelpPrompts()
 {
 	std::vector<HelpPrompt> prompts;
-	prompts.push_back(HelpPrompt(BUTTON_OK, _("DETAILS")));
+	// Only when there is a system to open: the THE BIOS CHECK RETURNED
+	// NOTHING row has no action, and a prompt that does nothing is worse than
+	// none (#308 8-es claude F-ES-28; es-code-traps.md, the help bar).
+	if (!mBios.empty())
+		prompts.push_back(HelpPrompt(BUTTON_OK, _("DETAILS")));
 	prompts.push_back(HelpPrompt(BUTTON_BACK, _("BACK")));
 	prompts.push_back(HelpPrompt("start", _("REFRESH")));
 	return prompts;
