@@ -1287,6 +1287,31 @@ TEST_CASE("parseScanStamp reads raofflineproxy-ctl's last-scan line")
 	CHECK_FALSE(s.truncated);
 }
 
+// Audit of the fix round PL-031 (stream D's ctl, the interface's half):
+// the ctl writes added=unknown when the store could not be read before or
+// after a run that cached games, where it used to write the cache count in
+// its place. The word is an answer of its own -- nobody counted -- never a
+// stamp that does not say, which the card reads as cached.
+TEST_CASE("parseScanStamp reads added=unknown as its own answer, not as a stamp that does not say")
+{
+	ScanStamp s = parseScanStamp("1789400170 0 topup cached=5 skipped=0 ready=14 limit=0 indexed=0 errors=0 added=unknown");
+	CHECK(s.ran);
+	CHECK(s.cached == 5);
+	CHECK(s.ready == 14);
+	CHECK(s.added == ScanStamp::AddedUnknown);
+	CHECK(ScanStamp::AddedUnknown != -1);
+	CHECK(ScanStamp::AddedUnknown < 0);
+
+	// A stamp with a number stays a number, and one without added= is -1.
+	CHECK(parseScanStamp("1789400180 0 topup cached=5 added=0 ready=14 limit=0").added == 0);
+	CHECK(parseScanStamp("1789400180 0 topup cached=5 added=3 ready=14 limit=0").added == 3);
+	CHECK(parseScanStamp("1789400180 0 topup cached=5 ready=14 limit=0").added == -1);
+	// Only the ctl's word: another non-number still says nothing.
+	CHECK(parseScanStamp("1789400180 0 topup cached=5 added=UNKNOWN ready=14").added == -1);
+	CHECK(parseScanStamp("1789400180 0 topup cached=5 added= ready=14").added == -1);
+	CHECK(parseScanStamp("1789400180 0 topup cached=5 added=x2 ready=14").added == -1);
+}
+
 TEST_CASE("parseScanStamp on the shapes that are not a scan")
 {
 	CHECK_FALSE(parseScanStamp("").ran);
