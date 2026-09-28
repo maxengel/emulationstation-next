@@ -59,6 +59,7 @@
 #include "ThreadedCloudSync.h"
 #include "CloudExit.h"
 #include "JourneyTiers.h"
+#include "AppWindow.h"
 
 #ifdef WIN32
 #include <Windows.h>
@@ -1312,6 +1313,11 @@ int main(int argc, char* argv[])
 
 		Renderer::swapBuffers();		
 	}
+
+	// The loop has ended: a worker that finishes from here on posts to
+	// nothing (AppWindow; #308 8-es claude F-ES-26). Before any teardown, so
+	// no post lands in a window on its way out.
+	AppWindow::closing();
 
 	if (Utils::Platform::isFastShutdown())
 		Settings::getInstance()->setBool("IgnoreGamelist", true);

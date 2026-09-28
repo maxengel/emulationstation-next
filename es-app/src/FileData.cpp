@@ -1,4 +1,5 @@
 #include "FileData.h"
+#include "AppWindow.h"
 #include "CaptureRotation.h"
 
 #include "utils/FileSystemUtil.h"
@@ -1200,7 +1201,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 			unsigned mine = generation;
 			sCaptureInFlight.compare_exchange_strong(mine, 0);
 		}
-		window->postToUiThread([window, exitSync, generation, captureFailed]
+		AppWindow::post(window, [window, exitSync, generation, captureFailed]
 		{
 			// A capture that could not record says so once, as a toast, in
 			// the player's words (fork #293 item 3, D-UI-095): what did not

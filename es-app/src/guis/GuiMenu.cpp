@@ -75,6 +75,7 @@
 #include "TextToSpeech.h"
 #include "Paths.h"
 #include "JourneyTiers.h"
+#include "AppWindow.h"
 #include "utils/AtomicFileUtil.h"
 #include <set> 
 
@@ -5075,7 +5076,7 @@ static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 			[](const std::string&) {}).second;
 		if (rc != 0)
 			return;
-		window->postToUiThread([window, s, alive]
+		AppWindow::post(window, [window, s, alive]
 		{
 			if (alive.expired())
 				return;
@@ -9181,7 +9182,7 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 			if (first.empty() && a.physical)
 				first = a.address;
 		}
-		window->postToUiThread([ip, addresses, first, lines, notConnected, fill]
+		AppWindow::post(window, [ip, addresses, first, lines, notConnected, fill]
 		{
 			if (auto held = addresses.lock())
 				*held = lines;
@@ -9196,7 +9197,7 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 	std::thread([window, status, connected, notConnected, fill]
 	{
 		const bool online = ApiSystem::getInstance()->ping();
-		window->postToUiThread([status, online, connected, notConnected, fill]
+		AppWindow::post(window, [status, online, connected, notConnected, fill]
 		{
 			fill(status, online ? connected : notConnected);
 		});
@@ -9231,7 +9232,7 @@ static void networkSettingsFillInSsid(Window* window, GuiSettings* s, const std:
 		std::string joined;
 		const bool answered = ApiSystem::getInstance()->getCurrentWifiSsid(joined);
 		const std::string text = !answered ? couldNotCheck : (joined.empty() ? notConnected : joined);
-		window->postToUiThread([list, value, text]
+		AppWindow::post(window, [list, value, text]
 		{
 			// A value that changes width after its row was laid out has to
 			// be laid out again (networkSettingsFillIn). Both are held

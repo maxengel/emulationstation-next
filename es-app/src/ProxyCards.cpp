@@ -1,4 +1,5 @@
 #include "ProxyCards.h"
+#include "AppWindow.h"
 
 #include "CloudText.h"
 #include "FileData.h"
@@ -182,7 +183,7 @@ namespace
 	// second (D-UI-105). Five seconds, as those cards' outcomes stand.
 	static void offlineIndexCard(Window* window)
 	{
-		window->postToUiThread([window]
+		AppWindow::post(window, [window]
 		{
 			AsyncNotificationComponent* card = window->createAsyncNotificationComponent();
 			card->updateTitle(TROPHY + _("RETROACHIEVEMENTS (OFFLINE)"));
@@ -222,7 +223,7 @@ namespace
 			auto made = std::make_shared<std::promise<AsyncNotificationComponent*>>();
 			auto wanted = std::make_shared<std::atomic<bool>>(true);
 			auto got = made->get_future();
-			window->postToUiThread([window, made, wanted]
+			AppWindow::post(window, [window, made, wanted]
 			{
 				if (!wanted->exchange(false))
 					return;
@@ -413,7 +414,7 @@ namespace ProxyCards
 				while ((ThreadedCloudSync::isRunning() || FileData::GetRunningGame() != nullptr)
 					&& std::chrono::steady_clock::now() - started < std::chrono::seconds(120))
 					std::this_thread::sleep_for(std::chrono::seconds(1));
-				window->postToUiThread([window] { startOwedSaves(window); });
+				AppWindow::post(window, [window] { startOwedSaves(window); });
 				return;
 			}
 			if (saves)
@@ -438,7 +439,7 @@ namespace ProxyCards
 				return;
 			if (sSendRunning.exchange(true))
 				return;   // another probe got there first
-			window->postToUiThread([window]
+			AppWindow::post(window, [window]
 			{
 				if (FileData::GetRunningGame() != nullptr || ThreadedCloudSync::isRunning())
 				{
