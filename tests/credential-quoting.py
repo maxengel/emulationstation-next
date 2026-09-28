@@ -22,7 +22,9 @@
 # typed, whatever the first operand looks like. Exit 0 when every site
 # quotes, 1 when one does not (printed as file:line with the bare names), 2
 # when the scan finds no setrootpass site at all -- a scan that finds
-# nothing to check has not passed.
+# nothing to check has not passed -- or when the check's own cases fail
+# (SELF_TEST): a classifier that passes an unquoted value has not passed
+# anything either.
 
 import os
 import re
@@ -58,7 +60,35 @@ OPERAND = re.compile(r'\+\s*([A-Za-z_][\w:]*)\s*(\(?)')
 # name or any other call, SystemConf::getInstance()->get(...) included -- is a
 # value handed to the shell as typed. The first cut accepted any call, which
 # is how "--host --port " + SystemConf::getInstance()->get(...) read as quoted.
-QUOTING_CALLS = ("Utils::String::shellQuote", "cloudShellQuote", "std::to_string", "std::string")
+QUOTING_CALLS = ("Utils::String::shellQuote", "cloudShellQuote", "std::to_string")
+# std::string(...) copies its argument and quotes nothing, so it is safe only
+# around a literal or one of the calls above (#308 8b-es-core gpt F-ES-10:
+# it was in QUOTING_CALLS, and "setrootpass " + std::string(pass) read as
+# quoted).
+WRAPPERS = ("std::string",)
+QUOTED_ARG = re.compile(r'\s*(?:"|(?:%s)\s*\()' % "|".join(re.escape(c) for c in QUOTING_CALLS))
+
+
+def call_argument(statement, open_paren):
+    """The text between the '(' at open_paren and its matching ')'."""
+    depth, i, in_str = 0, open_paren, False
+    while i < len(statement):
+        c = statement[i]
+        if in_str:
+            if c == "\\":
+                i += 2; continue
+            if c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth == 0:
+                return statement[open_paren + 1:i]
+        i += 1
+    return statement[open_paren + 1:]
 
 
 def statement_after(text, start):
@@ -81,7 +111,58 @@ def statement_after(text, start):
     return text[start:]
 
 
+def bare_operands(statement):
+    """Every operand spliced into a credential command that is not quoted."""
+    bare = []
+    for o in OPERAND.finditer(statement):
+        name, call = o.group(1), o.group(2)
+        if call and name in QUOTING_CALLS:
+            continue
+        if call and name in WRAPPERS:
+            arg = call_argument(statement, o.end() - 1)
+            if QUOTED_ARG.match(arg):
+                continue
+            bare.append("%s(%s)" % (name, arg.strip()))
+            continue
+        bare.append(name)
+    return bare
+
+
+# The check's own cases (#308 8b-es-core gpt F-ES-10): statements as a call
+# site would read, and the operands the check must call bare. Run before the
+# scan, every time, so a change to the classifier that lets a value through
+# unquoted fails here rather than passing every site.
+SELF_TEST = (
+    ('"setrootpass " + Utils::String::shellQuote(pass)', []),
+    ('"setrootpass " + cloudShellQuote(pass)', []),
+    ('"setrootpass " + pass', ["pass"]),
+    ('"setrootpass " + SystemConf::getInstance()->get("root.password")', ["SystemConf::getInstance"]),
+    ('"--host --port " + std::to_string(port)', []),
+    # A std::string built from a value quotes nothing: the constructor copies
+    # the bytes, spaces, $ and quotes included.
+    ('"setrootpass " + std::string(pass)', ["std::string(pass)"]),
+    ('"setrootpass " + std::string(text.c_str())', ["std::string(text.c_str())"]),
+    ('"wifictl join " + std::string(Utils::String::shellQuote(name))', []),
+    ('"wifictl join " + std::string("--scan")', []),
+)
+
+
+def self_test():
+    failed = []
+    for statement, want in SELF_TEST:
+        got = bare_operands(statement)
+        if got != want:
+            failed.append("%s: bare %s, expected %s" % (statement, got, want))
+    return failed
+
+
 def main():
+    failed = self_test()
+    for f in failed:
+        print("SELF-TEST FAIL  " + f)
+    if failed:
+        print("credential-quoting: %d of %d of the check's own cases failed -- the check cannot be trusted" % (len(failed), len(SELF_TEST)))
+        return 2
     root = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sites, bare = 0, []
     for sub in ("es-app/src", "es-core/src"):
@@ -98,8 +179,7 @@ def main():
                     sites += 1
                     statement = statement_after(text, m.start())
                     line = text.count("\n", 0, m.start()) + 1
-                    bad = [o.group(1) for o in OPERAND.finditer(statement)
-                           if not (o.group(2) and o.group(1) in QUOTING_CALLS)]
+                    bad = bare_operands(statement)
                     if bad:
                         bare.append("%s:%d  %s (bare: %s)" % (os.path.relpath(path, root), line, m.group(1), ", ".join(bad)))
     setrootpass = sum(1 for _ in re.finditer(r'"setrootpass "', "\n".join(
