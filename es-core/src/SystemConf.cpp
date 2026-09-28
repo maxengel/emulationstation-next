@@ -83,13 +83,17 @@ void SystemConf::parseSystemConf(const std::string& text)
 // (system.cfg.backup, D-CLOUD-079). Written whole through a temporary and a
 // rename, like the live file, and only when it would change -- this runs at
 // every start and after every save, and most of those change nothing.
-void SystemConf::recordLastGood(const std::string& text)
+void SystemConf::recordLastGood(const std::string& text, int recoveredMode)
 {
 	// No less private than the live file it copies (#308 F-ES-08): a record
 	// an earlier build made 0644 beside a 0600 file is rewritten for its mode
-	// even when its text is the same.
+	// even when its text is the same. A recovery passes the mode every copy
+	// on disk shares (chooseConfig, G-E1-05): the live file may be the copy
+	// that could not be written back, and its mode -- or 0644 where there
+	// is no file -- made a 0600 temporary's text a 0644 record (audit of the
+	// fix round, gpt G2-E-core-05).
 	const std::string backup = mSystemConfFile + ".backup";
-	const int mode = Utils::AtomicFile::modeOf(mSystemConfFile, 0644);
+	const int mode = recoveredMode >= 0 ? recoveredMode : Utils::AtomicFile::modeOf(mSystemConfFile, 0644);
 	if (Utils::AtomicFile::readText(backup) == text && Utils::AtomicFile::modeOf(backup, mode) == mode)
 		return;
 	if (!Utils::AtomicFile::writeText(backup, text, mode))
@@ -214,7 +218,7 @@ bool SystemConf::loadFromDisk()
 		parseSystemConf(chosen.text);
 		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
 			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from " << mSystemConfFile << ".tmp";
-		recordLastGood(chosen.text);
+		recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;
 
@@ -224,6 +228,11 @@ bool SystemConf::loadFromDisk()
 		parseSystemConf(chosen.text);
 		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
 			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from its last-known-good record";
+		// The same text: only the record's mode can change, to the one the
+		// live file was just written with (claude G2-E-core-04 b: a record an
+		// earlier build made 0644 stayed so beside the 0600 file until the
+		// next save).
+		recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;
 

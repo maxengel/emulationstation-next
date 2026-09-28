@@ -60,7 +60,9 @@ private:
 	// The last-known-good record beside the live file: written only from
 	// text that has just been read whole and found well-formed, or that this
 	// process has just written -- never from whatever happens to be on disk.
-	void recordLastGood(const std::string& text);
+	// Made with the live file's mode, or with `recoveredMode` when a
+	// recovery gives one (the mode every copy on disk shares).
+	void recordLastGood(const std::string& text, int recoveredMode = -1);
 	// changedConf's keys applied to the file's text as read under the lock.
 	std::string applyChanges(const std::string& current);
 

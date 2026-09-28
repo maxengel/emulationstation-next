@@ -266,3 +266,43 @@ TEST_CASE("a change is compared with the file it was made against, not with memo
 		CHECK(conf->get("wifi.ssid") == "Library");
 	}
 }
+
+// ------------------------------------------------------------ G2-E-core-05
+
+TEST_CASE("a recovery's record is no less private than the copy it came from (audit of the fix round, gpt G2-E-core-05, claude G2-E-core-04 b)")
+{
+	// chooseConfig works out the mode every copy on disk shares (G-E1-05),
+	// and the recovery wrote the live file with it -- but the record took
+	// its mode from the live file alone, or 0644 where there was none.
+	ScratchDir dir;
+	const mode_t before = umask(022);
+	const std::string path = dir / "system.cfg";
+	const std::string whole = "system.hostname=A\nwifi.key=secret\n";
+
+	SUBCASE("a private temporary, and a live file that cannot be written back")
+	{
+		// system.cfg a directory: nothing can be renamed over it, so the
+		// write-back fails and the record is all the recovery leaves.
+		REQUIRE(mkdir(path.c_str(), 0755) == 0);
+		put(path + ".tmp", whole);
+		REQUIRE(chmod((path + ".tmp").c_str(), 0600) == 0);
+		SystemConf* conf = SystemConfTestAccess::fresh(path, dir / ".system.cfg.lock", 300);
+		CHECK(conf->get("system.hostname") == "A");
+		CHECK(get(path + ".backup") == whole);
+		CHECK(modeOf(path + ".backup") == 0600);
+	}
+	SUBCASE("a private live file recovered from a record made 0644 by an earlier build")
+	{
+		put(path, "# nothing usable\n");
+		REQUIRE(chmod(path.c_str(), 0600) == 0);
+		put(path + ".backup", whole);
+		REQUIRE(chmod((path + ".backup").c_str(), 0644) == 0);
+		SystemConf* conf = SystemConfTestAccess::fresh(path, dir / ".system.cfg.lock", 300);
+		CHECK(conf->get("system.hostname") == "A");
+		CHECK(get(path) == whole);
+		CHECK(modeOf(path) == 0600);
+		CHECK(get(path + ".backup") == whole);
+		CHECK(modeOf(path + ".backup") == 0600);
+	}
+	umask(before);
+}
