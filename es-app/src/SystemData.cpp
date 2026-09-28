@@ -24,6 +24,7 @@
 #include "DisplayAspect.h"
 #include "views/gamelist/IGameListView.h"
 #include <unordered_set>
+#include <chrono>
 #include <algorithm>
 #include <functional>
 #include "SaveStateRepository.h"
@@ -1098,6 +1099,28 @@ void SystemData::startIndexesAtStart(Window* window, bool cheevosOnly)
 {
 	if (window == nullptr || ThreadedHasher::isRunning())
 		return;
+
+	// The link-up retry (cheevosOnly, from the network watcher, for as long
+	// as RetroAchievements' hash library has not come this session) at most
+	// once in ten minutes. The hasher fetches the library on this thread, so
+	// each attempt can hold the screen for the fetch's bound -- ten seconds
+	// to connect and thirty of stall with the link gone -- and a Wi-Fi that
+	// comes and goes started one at every return (#308 8-es claude F-ES-09;
+	// es-code-traps.md: moving the fetch off this thread is #300's). The
+	// startup run and UPDATE GAMELISTS are not held back.
+	if (cheevosOnly)
+	{
+		static bool tried = false;
+		static std::chrono::steady_clock::time_point lastTry;
+		const auto now = std::chrono::steady_clock::now();
+		if (tried && now - lastTry < std::chrono::minutes(10))
+		{
+			LOG(LogInfo) << "SystemData::startIndexesAtStart: the link is back; the index tried within ten minutes and waits";
+			return;
+		}
+		tried = true;
+		lastTry = now;
+	}
 
 	int checkIndex = 0;
 
