@@ -342,6 +342,25 @@ namespace Utils
 			return out;
 		}
 
+		bool isFlockHeld(const std::string& path)
+		{
+#if defined(_WIN32)
+			(void) path;
+			return false;
+#else
+			int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+			if (fd < 0)
+				return errno != ENOENT;
+			int r;
+			do
+				r = ::flock(fd, LOCK_EX | LOCK_NB);
+			while (r != 0 && errno == EINTR);
+			const bool held = r != 0;   // EWOULDBLOCK: somebody has it; anything else: cannot tell
+			::close(fd);                // and the lock, if this took it, with it
+			return held;
+#endif
+		}
+
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
 			const std::function<std::string(const std::string& current)>& merge, std::string* written)
 		{

@@ -82,6 +82,17 @@ namespace Utils
 		// The choice, from what is on disk now. Reads; writes nothing.
 		LoadedConfig chooseConfig(const std::string& path);
 
+		// Whether another process holds an flock on `path` now: the cloud
+		// scripts' transfer lock, /var/run/cloud_sync.lock, which every
+		// cloud_backup, cloud_restore and content run takes for its whole
+		// length (PL-068). Asked the way `flock -n <path> true` asks: an
+		// exclusive lock tried without waiting and let go at once -- the
+		// scripts give a busy lock a second before they give up, so the
+		// instant this holds it costs them nothing. No file is nobody's lock;
+		// a file that cannot be opened or asked is taken as held, since the
+		// callers refuse on held.
+		bool isFlockHeld(const std::string& path);
+
 		// What a read-modify-write under the settings lock came to.
 		enum class LockedSave
 		{

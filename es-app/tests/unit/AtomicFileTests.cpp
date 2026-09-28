@@ -538,3 +538,56 @@ TEST_CASE("the choices that were already right stay right (PL-064)")
 	CHECK(chooseConfig(path).source == LoadedConfig::Source::Damaged);
 }
 
+// ------------------------------------------------------------------ PL-068
+
+TEST_CASE("the transfer lock reads as held while a script holds it, and only then (PL-068)")
+{
+	// The save state manager's DELETE and COPY asked only whether the
+	// interface's own sync card was running. A cloud_backup started from a
+	// shell, or anything else holding /var/run/cloud_sync.lock, was
+	// invisible to them. The script's side is `exec 9>lock; flock -n 9` in a
+	// process of its own; the child here holds the lock the same way.
+	ScratchDir dir;
+	const std::string lockPath = dir / "cloud_sync.lock";
+
+	CHECK_FALSE(isFlockHeld(lockPath));   // no file: nobody's
+
+	int held[2], done[2];
+	REQUIRE(pipe(held) == 0);
+	REQUIRE(pipe(done) == 0);
+	pid_t script = fork();
+	if (script == 0)
+	{
+		::close(held[0]);
+		::close(done[1]);
+		int fd = ::open(lockPath.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+		if (fd < 0 || ::flock(fd, LOCK_EX | LOCK_NB) != 0)
+			_exit(2);
+		if (::write(held[1], "x", 1) != 1)
+			_exit(2);
+		char c;
+		if (::read(done[0], &c, 1) < 0)
+			_exit(2);
+		_exit(0);   // the lock goes with the process
+	}
+	::close(held[1]);
+	::close(done[0]);
+	char c;
+	REQUIRE(::read(held[0], &c, 1) == 1);
+
+	CHECK(isFlockHeld(lockPath));
+	CHECK(isFlockHeld(lockPath));   // asking twice does not take it from the holder
+
+	REQUIRE(::write(done[1], "x", 1) == 1);
+	int status = 0;
+	waitpid(script, &status, 0);
+	CHECK(WIFEXITED(status));
+	CHECK(WEXITSTATUS(status) == 0);
+
+	// The file stays behind after every run; it is the flock that says
+	// whether a run is on.
+	CHECK_FALSE(isFlockHeld(lockPath));
+	::close(held[0]);
+	::close(done[1]);
+}
+
