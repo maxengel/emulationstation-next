@@ -32,7 +32,9 @@ setting, which lines also reach stderr), `es-app/src/CaptureRotationText.cpp`
 (#245, a game's rotation record and the launch log's turn),
 `es-app/src/DisplayAspectText.cpp` (#243, which game a screenshot belongs to),
 `es-core/src/utils/CommandLineUtil.h` (#308 F-CS-33, header-only: the option
-swap the save state manager makes in a launch command) and
+swap the save state manager makes in a launch command),
+`es-app/src/LaunchCommand.h` (#308 F-ES-20, header-only: what a finished launch
+command says it launched, read from the same words) and
 `es-core/src/resources/TabStops.h` (#308 F-ES-11, header-only: where a tabbed
 text's columns start), tested with doctest (`external/doctest/doctest.h`). The
 list of record is `add_executable(es-unit-tests ...)` in `CMakeLists.txt`: the
@@ -52,11 +54,12 @@ other writer or the other waiter. Built by the same `cmake --build build-tests`
 and run as `./build-tests/es-file-tests`; POSIX only, like the guarantees it
 checks. `es-unit-tests` stays the binary that touches nothing.
 
-**Elsewhere:** `tests/app-unit/` (audit #307, stream E2) builds three more
+**Elsewhere:** `tests/app-unit/` (audit #307, stream E2) builds four more
 binaries the same way -- `app-unit-tests` for header-only rules the
 application calls (the journey record, the rescan's merge, the run lock, the
-long-job pages' fitting, the window's post gate, the launch command's
-readers), and `proxycards-tests` and `bookkeeper-tests`, which compile the
-shipped `ProxyCards.cpp` and `SaveStateBookkeeper.cpp` against doubles under
-`tests/app-unit/fakes/`. And `tests/*.py` extract a shipped function from a
+long-job pages' fitting, the window's post gate), and `proxycards-tests`,
+`bookkeeper-tests` and `jobs-tests`, which compile the shipped
+`ProxyCards.cpp`, `SaveStateBookkeeper.cpp`, `CloudTransferJob.cpp` and
+`OfflineScanJob.cpp` against doubles under `tests/app-unit/fakes/`, with
+real processes where the code runs them. And `tests/*.py` extract a shipped function from a
 source file, compile it against doubles and run it (`python3 tests/<name>.py`).

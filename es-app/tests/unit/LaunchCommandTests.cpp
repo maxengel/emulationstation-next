@@ -7,6 +7,7 @@
 // so rather than hiding it.
 #include "doctest/doctest.h"
 #include "LaunchCommand.h"
+#include "utils/CommandLineUtil.h"
 
 #include <string>
 
@@ -68,4 +69,35 @@ TEST_CASE("launch command: a netplay nick holding -P after the system (where run
 	// the command was never built with. Recorded as the launcher's (stream
 	// B's runemu.sh), not this header's.
 	CHECK(runemu(cmd, "-P") == "layer'");
+}
+
+// The rest of the finding's list: a netplay client's nick and a savestate's
+// rewrite. A nick is the player's own text, single-quoted as one word
+// (fork #275), and reading " -P" or " --core=" inside it recorded a system
+// or a core the command was never built with -- the reader took the last
+// occurrence of the letters anywhere in the line.
+TEST_CASE("launch command: a netplay nick holding the prefixes is one word, not a token")
+{
+	const std::string cmd = ROCKNIX + " --connect '192.168.1.20' --port 55435 --nick 'Bob -Pro --core=x --emulator=y'";
+	CHECK(launchToken(cmd, "-P") == "snes");
+	CHECK(launchArgument(cmd, "--core", "fallback") == "snes9x");
+	CHECK(launchArgument(cmd, "--emulator", "fallback") == "retroarch");
+}
+
+TEST_CASE("launch command: a ROM whose escaped name holds the prefixes")
+{
+	const std::string cmd = "/usr/bin/runemu.sh /storage/roms/snes/Hack\\ -Pbad\\ --core=bad.sfc -Psnes --core=snes9x --emulator=retroarch";
+	CHECK(launchToken(cmd, "-P") == "snes");
+	CHECK(launchArgument(cmd, "--core", "fallback") == "snes9x");
+}
+
+TEST_CASE("launch command: a save state made with another core reads the core it was rewritten to")
+{
+	// SaveState::setupSaveState: the option swapped in place, the slot after.
+	std::string cmd = Utils::CommandLine::replaceOptionValue(ROCKNIX, "-core", "snes9x2010");
+	cmd = Utils::CommandLine::replaceOptionValue(cmd, "-emulator", "retroarch");
+	cmd += " -autosave 1 -state_slot 3";
+	CHECK(launchArgument(cmd, "--core", "fallback") == "snes9x2010");
+	CHECK(launchArgument(cmd, "--emulator", "fallback") == "retroarch");
+	CHECK(launchToken(cmd, "-P") == "snes");
 }

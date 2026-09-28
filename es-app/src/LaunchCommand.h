@@ -4,32 +4,48 @@
 
 #include <string>
 
-// Readers for a finished launch command (fork #21 R5). The save manifest
-// records exactly what the emulator was handed, so these read a token the
-// way runemu.sh:23-26 reads it -- from its LAST occurrence to the next
-// space -- and never re-resolve anything from SystemConf. Shared by
-// FileData::getlaunchCommand (the ordinary launch) and launchStartupGame in
-// main.cpp (the boot game, whose command is stored and replayed before any
-// system is loaded, so the stored string is the only source).
+#include "utils/CommandLineUtil.h"
 
-// The value after the last " <prefix>" (" -P" -> the system name), or the
-// value at the very start of the command when it begins with the prefix;
-// "" when the command carries none.
+// Readers for a finished launch command (fork #21 R5). The save manifest
+// records exactly what the emulator was handed, so these never re-resolve
+// anything from SystemConf. Shared by FileData::getlaunchCommand (the
+// ordinary launch) and launchStartupGame in main.cpp (the boot game, whose
+// command is stored and replayed before any system is loaded, so the
+// stored string is the only source).
+//
+// A token is a whole shell word of the command -- the words
+// Utils::CommandLine::replaceOptionValue reads when a save state swaps the
+// core, so the two agree -- and the last such word wins, as it does there.
+// It was the last occurrence of the letters anywhere in the line, and a
+// netplay nick is the player's own text, one quoted word: 'Bob -Pro'
+// recorded the system as ro (#308 8-es-menus-and-core claude F-ES-20).
+// runemu.sh still reads ${ARGUMENTS##*-P}, which does find it there; that
+// is the launcher's to change (es-app/tests/unit/LaunchCommandTests.cpp).
+
+// The value of the last word that begins with `prefix` ("-P" ->
+// the system name), to the end of that word; "" when the command carries
+// none.
 inline std::string launchToken(const std::string& command, const std::string& prefix)
 {
-	const std::string needle = " " + prefix;
-	size_t pos = command.rfind(needle);
-	size_t start = (pos == std::string::npos)
-		? (command.compare(0, prefix.size(), prefix) == 0 ? prefix.size() : std::string::npos)
-		: pos + needle.size();
-	if (start == std::string::npos)
-		return "";
-	size_t end = command.find(' ', start);
-	return command.substr(start, end == std::string::npos ? std::string::npos : end - start);
+	std::string value;
+	size_t i = 0;
+	while (i < command.size())
+	{
+		if (command[i] == ' ' || command[i] == '\t')
+		{
+			i++;
+			continue;
+		}
+		const size_t end = Utils::CommandLine::wordEnd(command, i);
+		if (command.compare(i, prefix.size(), prefix) == 0)
+			value = command.substr(i + prefix.size(), end - i - prefix.size());
+		i = end;
+	}
+	return value;
 }
 
-// The value of a " --key=" token, with the leading space so a ROM path or a
-// --controllers= blob containing the literal cannot win the search.
+// The value of a "--key=" word: a ROM path or a --controllers= blob holding
+// the literal is part of another word and cannot win.
 // `fallback` covers a per-system customCommandLine with no such token
 // (config/emulators/tools.conf is "%RUNCOMMAND%").
 inline std::string launchArgument(const std::string& command, const std::string& key, const std::string& fallback)
