@@ -608,12 +608,10 @@ UserSummary RetroAchievements::getUserSummary(const std::string& userName, int g
 		// No summary from the device and no link to ask the web on. It used
 		// to fall through to the web request here -- a bounded PLEASE WAIT
 		// with no route under it (audit #258 PL-028); the game page has said
-		// the sentence instead since #242, and so does this.
-		if (getApiLogin().empty())
-		{
-			ret.Status = getMissingLoginMessage();
-			return ret;
-		}
+		// the sentence instead since #242, and so does this. Whatever the web
+		// key: it asked for one here, which is the online page's
+		// precondition and no use on this path (#308 1-raoffline claude
+		// F-RA-15; the game page's offline branch never asked).
 		LOG(LogWarning) << "RetroAchievements: offline, and the proxy gave no summary; saying so instead of asking the web";
 		ret.Username = usrName;
 		ret.Status = _("THE OFFLINE ACHIEVEMENTS SERVICE DIDN'T ANSWER. TRY AGAIN IN A MOMENT.");
