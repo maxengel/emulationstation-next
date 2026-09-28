@@ -1,4 +1,5 @@
 #include "guis/GuiOfflineScan.h"
+#include "TextFit.h"
 
 #include "CloudExit.h"
 #include "guis/GuiMsgBox.h"
@@ -220,11 +221,10 @@ void GuiOfflineScan::render(const Transform4x4f& parentTrans)
 // Clip to one line: a long game name gets an ellipsis, never a second line.
 std::string GuiOfflineScan::fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width)
 {
-	if (!font || text.empty() || font->sizeText(text).x() <= width)
+	if (!font)
 		return text;
-	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
-		text.pop_back();
-	return text + "...";
+	// On characters, not bytes (TextFit; #308 gpt F-RA-23).
+	return TextFit::fitOneLine(text, width, [&font](const std::string& t) { return font->sizeText(t).x(); });
 }
 
 // "N GAMES READY FOR OFFLINE PLAY": the one sentence the row under SCAN

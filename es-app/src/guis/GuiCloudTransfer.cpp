@@ -1,4 +1,5 @@
 #include "guis/GuiCloudTransfer.h"
+#include "TextFit.h"
 
 #include "guis/GuiMsgBox.h"
 
@@ -504,11 +505,10 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 // Clip to one line: a long ROM name gets an ellipsis, never a second line.
 std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width)
 {
-	if (!font || text.empty() || font->sizeText(text).x() <= width)
+	if (!font)
 		return text;
-	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
-		text.pop_back();
-	return text + "...";
+	// On characters, not bytes (TextFit; #308 gpt F-CS-32).
+	return TextFit::fitOneLine(text, width, [&font](const std::string& t) { return font->sizeText(t).x(); });
 }
 
 // The scripts name their two fixed units in English (">>> unit SETTINGS||",
