@@ -6121,8 +6121,30 @@ static void cloudSetupAddFact(GuiSettings* s, Window* window, const std::string&
 // height (the cap MenuComponent::updateSize applies) so the window does
 // not jump between steps, push it, then close the page it replaces -
 // closing first would flash the menu underneath.
+// The sign-in pages that own a waiting `cloud_oauth serve` (#308 8a gpt
+// F-ES-17). A page handed on to the next one by cloudSetupPresent leaves
+// the session to it; a page that closes any other way -- EXIT, back -- is
+// the player leaving the sign-in, and the session is cancelled then rather
+// than left listening until its own 900-second timeout. The interface
+// thread only, like the pages.
+static std::set<GuiSettings*> sOAuthSessionPages;
+
+static void cloudOAuthOwnSession(GuiSettings* s)
+{
+	sOAuthSessionPages.insert(s);
+	s->onFinalize([s]
+	{
+		if (sOAuthSessionPages.erase(s) == 0)
+			return;   // handed on: the next page owns the session
+		LOG(LogInfo) << "cloud_oauth: the sign-in was left; cancelling its session";
+		Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth cancel", "", nullptr);
+	});
+}
+
 static void cloudSetupPresent(Window* window, GuiSettings* s, GuiSettings* prev)
 {
+	if (prev != nullptr)
+		sOAuthSessionPages.erase(prev);   // handed on, not left
 	if (!Renderer::ScreenSettings::fullScreenMenus())
 	{
 		float width = Renderer::getScreenWidth() * 0.90f;
@@ -7078,8 +7100,18 @@ static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice,
 			return true;
 
 		url.clear();
-		Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
+		// A sleep, not a shell running sleep (#308 8-es claude F-ES-16): a
+		// fork and exec every poll for nothing, and runSystemCommand is not
+		// a promise to wait for its child.
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	}
+
+	// A script that answered `info` and never said waiting has had its say:
+	// failed, or not yet, for the whole poll. The address `url` still holds
+	// then is not this session's (#308 8a gpt F-ES-18) -- the case the wait
+	// above exists to rule out. Fail closed.
+	if (understood)
+		return false;
 
 	// An image whose cloud_oauth predates `info` still answers `url`.
 	auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth url");
@@ -7155,6 +7187,7 @@ static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
 		}, "", false, true);
 
 	cloudSetupSetButtons(s, nullptr);
+	cloudOAuthOwnSession(s);
 	cloudSetupPresent(window, s, prev);
 }
 
@@ -7181,6 +7214,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		// well, which offered to continue with a sign-in that had not begun.
 		s->getMenu().clearButtons();
 		s->getMenu().addButton(_("GO BACK"), _("go back"), [s] { s->close(); });
+		cloudOAuthOwnSession(s);
 		cloudSetupPresent(window, s, prev);
 		return;
 	}
@@ -7291,6 +7325,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			}));
 	});
 
+	cloudOAuthOwnSession(s);
 	cloudSetupPresent(window, s, prev);
 
 	// After the page is on the stack, never while it is being built: this
