@@ -388,3 +388,48 @@ TEST_CASE("a recovery is written back under the settings lock, and only while it
 		CHECK(SystemConfTestAccess::recovered());
 	}
 }
+
+// ------------------------------------------------------------ PL-018
+
+TEST_CASE("a record cut short is neither loaded nor recorded, and the defaults answer (audit of the fix round PL-018)")
+{
+	// chooseConfig's half is es-file-tests'; this is what SystemConf does
+	// with it. The cut record used to be read -- its hostname answered --
+	// and written back as the live file.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string cut = "system.hostname=A\nwifi.ssid=Home\nwifi.key=sec";
+	put(path + ".backup", cut);
+
+	SUBCASE("no live file and no temporary")
+	{
+		SystemConf* conf = SystemConfTestAccess::fresh(path, dir / ".system.cfg.lock", 300);
+		CHECK(conf->get("system.hostname") == "BATOCERA");   // the default, not the cut record's A
+		CHECK(conf->get("wifi.ssid") == "");
+		CHECK_FALSE(SystemConfTestAccess::recovered());
+		CHECK(access(path.c_str(), F_OK) != 0);               // nothing written back
+		CHECK(get(path + ".backup") == cut);
+	}
+	SUBCASE("an unusable live file, and a change saved onto it")
+	{
+		put(path, std::string("\0\0\0", 3));
+		SystemConf* conf = SystemConfTestAccess::fresh(path, dir / ".system.cfg.lock", 300);
+		CHECK(conf->get("system.hostname") == "BATOCERA");
+		CHECK_FALSE(SystemConfTestAccess::recovered());
+		CHECK(conf->set("audio.volume", "40"));
+		CHECK(conf->saveSystemConf());
+		// Merged onto what was there -- no whole copy to merge onto -- and
+		// not whole, so the cut record stays as it was.
+		CHECK(get(path + ".backup") == cut);
+	}
+	SUBCASE("a whole temporary beside it: the temporary recovers")
+	{
+		const std::string whole = "system.hostname=B\nwifi.ssid=Home\n";
+		put(path + ".tmp", whole);
+		SystemConf* conf = SystemConfTestAccess::fresh(path, dir / ".system.cfg.lock", 300);
+		CHECK(conf->get("system.hostname") == "B");
+		CHECK(SystemConfTestAccess::recovered());
+		CHECK(get(path) == whole);
+		CHECK(get(path + ".backup") == whole);
+	}
+}
