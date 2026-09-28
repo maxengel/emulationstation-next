@@ -643,6 +643,8 @@ TEST_CASE("every protocol shape an emitter prints classifies to a known kind")
 		{ ">>> why YOUR CLOUD STOPPED ANSWERING", ProtocolKind::Why, "cloud_backup:933, :740, :751, cloud_restore:1000, :802, :813, cloud_content_backup:183, cloud_content_restore:189, cloud_migrate_layout:98" },
 		{ ">>> why YOUR CLOUD SYNC SETTINGS COULDN'T BE READ", ProtocolKind::Why, "cloud_backup:1011, :1017, :1475, cloud_restore:1078, :1084, :1578, cloud_content_backup:112, cloud_content_restore:115" },
 		{ ">>> why AN OLD FOLDER SETTING IS IN THE WAY", ProtocolKind::Why, "cloud_backup:1029, cloud_restore:1096" },
+		{ ">>> why YOUR CLOUD SYNC SETTINGS COULDN'T BE SAVED", ProtocolKind::Why, "cloud_migrate_layout:307 (stream A follow-up 2, the pointer write read back before the delete)" },
+		{ ">>> why CHECK WHAT WOULD CHANGE FIRST", ProtocolKind::Why, "cloud_content_restore:851 (a --match --apply with no plan)" },
 		{ ">>> why YOUR SAVES FOLDER ISN'T ON THIS DEVICE", ProtocolKind::Why, "cloud_backup:1379" },
 		{ ">>> why THIS DEVICE'S SETTINGS BACKUP IS DAMAGED", ProtocolKind::Why, "cloud_backup:1882, backuptool:1116" },
 		{ ">>> why THE COPY IN YOUR CLOUD ISN'T COMPLETE", ProtocolKind::Why, "cloud_backup:1993" },
