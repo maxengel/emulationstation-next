@@ -95,6 +95,10 @@ public:
 	virtual ~FileData();
 
 	static FileData* GetRunningGame() { return mRunningGame; }
+	// How many games this process has started. A waiter tells "the game it
+	// was waiting for has come and gone" from "none has started yet" by it
+	// (ProxyCards: the queue a top-up stopped for a game holds for that game).
+	static unsigned GetGamesStarted();
 
 	virtual const std::string& getName();
 
