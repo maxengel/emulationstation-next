@@ -5276,8 +5276,13 @@ void GuiMenu::openCloud(Window* window)
 		// currently have, which seems like a miss" (maintainer, 2026-09-10,
 		// fork #110). The name is the player's own label for the remote when
 		// they gave it one, otherwise the provider's name.
-		const std::string provider = CloudText::providerLabel(cloudSetupInfo()["REMOTE_TYPE"]);
-		const std::string remoteName = cloudSetupInfo()["REMOTE_NAME"];
+		//
+		// One cloud_setup --info for the page: it runs rclone listremotes, a
+		// route lookup and systemctl, synchronously on the interface thread,
+		// and the page asked it three times -- once for a name nothing read
+		// (#308 8-es claude F-ES-03).
+		std::map<std::string, std::string> info = cloudSetupInfo();
+		const std::string provider = CloudText::providerLabel(info["REMOTE_TYPE"]);
 		if (!provider.empty())
 			s->addWithLabel(_("CONNECTED TO"), std::make_shared<TextComponent>(window, provider,
 				ThemeData::getMenuTheme()->Text.font, ThemeData::getMenuTheme()->Text.color));
@@ -5319,10 +5324,16 @@ void GuiMenu::openCloud(Window* window)
 		// heading rather than something you can act on; not "choose" or
 		// "select", which promise a list to pick from, when this opens a
 		// keyboard and you type a path.
-		const std::string syncpath = cloudSetupInfo()["SAVES_REMOTE"];
+		//
+		// A changed folder rebuilds this page, so the line under the row
+		// names the new one: with no onDone the page kept the folder it was
+		// built with until it was reopened (#308 8-es claude F-ES-27). The
+		// editor calls it only when the script took the folder; the new page
+		// goes up before the old one closes, so nothing flashes between.
+		const std::string syncpath = info["SAVES_REMOTE"];
 		s->addWithDescription(_("CHANGE CLOUD FOLDER"),
 			_("THE FOLDER IN YOUR CLOUD THAT HOLDS YOUR SAVES. CURRENT:") + " " + syncpath,
-			nullptr, [window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); },
+			nullptr, [window, s, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, [window, s] { GuiMenu::openCloud(window); s->close(); }); },
 			"", false, true);
 	}
 	// Moved here from NETWORK SETTINGS. Offered, never automatic: the first
