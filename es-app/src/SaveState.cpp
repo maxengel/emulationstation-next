@@ -2,6 +2,7 @@
 #include "SystemData.h"
 #include "FileData.h"
 #include "utils/StringUtil.h"
+#include "utils/CommandLineUtil.h"
 #include "ApiSystem.h"
 #include "FileData.h"
 #include "SaveStateRepository.h"
@@ -38,60 +39,14 @@ std::string SaveState::getScreenShot() const
   return screenshot;
 }
 
+// The option's value swapped in the launch command: the joined
+// "--core=<v>" ROCKNIX passes (runemu.sh:23-26, fork #21) or the legacy
+// "-core <v>", found only as a whole word of the command and never inside
+// a quoted argument such as the ROM's path (#308 F-CS-33). The rule and its
+// cases are Utils::CommandLine's (es-app/tests/unit/CommandLineTests.cpp).
 static std::string _changeCommandlineArgument(const std::string& commandLine, const std::string& parameter, const std::string& value)
 {
-	// ROCKNIX passes the pair joined: "--core=<v>" / "--emulator=<v>"
-	// (runemu.sh:23-26). find("-core") matches inside that token and the
-	// code below would erase "=value" and insert the value with no "=",
-	// producing "--coremgba" -- a command line runemu.sh cannot parse.
-	// Handle the joined form first (fork #21).
-	const std::string joined = "-" + parameter + "=";       // "-core" -> "--core="
-	size_t jp = commandLine.rfind(joined);
-	if (jp != std::string::npos)
-	{
-		size_t js = jp + joined.length();
-		size_t je = commandLine.find(' ', js);
-		std::string out = commandLine;
-		out = out.erase(js, je == std::string::npos ? std::string::npos : je - js);
-		return out.insert(js, value);
-	}
-
-	// The legacy "-core <v>" form. Accept a hit only at a token boundary --
-	// a space (or the start) before it and a space after it -- so "-core"
-	// cannot match inside another word (fork #21).
-	size_t corePos = commandLine.find(parameter);
-	while (corePos != std::string::npos)
-	{
-		bool startsToken = (corePos == 0 || commandLine[corePos - 1] == ' ');
-		size_t after = corePos + parameter.length();
-		bool endsToken = (after < commandLine.length() && commandLine[after] == ' ');
-		if (startsToken && endsToken)
-			break;
-
-		corePos = commandLine.find(parameter, corePos + 1);
-	}
-
-	if (corePos != std::string::npos) 
-	{
-		corePos += parameter.length();
-
-		while (corePos < commandLine.length() && commandLine[corePos] == ' ')
-			corePos++;
-
-		int count = 0;
-		while (corePos + count < commandLine.length() && commandLine[corePos+ count] != ' ')
-			count++;
-
-		std::string argument = commandLine;
-
-		if (count > 0)
-			argument = argument.erase(corePos, count);
-
-		argument = argument.insert(corePos, value);
-		return argument;
-	}
-
-	return commandLine;
+	return Utils::CommandLine::replaceOptionValue(commandLine, parameter, value);
 }
 
 std::string SaveState::setupSaveState(FileData* game, const std::string& command)
