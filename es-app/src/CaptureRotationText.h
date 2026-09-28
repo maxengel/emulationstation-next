@@ -29,7 +29,7 @@ namespace CaptureRotationText
 	// game: the turns, or 0 when the game is not in it.
 	int turnsFromTable(const std::string& table, const std::string& romName);
 
-	// The record's text -- "turns=N", then "from=own-launch" -- and reading
+	// The record's text -- "turns=N", then "from=checked-launch" -- and reading
 	// it back: N is 0-3 and anything else reads as 0. A bare digit reads
 	// too. The first line is longer than three bytes on purpose --
 	// readAllText skips a UTF-8 byte-order mark by reading three bytes
@@ -38,13 +38,16 @@ namespace CaptureRotationText
 	int parseRecord(const std::string& text);
 
 	// Whether the record says its turn was read from the game's own launch:
-	// a line "from=own-launch" of its own. The reader before fork #288 took
-	// the last rotation line of a log that held every launch since the file
-	// was last removed (fork #280), so a record it wrote may carry another
-	// game's turn -- Ms. Pac-Man's 3 on Dr. Mario -- and it wrote no such
-	// line. A record without one is not trusted: the core's table stands in
-	// until the game's next exit rewrites it. The line is the writer's claim
-	// about what it read, which is the one thing a migration could not know.
+	// a line "from=checked-launch" of its own. The reader before fork #288
+	// took the last rotation line of a log that held every launch since the
+	// file was last removed (fork #280), so a record it wrote may carry
+	// another game's turn -- Ms. Pac-Man's 3 on Dr. Mario -- and it wrote no
+	// such line. The builds after it wrote "from=own-launch", also over a
+	// launch that failed and a log with no launch in it (audit of the fixes,
+	// E2 gpt G-E2-06). A record without the checked line is not trusted: the
+	// core's table stands in until the game's next exit rewrites it. The
+	// line is the writer's claim about what it read, which is the one thing
+	// a migration could not know.
 	bool recordFromOwnLaunch(const std::string& text);
 
 	// Whether the launch log holds a launch at all: RetroArch's build banner.

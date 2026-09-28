@@ -6,7 +6,12 @@ namespace
 {
 	// The record's second line since fork #288: the turn was read from a
 	// log that held this game's launch alone.
-	const char* OWN_LAUNCH_LINE = "from=own-launch";
+	// The writer's claim about what it read. "from=own-launch" (fork #288)
+	// was written from a launch that failed and from a log with no launch
+	// in it, until the reading was checked (187ff9f1c, 190f62550): nothing
+	// can tell those records from good ones, so the claim this build
+	// trusts is a new one (audit of the fixes, E2 gpt G-E2-06).
+	const char* OWN_LAUNCH_LINE = "from=checked-launch";
 
 	// The value of `key = "value"` in a RetroArch config, or "" when absent.
 	std::string configValue(const std::string& config, const std::string& key)
