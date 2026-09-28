@@ -203,15 +203,9 @@ void ThreadedCloudSync::run()
 		char line[512];
 		while (fgets(line, sizeof(line), pipe) != nullptr)
 		{
-			std::string text(line);
-
-			// keep it single-line and printable
-			std::string clean;
-			for (char c : text)
-				if (c >= 32 && c < 127)
-					clean += c;
-
-			clean = Utils::String::trim(clean);
+			// One line, without controls or a terminal's escapes, its UTF-8
+			// kept (CloudText::cleanLine, #308 F-CS-19).
+			const std::string clean = CloudText::cleanLine(line);
 
 			// ">>> " lines are the scripts talking to the UI, not to the
 			// player. ">>> pid N" is the wrapper above saying which process

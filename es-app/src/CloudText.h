@@ -143,6 +143,12 @@ namespace CloudText
 	// gets the single candidate it has today.
 	std::vector<std::string> outcomeCandidates(const std::string& outcome);
 
+	// One line of a cloud script's output as the card reads it: ANSI escape
+	// sequences and C0 controls and DEL dropped, every other byte kept --
+	// UTF-8 included, since a folder name in the player's language arrives
+	// in a ">>> offer" line and must reach the offer whole -- then trimmed.
+	std::string cleanLine(const std::string& raw);
+
 	// The sync card's action line when a run did not complete (D-CLOUD-077),
 	// longest first: what is in place and how to recover, then the recovery
 	// alone. `recoveries` are the recovery sentence's own forms, longest

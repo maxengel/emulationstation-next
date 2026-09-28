@@ -506,6 +506,26 @@ TEST_CASE("classifyProtocolLine reads a removed line")
 // offer never reached the transfer page: that page's own parser knew
 // ">>> unit" and ">>> removed" and had never heard of ">>> offer" (#145).
 // A new marker added to a script without a kind here fails this case.
+TEST_CASE("a script's line keeps its UTF-8 on its way to the card (#308 5 claude F-CS-19)")
+{
+	// The card kept printable ASCII only, so a saves folder named in the
+	// player's language lost its accented letters between the script's
+	// ">>> offer" line and the offer: /Spiele/Spielst\xC3\xA4nde arrived as
+	// /Spiele/Spielstnde, a folder that is not the configured one.
+	const std::string offer = ">>> offer create-saves-folder|/Spiele/Spielst\xC3\xA4nde\n";
+	CHECK(cleanLine(offer) == ">>> offer create-saves-folder|/Spiele/Spielst\xC3\xA4nde");
+	const ProtocolLine p = classifyProtocolLine(cleanLine(offer));
+	REQUIRE(p.args.size() == 1);
+	CHECK(p.args[0] == "/Spiele/Spielst\xC3\xA4nde");
+
+	// rclone's shortening ellipsis (U+2026) stays too.
+	CHECK(cleanLine(" * Ikari n\xE2\x80\xA6ge.srm: 40% ") == "* Ikari n\xE2\x80\xA6ge.srm: 40%");
+
+	// What is noise is still dropped: C0 controls, DEL, a terminal's escapes.
+	CHECK(cleanLine("\x1B[2K\rTransferred: 1 B\x7F\x01\n") == "Transferred: 1 B");
+	CHECK(cleanLine("   ") == "");
+}
+
 TEST_CASE("the card's action line drops the in-place clause first, as the house rule says")
 {
 	const std::string inPlace = "WHAT MADE IT IS IN YOUR CLOUD. THE REST IS STILL HERE.";

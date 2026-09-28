@@ -291,6 +291,30 @@ std::vector<std::string> outcomeCandidates(const std::string& outcome)
 	return candidates;
 }
 
+std::string cleanLine(const std::string& raw)
+{
+	// The transfer page's rule (CloudTransferJob::cleanLine, #85), which the
+	// card did not share: it kept printable ASCII only, and a folder name in
+	// the player's language lost its accented letters on the way to the
+	// offer (#308 F-CS-19). A terminal escape is an instruction to a
+	// terminal that is not here, and goes whole.
+	std::string clean;
+	for (size_t i = 0; i < raw.size(); ++i)
+	{
+		const unsigned char c = (unsigned char) raw[i];
+		if (c == 0x1B)
+		{
+			while (i + 1 < raw.size() && !isalpha((unsigned char) raw[i + 1]))
+				i++;
+			i++;   // the letter that ends the sequence
+			continue;
+		}
+		if ((c >= 32 && c < 127) || c >= 0x80)
+			clean += (char) c;
+	}
+	return Utils::String::trim(clean);
+}
+
 std::vector<std::string> actionCandidates(const std::string& inPlace,
 	const std::vector<std::string>& recoveries, bool keepInPlace)
 {
