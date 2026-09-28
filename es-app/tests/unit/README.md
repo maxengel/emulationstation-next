@@ -57,6 +57,15 @@ checks. `es-unit-tests` stays the binary that touches nothing.
 `AtomicFileUtil.cpp` with `_WIN32` defined for that one object, so the
 Windows branches' contract in the header is checked on this host too.
 
+`es-conf-tests` (`SystemConfTests.cpp`, the audit of the fix round) goes one
+step further and compiles the shipped `es-core/src/SystemConf.cpp` with
+`AtomicFileUtil.cpp`, the log, `Settings` and `Paths` defined in the test file
+as doubles and SDL's clock under `fakes/SDL_timer.h`: the load, the reload,
+the save and the record, as `SystemConf` strings `AtomicFileUtil`'s pieces
+together, against a scratch `system.cfg` and a scratch settings lock
+(`SystemConfTestAccess`, a friend `SystemConf.h` names, gives each case a
+fresh instance). Run as `./build-tests/es-conf-tests`.
+
 **Elsewhere:** `tests/app-unit/` (audit #307, stream E2) builds four more
 binaries the same way -- `app-unit-tests` for header-only rules the
 application calls (the journey record, the rescan's merge, the run lock, the

@@ -951,3 +951,140 @@ TEST_CASE("a recovery is written no less private than any copy it came from (G-E
 	umask(before);
 }
 
+
+// ------------------------------------------------------ the audit of the fix round
+
+TEST_CASE("a record cut short beside a whole temporary: the temporary recovers (audit of the fix round PL-018)")
+{
+	// chooseConfig worked out whether the record was whole and then took it
+	// on one key=value line alone: a cut system.cfg.backup -- the cp at boot
+	// before #102 left such records -- beat a whole system.cfg.tmp and was
+	// written back as the live file. A whole temporary is the recovery.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string cut = "system.hostname=A\nwifi.ssid=Home\nwifi.key=sec";
+	const std::string whole = "system.hostname=A\nwifi.ssid=Home\nwifi.key=secret\naudio.volume=70\n";
+	put(path + ".backup", cut);
+	put(path + ".tmp", whole);
+
+	SUBCASE("no live file")
+	{
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Temporary);
+		CHECK(c.text == whole);
+		CHECK(c.record);
+	}
+	SUBCASE("an unusable live file")
+	{
+		put(path, std::string("\0\0\0", 3));
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Temporary);
+		CHECK(c.text == whole);
+		CHECK(c.record);
+	}
+}
+
+TEST_CASE("a record cut short with no whole temporary: the defaults answer, and the cut record is not the record (audit of the fix round PL-018)")
+{
+	// With nothing better the cut record was loaded and written back as the
+	// live file. A record is whole or it is not the record: nothing is
+	// loaded and the defaults answer, as the boot's own check has it
+	// (chksysconfig: the image defaults last).
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string cut = "system.hostname=A\nwifi.ssid=Home\nwifi.key=sec";
+	put(path + ".backup", cut);
+
+	SUBCASE("no live file: nothing is loaded")
+	{
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Missing);
+		CHECK(c.text.empty());
+		CHECK_FALSE(c.record);
+	}
+	SUBCASE("an unusable live file: read as it is, the cut record neither loaded nor recorded")
+	{
+		put(path, std::string("\0\0\0", 3));
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Damaged);
+		CHECK(c.text != cut);
+		CHECK(parseKeyValues(c.text).empty());
+		CHECK_FALSE(c.record);
+	}
+	// chooseConfig writes nothing: the cut record is on disk as it was.
+	CHECK(get(path + ".backup") == cut);
+}
+
+TEST_CASE("a save never merges onto a file the load would not have taken (audit of the fix round, gpt G2-E-core-03)")
+{
+	// saveUnderLock merged onto whatever the live file held and called an
+	// empty one whole, so a save onto an empty system.cfg wrote the changed
+	// keys alone and they became the record over a whole one; and a cut
+	// file the load would have replaced by its whole temporary or record
+	// was merged onto as it was, and one save later the result -- its lines
+	// completed -- became the record. Under the lock the save now asks
+	// chooseConfig, as the load does, and merges onto the recovery it names.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	const std::string whole = "system.hostname=A\nwifi.ssid=Home\nwifi.key=secret\n";
+	auto addVolume = [](const std::string& current)
+	{
+		std::string out = current;
+		if (!out.empty() && out.back() != '\n')
+			out += '\n';
+		return out + "audio.volume=40\n";
+	};
+
+	SUBCASE("an empty live file beside a whole record: the record, and the change")
+	{
+		put(path + ".backup", whole);
+		put(path, "");
+		std::string written;
+		bool baseWhole = false;
+		CHECK(saveUnderLock(path, lockPath, 1000, addVolume, &written, &baseWhole) == LockedSave::Written);
+		CHECK(written == whole + "audio.volume=40\n");
+		CHECK(get(path) == whole + "audio.volume=40\n");
+		CHECK(baseWhole);
+	}
+	SUBCASE("an empty live file and nothing else: not whole, so not a record")
+	{
+		put(path, "");
+		bool baseWhole = true;
+		CHECK(saveUnderLock(path, lockPath, 1000, addVolume, nullptr, &baseWhole) == LockedSave::Written);
+		CHECK(get(path) == "audio.volume=40\n");
+		CHECK_FALSE(baseWhole);
+	}
+	SUBCASE("a live file cut short of a whole temporary: the temporary, with its mode")
+	{
+		const mode_t before = umask(022);
+		put(path + ".tmp", whole);
+		REQUIRE(chmod((path + ".tmp").c_str(), 0600) == 0);
+		put(path, whole.substr(0, 30));   // "system.hostname=A\nwifi.ssid=Ho"
+		bool baseWhole = false;
+		CHECK(saveUnderLock(path, lockPath, 1000, addVolume, nullptr, &baseWhole) == LockedSave::Written);
+		CHECK(get(path) == whole + "audio.volume=40\n");
+		CHECK(baseWhole);
+		struct stat st;
+		REQUIRE(::stat(path.c_str(), &st) == 0);
+		CHECK((st.st_mode & 07777) == 0600);
+		umask(before);
+	}
+	SUBCASE("a cut live file with nothing whole beside it: merged onto, and not whole")
+	{
+		put(path, "system.hostname=A\nwifi.ssid=Ho");
+		bool baseWhole = true;
+		CHECK(saveUnderLock(path, lockPath, 1000, addVolume, nullptr, &baseWhole) == LockedSave::Written);
+		CHECK(get(path) == "system.hostname=A\nwifi.ssid=Ho\naudio.volume=40\n");
+		CHECK_FALSE(baseWhole);
+	}
+	SUBCASE("a whole live file beside a leftover temporary: the live file")
+	{
+		put(path, "system.hostname=A\n");
+		put(path + ".tmp", whole);
+		bool baseWhole = false;
+		CHECK(saveUnderLock(path, lockPath, 1000, addVolume, nullptr, &baseWhole) == LockedSave::Written);
+		CHECK(get(path) == "system.hostname=A\naudio.volume=40\n");
+		CHECK(baseWhole);
+	}
+}

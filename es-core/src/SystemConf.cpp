@@ -26,6 +26,8 @@ static std::string mapSettingsName(const std::string& name)
 
 SystemConf *SystemConf::sInstance = NULL;
 bool SystemConf::sRecovered = false;
+std::string SystemConf::sLockPath = "/tmp/.system.cfg.lock";
+int SystemConf::sLockBudgetMs = 5000;
 
 static std::set<std::string> dontRemoveValue
 {
@@ -81,13 +83,17 @@ void SystemConf::parseSystemConf(const std::string& text)
 // (system.cfg.backup, D-CLOUD-079). Written whole through a temporary and a
 // rename, like the live file, and only when it would change -- this runs at
 // every start and after every save, and most of those change nothing.
-void SystemConf::recordLastGood(const std::string& text)
+void SystemConf::recordLastGood(const std::string& text, int recoveredMode)
 {
 	// No less private than the live file it copies (#308 F-ES-08): a record
 	// an earlier build made 0644 beside a 0600 file is rewritten for its mode
-	// even when its text is the same.
+	// even when its text is the same. A recovery passes the mode every copy
+	// on disk shares (chooseConfig, G-E1-05): the live file may be the copy
+	// that could not be written back, and its mode -- or 0644 where there
+	// is no file -- made a 0600 temporary's text a 0644 record (audit of the
+	// fix round, gpt G2-E-core-05).
 	const std::string backup = mSystemConfFile + ".backup";
-	const int mode = Utils::AtomicFile::modeOf(mSystemConfFile, 0644);
+	const int mode = recoveredMode >= 0 ? recoveredMode : Utils::AtomicFile::modeOf(mSystemConfFile, 0644);
 	if (Utils::AtomicFile::readText(backup) == text && Utils::AtomicFile::modeOf(backup, mode) == mode)
 		return;
 	if (!Utils::AtomicFile::writeText(backup, text, mode))
@@ -126,11 +132,29 @@ bool SystemConf::loadSystemConf(bool keepPending)
 	}
 	const auto bases = mPendingBase;
 	const std::set<std::string> unsaved = changedConf;
+	const auto onDiskBefore = mOnDisk;
 
 	changedConf.clear();
 	mPendingBase.clear();
 	mOnDisk.clear();
 	const bool loaded = loadFromDisk();
+
+	// Nothing read is no evidence about any key (audit of the fix round,
+	// gpt G2-E-core-06): the empty reading made every change to a key the
+	// file held look removed by somebody since, and it was dropped from the
+	// pending set and from memory before the false came back. The changes
+	// stay, with their bases and the last reading of the file, for the
+	// next save or the next reload that reads something.
+	if (!loaded && keepPending)
+	{
+		changedConf = unsaved;
+		mPendingBase = bases;
+		mOnDisk = onDiskBefore;
+		if (!unsaved.empty())
+			LOG(LogWarning) << "loadSystemConf: " << mSystemConfFile << " could not be read -- the " << unsaved.size()
+				<< " change(s) not saved yet are kept for the next save";
+		return false;
+	}
 
 	const auto kept = Utils::AtomicFile::pendingAfterReload(pending, mOnDisk);
 	// A change dropped here must not linger in memory where the file has no
@@ -171,9 +195,23 @@ bool SystemConf::loadFromDisk()
 	// script runs.
 	std::remove((mSystemConfFile + ".backup.tmp").c_str());
 
-	const Utils::AtomicFile::LoadedConfig chosen = Utils::AtomicFile::chooseConfig(mSystemConfFile);
+	// The choice, and a recovery's write-back under the settings lock the
+	// save and the shell's set_setting take (audit of the fix round, gpt
+	// G2-E-core-02, claude G2-E-core-07): the write-back used to run without
+	// it, and a script's write that landed between the choice and the write
+	// was lost under it.
+	Utils::AtomicFile::RecoveryWrite wrote = Utils::AtomicFile::RecoveryWrite::None;
+	const Utils::AtomicFile::LoadedConfig chosen = Utils::AtomicFile::loadUnderLock(mSystemConfFile, sLockPath, sLockBudgetMs, &wrote);
 	// No less private than any copy it came from (G-E1-05).
 	const int mode = chosen.mode;
+	const auto reportWriteBack = [this, wrote](const char* from)
+	{
+		if (wrote == Utils::AtomicFile::RecoveryWrite::WriteFailed)
+			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from " << from;
+		else if (wrote == Utils::AtomicFile::RecoveryWrite::LockBusy)
+			LOG(LogWarning) << "loadFromDisk: the settings lock was not free within " << sLockBudgetMs << " ms; "
+				<< mSystemConfFile << " is read from " << from << " and not written back -- the next save writes it";
+	};
 
 	switch (chosen.source)
 	{
@@ -192,9 +230,8 @@ bool SystemConf::loadFromDisk()
 		LOG(LogWarning) << mSystemConfFile << " is cut short or unreadable beside a whole " << mSystemConfFile
 			<< ".tmp that an interrupted save left -- loading that and writing it back";
 		parseSystemConf(chosen.text);
-		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
-			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from " << mSystemConfFile << ".tmp";
-		recordLastGood(chosen.text);
+		reportWriteBack("its .tmp");
+		recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;
 
@@ -202,17 +239,21 @@ bool SystemConf::loadFromDisk()
 		LOG(LogWarning) << mSystemConfFile << " is missing, empty, unreadable, damaged or cut short of the record -- loading the last-known-good record "
 			<< mSystemConfFile << ".backup and writing it back";
 		parseSystemConf(chosen.text);
-		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
-			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from its last-known-good record";
+		reportWriteBack("its last-known-good record");
+		// The same text: only the record's mode can change, to the one every
+		// copy shares, which the live file is written with (claude
+		// G2-E-core-04 b: a record an earlier build made 0644 stayed so beside
+		// the 0600 file until the next save).
+		recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;
 
 	case Utils::AtomicFile::LoadedConfig::Source::Damaged:
-		// Unusable by the check, with no usable record and no whole
-		// temporary. Read the live file as it always was read -- a file this
+		// Unusable by the check, with no whole record and no whole
+		// temporary (a record cut short is not taken, PL-018). Read the live file as it always was read -- a file this
 		// check is wrong about still works -- and record nothing: there is no
 		// good copy to record.
-		LOG(LogError) << mSystemConfFile << " has no usable key=value line and no usable last-known-good record; reading it as it is";
+		LOG(LogError) << mSystemConfFile << " has no usable key=value line and no whole last-known-good record; reading it as it is";
 		parseSystemConf(chosen.text);
 		return true;
 
@@ -243,7 +284,7 @@ bool SystemConf::saveSystemConf()
 	// any set-and-save -- writes them over whatever the script left.
 	std::string out;
 	bool baseWhole = true;
-	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, "/tmp/.system.cfg.lock", 5000,
+	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, sLockPath, sLockBudgetMs,
 		[this](const std::string& current) { return applyChanges(current); }, &out, &baseWhole);
 
 	switch (saved)
@@ -265,6 +306,9 @@ bool SystemConf::saveSystemConf()
 
 	changedConf.clear();
 	mPendingBase.clear();
+	// The file is now what this save wrote: the base the next change is
+	// compared with (G2-E-core-07).
+	mOnDisk = Utils::AtomicFile::parseKeyValues(out);
 
 	// What was just written is, by construction, the newest good state, so
 	// it becomes the record (D-CLOUD-078: a success becomes the last known
@@ -382,11 +426,16 @@ bool SystemConf::set(const std::string &name, const std::string &value)
 	if (confMap.count(name) == 0 || confMap[name] != value)
 	{
 		// What the key held before this run of changes, once: a reload
-		// compares it with the file (G-E1-03).
+		// compares it with the file (G-E1-03). Held in the file, as last
+		// read or written -- not in confMap, which keeps keys the file no
+		// longer has: one another writer removed, one the last save wrote
+		// away. The reload found such a key missing where the base said it
+		// was, and dropped the change as removed by somebody since (audit of
+		// the fix round, gpt G2-E-core-07, claude G2-E-core-09).
 		if (changedConf.find(name) == changedConf.cend())
 		{
-			const auto it = confMap.find(name);
-			mPendingBase[name] = it == confMap.cend() ? std::make_pair(false, std::string()) : std::make_pair(true, it->second);
+			const auto it = mOnDisk.find(name);
+			mPendingBase[name] = it == mOnDisk.cend() ? std::make_pair(false, std::string()) : std::make_pair(true, it->second);
 		}
 		confMap[name] = value;
 		changedConf.insert(name);

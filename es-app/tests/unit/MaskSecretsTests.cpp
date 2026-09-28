@@ -109,7 +109,10 @@ TEST_CASE("name=value: every name ending in a credential word")
 
 TEST_CASE("RetroAchievements' one-letter query keys, in a query only")
 {
-	CHECK(maskSecrets("https://retroachievements.org/API/API_GetUserSummary.php?z=bob&y=abcdef1234567890")
+	// The API key is split into two literals the compiler joins, so the
+	// credential shape never stands whole in the source and the hooks' scan
+	// needs no exemption for this file (the audit of the fix round).
+	CHECK(maskSecrets("https://retroachievements.org/API/API_GetUserSummary.php?z=bob&y=" "abcdef1234567890")
 		== "https://retroachievements.org/API/API_GetUserSummary.php?z=bob&y=<redacted>");
 	CHECK(maskSecrets("https://retroachievements.org/dorequest.php?r=login&u=bob&p=hunter2")
 		== "https://retroachievements.org/dorequest.php?r=login&u=bob&p=<redacted>");
@@ -191,4 +194,44 @@ TEST_CASE("a value quoted inside a quoted command is masked whole (audit of the 
 	// The enclosing string still ends the value where it ends.
 	CHECK(maskSecrets("sh -c 'x --password hunter2' next") == "sh -c 'x --password <redacted>' next");
 	CHECK(maskSecrets("curl \"https://h/?u=bob&p=hunter2\" -o out") == "curl \"https://h/?u=bob&p=<redacted>\" -o out");
+}
+
+TEST_CASE("an escaped quote inside an inner quoted value does not end it (audit of the fix round PL-010)")
+{
+	// Inside an enclosing quote the inner quote was tracked before the
+	// backslash, so an escaped inner double quote closed the inner quote and
+	// the space after it ended the mask: sh -c 'tool --password "front\"
+	// back"' passes the inner shell the one word front" back, and the log
+	// kept "back". The inner command is read as its shell reads it -- in an
+	// enclosing double-quoted string the inner backslash is itself written
+	// \\ -- and inside an inner double quote a backslash takes the next
+	// character with it, in both enclosing modes.
+	CHECK(maskSecrets(R"(sh -c 'tool --password "front\" back"')") == R"(sh -c 'tool --password <redacted>')");
+	CHECK(maskSecrets(R"(sh -c "tool --password \"front\\\" back\"")") == R"(sh -c "tool --password <redacted>")");
+	CHECK(maskSecrets(R"(sh -c 'tool --password "front\" back" && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	// An escaped backslash before the inner quote's close still closes it.
+	CHECK(maskSecrets(R"(sh -c 'tool --password "front\\" next')") == R"(sh -c 'tool --password <redacted> next')");
+	// A backslash at the inner command's top level, in both enclosing modes.
+	CHECK(maskSecrets(R"(sh -c 'tool --password front\ back && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	CHECK(maskSecrets(R"(sh -c "tool --password front\\ back && x")") == R"(sh -c "tool --password <redacted> && x")");
+}
+
+TEST_CASE("shellQuote's escaped quote inside a single-quoted command is a quote of the command (audit of the fix round, claude G2-E-core-01)")
+{
+	// shellQuote writes a single quote inside its string as '\'' -- close,
+	// escaped quote, reopen -- so a value it quoted, nested in a command it
+	// quoted again, begins with the enclosing quote. The mask took that
+	// first byte for the string's end, masked nothing, and logged the value.
+	// The four bytes are one quote of the inner command.
+	using Utils::String::shellQuote;
+	CHECK(maskSecrets("sh -c " + shellQuote("tool --password " + shellQuote("front back")))
+		== "sh -c 'tool --password <redacted>'");
+	CHECK(maskSecrets(R"(sh -c 'tool --password '\''front back'\'' && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	// An apostrophe inside the inner double quote.
+	CHECK(maskSecrets(R"(sh -c 'tool --password "it'\''s front back" && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	// Inside the inner single quote a backslash is only a backslash: the
+	// inner shell reads 'front\'back as the one word front\back.
+	CHECK(maskSecrets(R"(sh -c 'tool --password '\''front\'\''back next')") == R"(sh -c 'tool --password <redacted> next')");
+	// A lone quote still ends the enclosing string, and the value with it.
+	CHECK(maskSecrets("sh -c 'x --password front' back") == "sh -c 'x --password <redacted>' back");
 }

@@ -71,7 +71,7 @@ namespace Utils
 			{
 				Live,        // the file itself
 				Temporary,   // `path`.tmp: an unfinished save's whole text, the file cut or unusable
-				Backup,      // `path`.backup: the last-known-good record
+				Backup,      // `path`.backup: the last-known-good record, whole (a cut one is never taken, PL-018)
 				Damaged,     // the file, unusable, with nothing better: read as it is, recorded nowhere
 				Missing      // nothing could be read at all
 			};
@@ -85,6 +85,29 @@ namespace Utils
 
 		// The choice, from what is on disk now. Reads; writes nothing.
 		LoadedConfig chooseConfig(const std::string& path);
+
+		// What the load's write-back of a recovery came to.
+		enum class RecoveryWrite
+		{
+			None,          // nothing to write back: the live file was taken, or nothing could be read
+			Written,       // written back as the live file, with the settings lock held
+			WriteFailed,   // the lock was held and the write did not land: the file is as it was
+			LockBusy       // the lock stayed with a live holder past the budget: nothing written
+		};
+
+		// SystemConf's load: chooseConfig, and where it names a recovery --
+		// the whole temporary or the whole record, to be written back as the
+		// live file -- the choice made again with the settings lock at
+		// `lockPath` held, and written back under it with the mode every copy
+		// shares (audit of the fix round G2-E-core-02). The write-back used to
+		// run without the lock every other writer of the file takes, so a
+		// set_setting that landed between the choice and the write was lost
+		// under it. The answer is the choice the text was read from. With the
+		// lock busy past `timeoutMs` it is the first choice and nothing is
+		// written: the next save, under the lock, merges onto the same
+		// recovery (saveUnderLock).
+		LoadedConfig loadUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			RecoveryWrite* wrote = nullptr);
 
 		// Whether another process holds an flock on `path` now: the cloud
 		// scripts' transfer lock, /var/run/cloud_sync.lock, which every
@@ -139,10 +162,14 @@ namespace Utils
 		// snapshot of the file renamed over the shell's new one, or the other
 		// way round -- lost one of the two writers' keys. The caller keeps its
 		// changes on any answer but Written and makes them at its next save.
-		// `baseComplete`, when given, says whether the text read under the lock
-		// was whole (empty, or ending in a line end): a save merged onto a cut
-		// file is written, and must not become the last-known-good record
-		// (audit of the fixes G-E1-04).
+		// A live file that is empty, cut part way through a line or unusable
+		// is not merged onto where chooseConfig names a recovery beside it --
+		// the whole temporary it is the start of, the whole record: the save
+		// merges onto that, with the mode every copy shares (audit of the fix
+		// round G2-E-core-03). `baseComplete`, when given, says whether the
+		// text merged onto was whole (not empty, ending in a line end): a save
+		// merged onto a cut file is written, and must not become the
+		// last-known-good record (audit of the fixes G-E1-04).
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
 			const std::function<std::string(const std::string& current)>& merge, std::string* written = nullptr,
 			bool* baseComplete = nullptr);

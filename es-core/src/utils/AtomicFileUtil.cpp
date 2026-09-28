@@ -298,7 +298,8 @@ namespace Utils
 			// may never have run a build that keeps the record. So the
 			// temporary is read first, and wins when it is whole and the live
 			// file is gone, unusable, or a cut prefix of it; and "usable" for
-			// the record means complete as well.
+			// the record means complete as well -- for the record's own load
+			// too (PL-018).
 			LoadedConfig out;
 			bool liveOk = false, tmpOk = false, backupOk = false;
 			const std::string live = readText(path, &liveOk);
@@ -367,7 +368,13 @@ namespace Utils
 				return out;
 			}
 
-			if (backupOk && isUsableKeyValues(backup))
+			// The record only when it is whole (audit of the fix round PL-018):
+			// one key=value line was enough, so a record cut short -- the cp at
+			// boot before #102 left such records -- beat a whole temporary,
+			// and with nothing better was written back as the live file. A cut
+			// record is not the last known good; with nothing else, nothing is
+			// loaded and the defaults answer, as chksysconfig has it.
+			if (backupWhole)
 			{
 				out.source = LoadedConfig::Source::Backup;
 				out.text = backup;
@@ -386,6 +393,42 @@ namespace Utils
 				out.text = live;
 			}
 			return out;
+		}
+
+		// A choice that is to be written back as the live file.
+		static bool isRecovery(const LoadedConfig& chosen)
+		{
+			return chosen.source == LoadedConfig::Source::Temporary || chosen.source == LoadedConfig::Source::Backup;
+		}
+
+		LoadedConfig loadUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			RecoveryWrite* wrote)
+		{
+			if (wrote != nullptr)
+				*wrote = RecoveryWrite::None;
+
+			LoadedConfig chosen = chooseConfig(path);
+			if (!isRecovery(chosen))
+				return chosen;
+
+			PidLock lock(lockPath);
+			if (!lock.acquire(timeoutMs))
+			{
+				if (wrote != nullptr)
+					*wrote = RecoveryWrite::LockBusy;
+				return chosen;
+			}
+
+			// Again, with the lock: a writer that held it while this waited may
+			// have put a whole file in place, and that file is the one to read.
+			chosen = chooseConfig(path);
+			if (!isRecovery(chosen))
+				return chosen;
+
+			const bool written = writeText(path, chosen.text, chosen.mode);
+			if (wrote != nullptr)
+				*wrote = written ? RecoveryWrite::Written : RecoveryWrite::WriteFailed;
+			return chosen;
 		}
 
 		bool isFlockHeld(const std::string& path)
@@ -466,13 +509,37 @@ namespace Utils
 			// (On Windows a file not there yet is merged onto nothing and made,
 			// as SystemConf always did there.)
 
+			// Never onto a file the load would not have taken as the file (audit
+			// of the fix round, gpt G2-E-core-03). A live file that is empty,
+			// cut part way through a line or unusable is asked about as the
+			// load asks, and where chooseConfig names the recovery -- the whole
+			// temporary it is the start of, the whole record -- the save merges
+			// onto that, written with the mode every copy shares. An empty file
+			// used to count as whole: a save onto one wrote the changed keys
+			// alone, and they became the record over a whole one. A missing
+			// file is still refused above, so a factory reset's empty
+			// /storage is not refilled from memory.
+			std::string base = current;
+			bool whole = isComplete(current);
+			int mode = -1;
+			if (!whole || !isUsableKeyValues(current))
+			{
+				const LoadedConfig chosen = chooseConfig(path);
+				if (isRecovery(chosen))
+				{
+					base = chosen.text;
+					whole = true;
+					mode = chosen.mode;
+				}
+			}
+
 			// A save merged onto a cut file lands (the change is the player's)
 			// but is not a record (G-E1-04).
 			if (baseComplete != nullptr)
-				*baseComplete = current.empty() || current.back() == '\n';
+				*baseComplete = whole;
 
-			const std::string out = merge(current);
-			if (!writeText(path, out))
+			const std::string out = merge(base);
+			if (!writeText(path, out, mode))
 				return LockedSave::WriteFailed;
 			if (written != nullptr)
 				*written = out;
