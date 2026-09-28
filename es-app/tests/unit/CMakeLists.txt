@@ -28,7 +28,9 @@ get_filename_component(ES_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUTE)
 # at a time, a file pending deletion hides its tile, a copy hides nothing) -- plus the
 # log's header-only rules (es-core/src/LogPolicy.h,
 # fork #178), and the header-only option swap the save state manager makes
-# in a launch command (es-core/src/utils/CommandLineUtil.h, #308 F-CS-33). Anything that needs a window, a font or a file does not belong
+# in a launch command (es-core/src/utils/CommandLineUtil.h, #308 F-CS-33), and
+# where a tabbed text's columns start (es-core/src/resources/TabStops.h,
+# header-only, #308 F-ES-11). Anything that needs a window, a font or a file does not belong
 # in this binary -- see README.md.
 add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/CloudTextTests.cpp
@@ -44,6 +46,7 @@ add_executable(es-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/CaptureRotationTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/DisplayAspectTextTests.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/CommandLineTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/TabStopsTests.cpp
 	${ES_ROOT}/es-app/src/CloudText.cpp
 	${ES_ROOT}/es-app/src/CheevosRetry.cpp
 	${ES_ROOT}/es-app/src/OfflineAchievementsText.cpp
