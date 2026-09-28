@@ -18,7 +18,7 @@ SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/pre-push-test.XXXXXX")" || exit 2
 trap 'rm -rf "${SCRATCH}"' EXIT
 cd "${SCRATCH}" || exit 2
 
-FAKE="devpassword=QwErTyUiOpAsDfGh"   # credential-shaped, means nothing
+FAKE="$(printf 'dev%s=%s' password QwErTyUiOpAsDfGh)"   # credential-shaped, means nothing; built at run time so no guard needs an exemption for this line (audit of the fix round, G2-E-tests-01)
 # The wordlist the guard reads is kept outside every tree; a stand-in stands
 # in for it here (#312), so this file names no listed word.
 printf "FORBIDDEN_PATTERNS='zebrafish[ ]quartet|qzx-estate'\\n" > "${SCRATCH}/wordlist"

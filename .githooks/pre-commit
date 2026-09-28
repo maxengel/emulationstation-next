@@ -16,7 +16,7 @@ if ! git diff --cached -U0 --no-color --diff-filter=ACMRT | guard_added_lines > 
   exit 1
 fi
 grep -v -E -e "^es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp:[0-9]+${guard_tab}\+.*maskSecrets\(" \
-           -e "^\.githooks/pre-push-test:[0-9]+${guard_tab}\+FAKE=\"" "${added}" > "${cred}"; rc=$?
+ "${added}" > "${cred}"; rc=$?
 [ "${rc}" -le 1 ] || { echo "pre-commit: the exemption filter could not run (grep exited ${rc}); nothing was scanned, so nothing is allowed" >&2; exit 1; }
 status=0
 guard_scan pre-commit "${cred}" "this commit would add a credential-shaped line" '' "${SECRET_PATTERNS}" redact || status=1
