@@ -11,9 +11,12 @@
 #include "SaveStateBookkeeper.h"
 #include "utils/FileSystemUtil.h"
 
+#include <atomic>
 #include <chrono>
+#include <functional>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <fcntl.h>
 #include <fstream>
 #include <mutex>
@@ -87,10 +90,21 @@ namespace FakeLog
 	std::mutex& lock() { static std::mutex m; return m; }
 }
 
+// How long the script "runs", and what a transfer starting meanwhile would
+// have found: the case below asks while the deletion's script is running.
+static std::atomic<int> gRunMs{ 0 };
+static std::function<void()> gDuringRun;
+
 std::pair<std::string, int> ApiSystem::executeScriptLegacy(const std::string& command, const std::function<void(const std::string)>&)
 {
-	std::lock_guard<std::mutex> g(gRunLock);
-	gRuns.push_back(command);
+	{
+		std::lock_guard<std::mutex> g(gRunLock);
+		gRuns.push_back(command);
+	}
+	if (gDuringRun)
+		gDuringRun();
+	if (gRunMs > 0)
+		std::this_thread::sleep_for(std::chrono::milliseconds(gRunMs));
 	return std::make_pair(std::string(), 0);
 }
 
@@ -151,6 +165,35 @@ TEST_CASE("bookkeeper: a lock file that cannot be opened is taken as held")
 	REQUIRE(std::remove(lock.c_str()) == 0);
 	{ std::ofstream touch(lock); }
 	REQUIRE(waitFor([&state] { return !fileExists(state); }, 5000));
+}
+
+// gpt's coverage note on PL-068 (audit of the fixes, E2): the bookkeeper
+// asked whether the lock was held and then deleted, so a transfer that
+// started between the answer and the deletion ran beside it. The lock is
+// now held for the deletion: a transfer that starts meanwhile finds it
+// taken -- the scripts give a busy lock a second, longer than a deletion.
+TEST_CASE("bookkeeper: a deletion holds the transfer lock while it runs")
+{
+	const std::string lock = CLOUD_SYNC_LOCK_PATH;
+	const std::string state = stateFile("e");
+	std::atomic<int> freeDuring{ -1 };
+	std::atomic<int> ownDuring{ -1 };
+	gDuringRun = [&lock, &freeDuring, &ownDuring]
+	{
+		// A transfer starting now: flock -n on the lock, from another process.
+		const int rc = std::system(("flock -n '" + lock + "' true").c_str());
+		freeDuring = WIFEXITED(rc) && WEXITSTATUS(rc) == 0 ? 1 : 0;
+		ownDuring = SaveStateBookkeeper::holdsTransferLock() ? 1 : 0;
+	};
+	SaveStateBookkeeper::deleteLater(state, "");
+	REQUIRE(waitFor([&state] { return !fileExists(state); }, 5000));
+	gDuringRun = nullptr;
+	CHECK_MESSAGE(freeDuring.load() == 0, "a transfer could have taken the lock while the deletion ran");
+	CHECK(ownDuring.load() == 1);                          // the manager can tell it is ours
+	CHECK_FALSE(SaveStateBookkeeper::holdsTransferLock());
+	// And it is let go after.
+	const int after = std::system(("flock -n '" + lock + "' true").c_str());
+	CHECK((WIFEXITED(after) && WEXITSTATUS(after) == 0));
 }
 
 TEST_CASE("bookkeeper: exit does not wait out a transfer, and deletes nothing under it")

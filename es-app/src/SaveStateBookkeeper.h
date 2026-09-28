@@ -56,6 +56,11 @@ public:
 	// Finished jobs since the process started.
 	static unsigned completed();
 
+	// A deletion is running with the cloud transfer lock held (runDelete):
+	// the lock the manager's DELETE and COPY refusal asks about is this
+	// process's own for that moment, not a transfer's.
+	static bool holdsTransferLock();
+
 	// Drain the queue and join the worker. Called at exit; harmless when
 	// nothing ever ran, and a second call does nothing.
 	static void shutdown();
