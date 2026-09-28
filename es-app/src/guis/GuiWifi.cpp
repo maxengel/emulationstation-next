@@ -161,12 +161,13 @@ void GuiWifi::join(const std::string& name, const std::string& profile)
 	Window* window = mWindow;
 	mWaitingLoad = true;
 	LOG(LogInfo) << "wifi picker: joining the saved network " << name << " (profile " << profile << ")";
-	window->pushGui(new GuiLoading<int>(window, _("CONNECTING TO WI-FI"),
+	window->pushGui(new GuiLoading<WifiText::JoinAnswer>(window, _("CONNECTING TO WI-FI"),
 		[profile](IGuiLoadingHandler*) { return ApiSystem::getInstance()->joinWifiNetwork(profile); },
-		[this, window, name, profile](int code)
+		[this, window, name, profile](WifiText::JoinAnswer answer)
 		{
 			mWaitingLoad = false;
-			if (code != 0)
+			const int code = answer.code;
+			if (!answer.joined())
 			{
 				LOG(LogWarning) << "wifi picker: could not join the saved network " << name << " (profile " << profile << ", wifictl join exited " << code << ")";
 				// The advice by what happened (WifiText::joinFailure, #308

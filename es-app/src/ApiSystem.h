@@ -271,15 +271,15 @@ public:
 	// dropped with it.
 	bool forgetWifiNetwork(const std::string& name, bool& disconnected);
 	// Join a network NetworkManager holds a profile for, with the key it
-	// holds (`wifictl join <name>`): the picker's press on a SAVED row (fork
-	// #191). True only when the script said "joined"; the settings wifi.ssid
-	// and wifi.key then follow the profile on disk, so a caller re-reads
-	// SystemConf before trusting either.
-	// wifictl join's answer: 0 when the saved network's profile is active
-	// ("joined"), else the script's exit code -- 2 NetworkManager not
-	// answering, 1 not joined -- and 1 for a 0 that printed no "joined".
-	// WifiText::joinFailure reads it.
-	int joinWifiNetwork(const std::string& name);
+	// holds (`wifictl join <name>`, name the profile's): the picker's press
+	// on a SAVED row (fork #191). Joined only when the script said
+	// "joined"; the settings wifi.ssid and wifi.key then follow the profile
+	// on disk, so a caller re-reads SystemConf before trusting either.
+	// Otherwise the script's exit code -- 2 NetworkManager not answering,
+	// 1 not joined -- and 1 for a 0 that printed no "joined";
+	// WifiText::joinFailure reads it. A WifiText::JoinAnswer, not an int or
+	// a bool: see its comment.
+	WifiText::JoinAnswer joinWifiNetwork(const std::string& name);
 
 	virtual std::vector<std::string> getIpAddresses();
 	virtual std::string getIpAddress();
