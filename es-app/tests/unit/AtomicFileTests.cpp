@@ -441,3 +441,100 @@ TEST_CASE("a save that cannot get the lock writes nothing, and both writers' key
 	CHECK(last.find("b=2\n") != std::string::npos);   // the other writer's key
 	CHECK(last.find("a=2\n") != std::string::npos);   // and the interface's
 }
+
+// ------------------------------------------------------------------ PL-064
+
+TEST_CASE("a cut live file beside a whole temporary and no record loads the temporary (PL-064)")
+{
+	// The writer before #102 wrote system.cfg.tmp whole, then truncated the
+	// live file and copied the temporary into it. Killed in the copy, it
+	// left a live file cut short -- empty, or a prefix -- beside a whole
+	// .tmp, and a device that had never run the build that keeps .backup had
+	// no record. The start deleted the .tmp unread and took the fragment:
+	// empty read as nothing (defaults), a prefix with one key=value line in
+	// it passed as usable and was recorded as the last known good.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string whole = "system.hostname=RG35XXSP\nwifi.ssid=Home\nwifi.key=secret\naudio.volume=70\n";
+	put(path + ".tmp", whole);
+
+	SUBCASE("the live file truncated to nothing")
+	{
+		put(path, "");
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Temporary);
+		CHECK(c.text == whole);
+		CHECK(c.record);
+	}
+	SUBCASE("the live file cut part way through a line")
+	{
+		put(path, whole.substr(0, 46));   // "system.hostname=RG35XXSP\nwifi.ssid=Home\nwifi.k"
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Temporary);
+		CHECK(c.text == whole);
+	}
+	SUBCASE("the live file missing")
+	{
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Temporary);
+		CHECK(c.text == whole);
+	}
+}
+
+TEST_CASE("usable means complete: a live file cut mid-line is read, and never recorded (PL-064)")
+{
+	// No temporary to compare it with: the cut file is still the best there
+	// is and is read as it always was, but it is not whole, so it must not
+	// replace a good record.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	put(path, "system.hostname=RG35XXSP\nwifi.ssid=Ho");
+	LoadedConfig c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Live);
+	CHECK_FALSE(c.record);
+
+	// A whole one is read and recorded, as ever.
+	put(path, "system.hostname=RG35XXSP\nwifi.ssid=Home\n");
+	c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Live);
+	CHECK(c.record);
+}
+
+TEST_CASE("the choices that were already right stay right (PL-064)")
+{
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string good = "system.hostname=A\n";
+
+	// A whole live file wins over a leftover temporary: a temporary beside
+	// a whole file is a save that never reached its rename, or the shell's
+	// own write in flight, and neither is the file.
+	put(path, good);
+	put(path + ".tmp", "system.hostname=A\nwifi.ssid=B\n");
+	CHECK(chooseConfig(path).source == LoadedConfig::Source::Live);
+	::unlink((path + ".tmp").c_str());
+
+	// An unusable live file and a record: the record.
+	put(path, std::string("\0\0\0", 3));
+	put(path + ".backup", good);
+	LoadedConfig c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Backup);
+	CHECK(c.text == good);
+
+	// An unusable live file and nothing else: read as it is, recorded nowhere.
+	::unlink((path + ".backup").c_str());
+	put(path, "# only a comment\n");
+	c = chooseConfig(path);
+	CHECK(c.source == LoadedConfig::Source::Damaged);
+	CHECK_FALSE(c.record);
+
+	// Nothing at all.
+	::unlink(path.c_str());
+	CHECK(chooseConfig(path).source == LoadedConfig::Source::Missing);
+
+	// A temporary that is not whole itself is never taken.
+	put(path, "");
+	put(path + ".tmp", "system.hostname=A\nwifi.ss");
+	CHECK(chooseConfig(path).source == LoadedConfig::Source::Damaged);
+}
+

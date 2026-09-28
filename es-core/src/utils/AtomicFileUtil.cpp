@@ -255,6 +255,93 @@ namespace Utils
 			return writeText(dst, text, modeOf(src, 0644));
 		}
 
+		bool isUsableKeyValues(const std::string& text)
+		{
+			if (text.empty() || text.find('\0') != std::string::npos)
+				return false;
+			std::istringstream in(text);
+			std::string line;
+			while (std::getline(in, line))
+			{
+				auto idx = line.find('=');
+				if (idx != std::string::npos && idx > 0 && line[0] != '#' && line[0] != ';')
+					return true;
+			}
+			return false;
+		}
+
+		// Whole, as every writer of these files leaves one: each line ends in
+		// a line end -- ours, the shell's awk and sed, echo >>. A text that
+		// stops part way through a line was cut. (A cut exactly at a line end
+		// cannot be told from a shorter file; nothing here pretends to.)
+		static bool isComplete(const std::string& text)
+		{
+			return !text.empty() && text.back() == '\n';
+		}
+
+		LoadedConfig chooseConfig(const std::string& path)
+		{
+			// PL-064. The start used to delete `path`.tmp unread and take the
+			// live file whenever one key=value line survived in it. The writer
+			// before #102 wrote the temporary whole, then truncated the live
+			// file and copied the temporary in: killed in the copy, it left the
+			// live file cut short beside a whole temporary, on a device that
+			// may never have run a build that keeps the record. So the
+			// temporary is read first, and wins when it is whole and the live
+			// file is gone, unusable, or a cut prefix of it; and "usable" for
+			// the record means complete as well.
+			LoadedConfig out;
+			bool liveOk = false, tmpOk = false, backupOk = false;
+			const std::string live = readText(path, &liveOk);
+			const std::string tmp = readText(path + ".tmp", &tmpOk);
+			const bool tmpWhole = tmpOk && isUsableKeyValues(tmp) && isComplete(tmp);
+
+			// The copy stopped part way: what is there is the start of the
+			// temporary, short of its end.
+			const bool liveCut = liveOk && tmpWhole && !isComplete(live)
+				&& live.size() < tmp.size() && tmp.compare(0, live.size(), live) == 0;
+
+			if (liveOk && isUsableKeyValues(live) && !liveCut)
+			{
+				// A temporary beside a whole file is a save that never reached
+				// its rename, or the shell's own write in flight; neither is the
+				// file. A live file that is not whole is still read -- there is
+				// nothing better -- but it does not become the record.
+				out.source = LoadedConfig::Source::Live;
+				out.text = live;
+				out.record = isComplete(live);
+				return out;
+			}
+			if (liveCut)
+			{
+				out.source = LoadedConfig::Source::Temporary;
+				out.text = tmp;
+				out.record = true;
+				return out;
+			}
+
+			const std::string backup = readText(path + ".backup", &backupOk);
+			if (backupOk && isUsableKeyValues(backup))
+			{
+				out.source = LoadedConfig::Source::Backup;
+				out.text = backup;
+				return out;
+			}
+			if (tmpWhole)
+			{
+				out.source = LoadedConfig::Source::Temporary;
+				out.text = tmp;
+				out.record = true;
+				return out;
+			}
+			if (liveOk)
+			{
+				out.source = LoadedConfig::Source::Damaged;
+				out.text = live;
+			}
+			return out;
+		}
+
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
 			const std::function<std::string(const std::string& current)>& merge, std::string* written)
 		{

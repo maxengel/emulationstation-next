@@ -49,6 +49,32 @@ namespace Utils
 		// not be written.
 		bool copy(const std::string& src, const std::string& dst);
 
+		// Whether a key=value configuration text is one worth reading and
+		// worth keeping as the last-known-good record: something in it, no
+		// NUL bytes (a file cut by a power failure reads as a run of them),
+		// and at least one key=value line that is not a comment.
+		bool isUsableKeyValues(const std::string& text);
+
+		// Where a configuration's text comes from at load (SystemConf's
+		// system.cfg), and whether it is whole enough to become the record.
+		struct LoadedConfig
+		{
+			enum class Source
+			{
+				Live,        // the file itself
+				Temporary,   // `path`.tmp: an unfinished save's whole text, the file cut or unusable
+				Backup,      // `path`.backup: the last-known-good record
+				Damaged,     // the file, unusable, with nothing better: read as it is, recorded nowhere
+				Missing      // nothing could be read at all
+			};
+			Source source = Source::Missing;
+			std::string text;
+			bool record = false;   // may replace the last-known-good record
+		};
+
+		// The choice, from what is on disk now. Reads; writes nothing.
+		LoadedConfig chooseConfig(const std::string& path);
+
 		// What a read-modify-write under the settings lock came to.
 		enum class LockedSave
 		{
