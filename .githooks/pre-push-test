@@ -161,7 +161,7 @@ mkdir -p es-app/tests/unit
 echo "CHECK(maskSecrets(\"${FAKE}\") == \"devpassword=<redacted>\");" > es-app/tests/unit/MaskTests.cpp
 g add es-app && g commit -q -m fixture
 fixture="$(git rev-parse HEAD)"
-expect allowed "a maskSecrets fixture in a unit test" "refs/heads/clean ${fixture} refs/heads/clean ${personal}"
+expect refused "a credential-shaped literal in a unit test, even beside maskSecrets( (no path is exempt since E1 split the fixture)" "refs/heads/clean ${fixture} refs/heads/clean ${personal}"
 
 # 10. A hook with no pattern file beside it scans nothing -- and so must
 #     refuse rather than pass (found by this test's own first run against a
