@@ -551,6 +551,29 @@ namespace Utils
 			return quote;
 		}
 
+		// One character of the command a quoted string holds, as the shell
+		// that runs it will read it (audit of the fix round PL-010): in a
+		// double-quoted string \" \\ \$ and \` are one character, the escaped
+		// one, and any other backslash stays itself; in a single-quoted string
+		// every byte stands for itself. Sets c, and returns the character's
+		// width in the line -- or 0 where the enclosing string itself ends.
+		static size_t maskInnerChar(const std::string& s, size_t i, char enclosing, char& c)
+		{
+			c = s[i];
+			if (c == enclosing)
+				return 0;
+			if (enclosing == '"' && c == '\\' && i + 1 < s.size())
+			{
+				const char next = s[i + 1];
+				if (next == '"' || next == '\\' || next == '$' || next == '`')
+				{
+					c = next;
+					return 2;
+				}
+			}
+			return 1;
+		}
+
 		// The end of the one shell word starting at pos (#308 F-ES-09). At the
 		// top level a word runs across every quoted and bare piece of it, and
 		// every backslash-escaped character, until unquoted whitespace or &, ;
@@ -571,7 +594,13 @@ namespace Utils
 			// keep a word whole. They used to end it before it began, and
 			// `sh -c 'tool --password "front back"'` logged the password
 			// (audit of the fixes of #307, gpt's coverage note on F-ES-09).
-			// In a double-quoted string the inner double quote is written \".
+			// The inner command is read character by character as its own shell
+			// reads it (maskInnerChar), so a backslash there -- at its top level
+			// or inside its double quote -- takes the next character with it:
+			// the inner quote was tracked before the backslash, and
+			// `sh -c 'tool --password "front\" back"'` logged "back" (audit of
+			// the fix round PL-010). Inside the inner single quote a backslash
+			// is only a backslash, as the shell has it.
 			const char enclosing = maskQuoteAt(s, pos);
 			if (enclosing != 0)
 			{
@@ -579,33 +608,36 @@ namespace Utils
 				size_t i = pos;
 				while (i < s.size())
 				{
-					const char c = s[i];
-					if (enclosing == '"' && c == '\\' && i + 1 < s.size())
-					{
-						if (s[i + 1] == '"' && inner != '\'')
-							inner = inner == '"' ? 0 : '"';
-						i += 2;
-						continue;
-					}
-					if (c == enclosing)
+					char c = 0;
+					const size_t width = maskInnerChar(s, i, enclosing, c);
+					if (width == 0)
 						return i; // the string itself ends
-					if (inner != 0)
-					{
-						if (c == inner)
-							inner = 0;
-						++i;
-						continue;
-					}
-					if (enclosing == '\'' && c == '\\')
-					{
-						i += 2; // the inner command's escaped character
-						continue;
-					}
-					if (c == '\'' || c == '"')
-						inner = c;
-					else if (maskIsSpace(c) || c == '&' || c == ';' || c == '|')
+					if (inner == 0 && (maskIsSpace(c) || c == '&' || c == ';' || c == '|'))
 						return i;
-					++i;
+					i += width;
+					if (inner == '\'')
+					{
+						if (c == '\'')
+							inner = 0;
+					}
+					else if (c == '\\')
+					{
+						if (i < s.size())
+						{
+							char escaped = 0;
+							const size_t next = maskInnerChar(s, i, enclosing, escaped);
+							if (next == 0)
+								return i; // the string ends after a lone backslash
+							i += next; // the inner command's escaped character
+						}
+					}
+					else if (inner == '"')
+					{
+						if (c == '"')
+							inner = 0;
+					}
+					else if (c == '\'' || c == '"')
+						inner = c;
 				}
 				return s.size();
 			}

@@ -192,3 +192,23 @@ TEST_CASE("a value quoted inside a quoted command is masked whole (audit of the 
 	CHECK(maskSecrets("sh -c 'x --password hunter2' next") == "sh -c 'x --password <redacted>' next");
 	CHECK(maskSecrets("curl \"https://h/?u=bob&p=hunter2\" -o out") == "curl \"https://h/?u=bob&p=<redacted>\" -o out");
 }
+
+TEST_CASE("an escaped quote inside an inner quoted value does not end it (audit of the fix round PL-010)")
+{
+	// Inside an enclosing quote the inner quote was tracked before the
+	// backslash, so an escaped inner double quote closed the inner quote and
+	// the space after it ended the mask: sh -c 'tool --password "front\"
+	// back"' passes the inner shell the one word front" back, and the log
+	// kept "back". The inner command is read as its shell reads it -- in an
+	// enclosing double-quoted string the inner backslash is itself written
+	// \\ -- and inside an inner double quote a backslash takes the next
+	// character with it, in both enclosing modes.
+	CHECK(maskSecrets(R"(sh -c 'tool --password "front\" back"')") == R"(sh -c 'tool --password <redacted>')");
+	CHECK(maskSecrets(R"(sh -c "tool --password \"front\\\" back\"")") == R"(sh -c "tool --password <redacted>")");
+	CHECK(maskSecrets(R"(sh -c 'tool --password "front\" back" && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	// An escaped backslash before the inner quote's close still closes it.
+	CHECK(maskSecrets(R"(sh -c 'tool --password "front\\" next')") == R"(sh -c 'tool --password <redacted> next')");
+	// A backslash at the inner command's top level, in both enclosing modes.
+	CHECK(maskSecrets(R"(sh -c 'tool --password front\ back && x')") == R"(sh -c 'tool --password <redacted> && x')");
+	CHECK(maskSecrets(R"(sh -c "tool --password front\\ back && x")") == R"(sh -c "tool --password <redacted> && x")");
+}
