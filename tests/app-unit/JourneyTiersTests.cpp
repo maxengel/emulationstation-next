@@ -78,3 +78,51 @@ TEST_CASE("journey: settings alone leaves nothing to continue")
 	CHECK(t.known);
 	CHECK_FALSE(t.any());
 }
+
+// Audit of the fixes (#307), E2 gpt G-E2-02: "known" meant only that the
+// first line matched. A record cut short after its first line read as a
+// record naming nothing, and the start consumed the marker and the record
+// without offering anything -- work lost to a damaged file. A record is
+// known only when all three tiers are there, each 0 or 1.
+TEST_CASE("journey: a record cut short or damaged is not a record naming nothing")
+{
+	CHECK_FALSE(JourneyTiers::parse("journey-tiers=1\n").known);
+	CHECK_FALSE(JourneyTiers::parse("journey-tiers=1\nsaves=1\n").known);
+	CHECK_FALSE(JourneyTiers::parse("journey-tiers=1\nsaves=1\ncontent=0\n").known);
+	CHECK_FALSE(JourneyTiers::parse("journey-tiers=1\nsaves=2\ncontent=0\nmedia=0\n").known);
+	CHECK_FALSE(JourneyTiers::parse("journey-tiers=1\nsaves=1\ncontent=\nmedia=0\n").known);
+	// What the form writes, all three tiers off included, still reads.
+	const auto none = JourneyTiers::parse(JourneyTiers::record(false, false, false));
+	CHECK(none.known);
+	CHECK_FALSE(none.any());
+	CHECK(JourneyTiers::parse(JourneyTiers::record(true, false, true)).known);
+}
+
+// E2 gpt G-E2-01: a record that could not be written left an earlier
+// attempt's record in place, and the start replayed that attempt's ticks.
+// The old one is removed first; a write that then fails leaves no record
+// (the start offers everything, and says so); one that can be neither
+// replaced nor removed stops the restore before it starts.
+TEST_CASE("journey: a record that cannot be replaced never stands in for this restore's")
+{
+	using R = JourneyTiers::Replaced;
+	std::string onDisk;
+	bool present = false, writable = true, removable = true;
+	auto write = [&](const std::string& t) { if (!writable) return false; onDisk = t; present = true; return true; };
+	auto remove = [&]() { if (!removable) return false; present = false; onDisk.clear(); return true; };
+	auto exists = [&]() { return present; };
+
+	// An earlier attempt's record, and a write that fails.
+	onDisk = JourneyTiers::record(false, true, false); present = true; writable = false;
+	CHECK(JourneyTiers::replaceRecord(JourneyTiers::record(true, false, false), write, remove, exists) == R::NoRecord);
+	CHECK_FALSE(present);
+
+	// ... and one that cannot be removed either.
+	onDisk = JourneyTiers::record(false, true, false); present = true; writable = false; removable = false;
+	CHECK(JourneyTiers::replaceRecord(JourneyTiers::record(true, false, false), write, remove, exists) == R::OldRecordStands);
+
+	// The ordinary case.
+	present = false; writable = true; removable = true;
+	CHECK(JourneyTiers::replaceRecord(JourneyTiers::record(true, false, false), write, remove, exists) == R::Written);
+	CHECK(JourneyTiers::parse(onDisk).saves);
+}

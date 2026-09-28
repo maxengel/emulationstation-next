@@ -4765,11 +4765,27 @@ static void cloudOpenTransfer(Window* window, bool backup)
 					if (rest)
 					{
 						Utils::FileSystem::createDirectory(Utils::FileSystem::getParent(record));
-						// A record that could not be written leaves the start with a
-						// marker and no record: it then offers everything, and its
-						// prompt names everything, so nothing runs that it did not say.
-						if (!Utils::AtomicFile::writeText(record, JourneyTiers::record(wantSaves, wantContent, wantMedia)))
+						// This restore's ticks, or no record at all: an earlier
+						// attempt's record at the same path was read as this one's
+						// when the write failed (audit of the fixes, E2 gpt G-E2-01).
+						// No record leaves the start with a marker and nothing to
+						// read: it offers everything and its prompt names
+						// everything. A record that can be neither replaced nor
+						// removed stops the restore here, before anything changes.
+						const JourneyTiers::Replaced replaced = JourneyTiers::replaceRecord(
+							JourneyTiers::record(wantSaves, wantContent, wantMedia),
+							[&record](const std::string& text) { return Utils::AtomicFile::writeText(record, text); },
+							[&record]() { return Utils::FileSystem::removeFile(record); },
+							[&record]() { return Utils::FileSystem::exists(record, false); });
+						if (replaced == JourneyTiers::Replaced::NoRecord)
 							LOG(LogWarning) << "restore: the journey record could not be written to " << record << "; the start will offer everything";
+						else if (replaced == JourneyTiers::Replaced::OldRecordStands)
+						{
+							LOG(LogError) << "restore: an earlier journey record at " << record << " could be neither replaced nor removed; the restore was not started";
+							s->close();
+							window->pushGui(new GuiMsgBox(window, _("COULDN'T SAVE WHAT YOU TICKED, SO NOTHING WAS RESTORED."), _("OK")));
+							return;
+						}
 					}
 					else if (Utils::FileSystem::exists(record, false))
 						Utils::FileSystem::removeFile(record);
