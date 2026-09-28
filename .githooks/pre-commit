@@ -4,22 +4,20 @@
 # a refusal at commit time costs one edit; at push time a rewrite), or a word
 # from the wordlist the fork must not carry (kept outside the tree;
 # .githooks/guard-lib says where, and fails closed). Reads the index, not the
-# working tree. Two exemptions, credential scan only, as narrow as they read:
-# a unit test's maskSecrets( fixture, and this guard's own test's FAKE= value.
+# working tree. No path is exempt: the unit tests' one credential-shaped
+# fixture is split in source (E1, d75a93da0) and pre-push-test builds its
+# value at run time (audit of the fix round, G2-E-tests-01).
 set -uo pipefail
 . "$(dirname "$(readlink -f "$0")")/guard-lib" || exit 1
 guard_load pre-commit || exit 1
-added="$(mktemp)" && cred="$(mktemp)" || { echo "pre-commit: mktemp failed; nothing was scanned, so nothing is allowed" >&2; exit 1; }
-trap 'rm -f "${added}" "${cred}"' EXIT
+added="$(mktemp)" || { echo "pre-commit: mktemp failed; nothing was scanned, so nothing is allowed" >&2; exit 1; }
+trap 'rm -f "${added}" "${added}"' EXIT
 if ! git diff --cached -U0 --no-color --diff-filter=ACMRT | guard_added_lines > "${added}"; then
   echo "pre-commit: could not read the index (git diff --cached failed); nothing was scanned, so nothing is allowed" >&2
   exit 1
 fi
-grep -v -E -e "^es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp:[0-9]+${guard_tab}\+.*maskSecrets\(" \
- "${added}" > "${cred}"; rc=$?
-[ "${rc}" -le 1 ] || { echo "pre-commit: the exemption filter could not run (grep exited ${rc}); nothing was scanned, so nothing is allowed" >&2; exit 1; }
 status=0
-guard_scan pre-commit "${cred}" "this commit would add a credential-shaped line" '' "${SECRET_PATTERNS}" redact || status=1
+guard_scan pre-commit "${added}" "this commit would add a credential-shaped line" '' "${SECRET_PATTERNS}" redact || status=1
 guard_scan pre-commit "${added}" "this commit would add a listed word (the wordlist outside the tree; the file and line above)" -i "${FORBIDDEN_PATTERNS}" where || status=1
 [ "${status}" -eq 0 ] || echo "  A placeholder belongs in <angle brackets>; a scanner's fixture is built at run time, never written as a literal; a listed word is reworded, never exempted." >&2
 exit "${status}"
