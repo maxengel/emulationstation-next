@@ -143,3 +143,72 @@ TEST_CASE("parseJoin reads the word, not the absence of an error")
 	CHECK_FALSE(parseJoin({ "" }));
 	CHECK_FALSE(parseJoin({ "Error: Connection activation failed." }));
 }
+
+// ------------------------------------------------------ #308 F-WF-03/05/06/08
+
+TEST_CASE("pickerRows: a saved list that could not be asked leaves every row unknown, not unsaved (#308 2 claude F-WF-03, gpt F-WF-06)")
+{
+	// wifictl saved exits 1 when NetworkManager cannot be asked, "so a
+	// caller cannot read a silence as none"; the picker read it as none, and
+	// a press on the player's own network asked for a key and rebuilt its
+	// profile from what was typed.
+	auto rows = pickerRows({ "Home Wi-Fi", "Library" }, {}, "Home Wi-Fi", false, true);
+	REQUIRE(rows.size() == 2);
+	CHECK(rows[0].connected);
+	CHECK_FALSE(rows[0].savedKnown);
+	CHECK_FALSE(rows[1].savedKnown);
+	CHECK_FALSE(rows[1].saved);
+
+	// And an answered list is known, as it always was.
+	auto known = pickerRows({ "Library" }, {}, "", true, true);
+	REQUIRE(known.size() == 1);
+	CHECK(known[0].savedKnown);
+}
+
+TEST_CASE("pickerRows: a current that could not be asked takes the connected row from the saved list's active profile (#308 F-WF-03)")
+{
+	// wifictl current exits 2 when NetworkManager cannot be asked; the saved
+	// list already says which profile is active.
+	auto rows = pickerRows({ "Cafe: Guest", "Home Wi-Fi" }, { { "Home Wi-Fi", true }, { "Cafe: Guest", false } }, "", true, false);
+	REQUIRE(rows.size() == 2);
+	CHECK(rows[0].name == "Home Wi-Fi");
+	CHECK(rows[0].connected);
+	CHECK(rows[0].saved);
+	CHECK(rows[1].name == "Cafe: Guest");
+	CHECK_FALSE(rows[1].connected);
+}
+
+TEST_CASE("a press: the connected row is checked by a join, a saved one joins, an unknown one is asked again (#308 F-WF-03/05/06)")
+{
+	// The connected row closed the picker on the snapshot it was built from,
+	// with no look at whether the device was still on it (gpt F-WF-05).
+	// wifictl join answers "joined" at once for the active profile and brings
+	// back one that has dropped, so a press on it goes that way.
+	PickerRow connected{ "Home Wi-Fi", true, true };
+	CHECK(pressAction(connected) == PressAction::Join);
+	PickerRow saved{ "Cafe: Guest", true, false };
+	CHECK(pressAction(saved) == PressAction::Join);
+	PickerRow other{ "Library", false, false };
+	CHECK(pressAction(other) == PressAction::AskKey);
+	PickerRow unknown{ "Library", false, false, false };
+	CHECK(pressAction(unknown) == PressAction::CheckAgain);
+	PickerRow unknownConnected{ "Home Wi-Fi", false, true, false };
+	CHECK(pressAction(unknownConnected) == PressAction::Join);   // the device is on it: it has a profile
+
+	// INPUT MANUALLY, the same rules for a typed name.
+	const std::vector<SavedNetwork> profiles = { { "Home Wi-Fi", true }, { "Hidden", false } };
+	CHECK(manualAction("Home Wi-Fi", "Home Wi-Fi", profiles, true) == PressAction::Join);
+	CHECK(manualAction("Hidden", "Home Wi-Fi", profiles, true) == PressAction::Join);
+	CHECK(manualAction("Guest", "Home Wi-Fi", profiles, true) == PressAction::AskKey);
+	CHECK(manualAction("Guest", "Home Wi-Fi", {}, false) == PressAction::CheckAgain);
+	CHECK(manualAction("", "", {}, true) == PressAction::AskKey);
+}
+
+TEST_CASE("the joined toast is <subject> : <outcome>, the name as it is (#308 2 claude F-WF-08, gpt F-WF-08)")
+{
+	// It was "CONNECTED TO" + name: a translated fragment a translation could
+	// not move, and not the toast shape the style guide sets.
+	CHECK(joinedNotice("Home Wi-Fi", "CONNECTED") == "Home Wi-Fi : CONNECTED");
+	CHECK(joinedNotice("cafe guest", "CONNECT\xC3\x89") == "cafe guest : CONNECT\xC3\x89");
+}
+

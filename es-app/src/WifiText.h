@@ -56,6 +56,10 @@ namespace WifiText
 		std::string name;
 		bool saved = false;
 		bool connected = false;
+		// Whether `saved` is an answer: false when `wifictl saved` could
+		// not be asked (#308 F-WF-03/06), and the row is then neither saved
+		// nor unsaved, only unknown.
+		bool savedKnown = true;
 	};
 
 	// The rows in the order the list shows them: the network joined now
@@ -65,7 +69,37 @@ namespace WifiText
 	// Saved networks out of range are not rows: this list is what can be
 	// joined from here; MANAGE SAVED NETWORKS lists them all. Names compare
 	// exactly, as NetworkManager does.
-	std::vector<PickerRow> pickerRows(const std::vector<std::string>& inRange, const std::vector<SavedNetwork>& saved, const std::string& current);
+	// savedKnown and currentKnown say whether `wifictl saved` and `wifictl
+	// current` answered (ApiSystem's two getters return it): an empty list
+	// and no list are different answers (#308 F-WF-03/06).
+	std::vector<PickerRow> pickerRows(const std::vector<std::string>& inRange, const std::vector<SavedNetwork>& saved, const std::string& current,
+		bool savedKnown = true, bool currentKnown = true);
+
+	// What a press on a row does, and what INPUT MANUALLY does with a name.
+	//
+	// The network the device is on is joined too, not taken on trust
+	// (#308 F-WF-05): the row was built from a snapshot, and the device may
+	// have dropped it or moved to another since. wifictl join answers
+	// "joined" at once for a profile that is active and brings back one that
+	// is not, so the press confirms or repairs, and the picker closes only
+	// on its answer. A network whose profile could not be asked about is
+	// asked about again, never taken for one with no profile: the key path
+	// (wifictl connect) deletes and rebuilds a profile of that name (#308
+	// F-WF-03/06).
+	enum class PressAction
+	{
+		Join,         // join by the profile NetworkManager holds (wifictl join)
+		AskKey,       // a network with no profile: its key, then connect
+		CheckAgain    // whether it has a profile could not be asked: never assume it has none
+	};
+	PressAction pressAction(const PickerRow& row);
+	PressAction manualAction(const std::string& name, const std::string& current, const std::vector<SavedNetwork>& saved, bool savedKnown);
+
+	// The toast when the picker has joined a network, in the toast's shape
+	// (es-ui-style-guide.md: <glyph> <subject> : <outcome>): the name as
+	// NetworkManager has it, then the word the row uses for the same fact
+	// (#308 F-WF-08). The caller puts the glyph in front.
+	std::string joinedNotice(const std::string& name, const std::string& connectedWord);
 
 	// What `wifictl join` printed: "joined" once the saved network's profile
 	// is active. Anything else, or nothing, is not a join that happened.

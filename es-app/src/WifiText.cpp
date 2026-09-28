@@ -54,8 +54,20 @@ std::string WifiText::parseCurrent(const std::vector<std::string>& lines)
 	return "";
 }
 
-std::vector<WifiText::PickerRow> WifiText::pickerRows(const std::vector<std::string>& inRange, const std::vector<SavedNetwork>& saved, const std::string& current)
+std::vector<WifiText::PickerRow> WifiText::pickerRows(const std::vector<std::string>& inRange, const std::vector<SavedNetwork>& saved, const std::string& current,
+	bool savedKnown, bool currentKnown)
 {
+	// The device's network when `wifictl current` could not say: the saved
+	// list marks the profile that is active (#308 F-WF-03).
+	std::string joinedNow = current;
+	if (!currentKnown && savedKnown)
+		for (const auto& network : saved)
+			if (network.inUse)
+			{
+				joinedNow = network.name;
+				break;
+			}
+
 	auto isSaved = [&saved](const std::string& name)
 	{
 		for (const auto& network : saved)
@@ -73,15 +85,15 @@ std::vector<WifiText::PickerRow> WifiText::pickerRows(const std::vector<std::str
 		return false;
 	};
 
-	if (!current.empty())
-		rows.push_back({ current, isSaved(current), true });
+	if (!joinedNow.empty())
+		rows.push_back({ joinedNow, savedKnown && isSaved(joinedNow), true, savedKnown });
 
 	for (const auto& rawName : inRange)
 	{
 		const std::string name = withoutCR(rawName);
 		if (name.empty() || listed(name))
 			continue;
-		rows.push_back({ name, isSaved(name), false });
+		rows.push_back({ name, savedKnown && isSaved(name), false, savedKnown });
 	}
 	return rows;
 }
@@ -106,4 +118,30 @@ WifiText::ForgetOutcome WifiText::parseForget(const std::vector<std::string>& li
 			outcome.disconnected = true;
 	}
 	return outcome;
+}
+
+WifiText::PressAction WifiText::pressAction(const PickerRow& row)
+{
+	if (row.connected || row.saved)
+		return PressAction::Join;
+	if (!row.savedKnown)
+		return PressAction::CheckAgain;
+	return PressAction::AskKey;
+}
+
+WifiText::PressAction WifiText::manualAction(const std::string& name, const std::string& current, const std::vector<SavedNetwork>& saved, bool savedKnown)
+{
+	if (!name.empty() && name == current)
+		return PressAction::Join;
+	for (const auto& network : saved)
+		if (network.name == name)
+			return PressAction::Join;
+	if (!savedKnown)
+		return PressAction::CheckAgain;
+	return PressAction::AskKey;
+}
+
+std::string WifiText::joinedNotice(const std::string& name, const std::string& connectedWord)
+{
+	return name + " : " + connectedWord;
 }
