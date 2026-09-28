@@ -208,11 +208,11 @@ bool SystemConf::loadFromDisk()
 		return true;
 
 	case Utils::AtomicFile::LoadedConfig::Source::Damaged:
-		// Unusable by the check, with no usable record and no whole
-		// temporary. Read the live file as it always was read -- a file this
+		// Unusable by the check, with no whole record and no whole
+		// temporary (a record cut short is not taken, PL-018). Read the live file as it always was read -- a file this
 		// check is wrong about still works -- and record nothing: there is no
 		// good copy to record.
-		LOG(LogError) << mSystemConfFile << " has no usable key=value line and no usable last-known-good record; reading it as it is";
+		LOG(LogError) << mSystemConfFile << " has no usable key=value line and no whole last-known-good record; reading it as it is";
 		parseSystemConf(chosen.text);
 		return true;
 

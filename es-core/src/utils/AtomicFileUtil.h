@@ -71,7 +71,7 @@ namespace Utils
 			{
 				Live,        // the file itself
 				Temporary,   // `path`.tmp: an unfinished save's whole text, the file cut or unusable
-				Backup,      // `path`.backup: the last-known-good record
+				Backup,      // `path`.backup: the last-known-good record, whole (a cut one is never taken, PL-018)
 				Damaged,     // the file, unusable, with nothing better: read as it is, recorded nowhere
 				Missing      // nothing could be read at all
 			};

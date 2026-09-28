@@ -951,3 +951,66 @@ TEST_CASE("a recovery is written no less private than any copy it came from (G-E
 	umask(before);
 }
 
+
+// ------------------------------------------------------ the audit of the fix round
+
+TEST_CASE("a record cut short beside a whole temporary: the temporary recovers (audit of the fix round PL-018)")
+{
+	// chooseConfig worked out whether the record was whole and then took it
+	// on one key=value line alone: a cut system.cfg.backup -- the cp at boot
+	// before #102 left such records -- beat a whole system.cfg.tmp and was
+	// written back as the live file. A whole temporary is the recovery.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string cut = "system.hostname=A\nwifi.ssid=Home\nwifi.key=sec";
+	const std::string whole = "system.hostname=A\nwifi.ssid=Home\nwifi.key=secret\naudio.volume=70\n";
+	put(path + ".backup", cut);
+	put(path + ".tmp", whole);
+
+	SUBCASE("no live file")
+	{
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Temporary);
+		CHECK(c.text == whole);
+		CHECK(c.record);
+	}
+	SUBCASE("an unusable live file")
+	{
+		put(path, std::string("\0\0\0", 3));
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Temporary);
+		CHECK(c.text == whole);
+		CHECK(c.record);
+	}
+}
+
+TEST_CASE("a record cut short with no whole temporary: the defaults answer, and the cut record is not the record (audit of the fix round PL-018)")
+{
+	// With nothing better the cut record was loaded and written back as the
+	// live file. A record is whole or it is not the record: nothing is
+	// loaded and the defaults answer, as the boot's own check has it
+	// (chksysconfig: the image defaults last).
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string cut = "system.hostname=A\nwifi.ssid=Home\nwifi.key=sec";
+	put(path + ".backup", cut);
+
+	SUBCASE("no live file: nothing is loaded")
+	{
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Missing);
+		CHECK(c.text.empty());
+		CHECK_FALSE(c.record);
+	}
+	SUBCASE("an unusable live file: read as it is, the cut record neither loaded nor recorded")
+	{
+		put(path, std::string("\0\0\0", 3));
+		const LoadedConfig c = chooseConfig(path);
+		CHECK(c.source == LoadedConfig::Source::Damaged);
+		CHECK(c.text != cut);
+		CHECK(parseKeyValues(c.text).empty());
+		CHECK_FALSE(c.record);
+	}
+	// chooseConfig writes nothing: the cut record is on disk as it was.
+	CHECK(get(path + ".backup") == cut);
+}

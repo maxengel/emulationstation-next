@@ -298,7 +298,8 @@ namespace Utils
 			// may never have run a build that keeps the record. So the
 			// temporary is read first, and wins when it is whole and the live
 			// file is gone, unusable, or a cut prefix of it; and "usable" for
-			// the record means complete as well.
+			// the record means complete as well -- for the record's own load
+			// too (PL-018).
 			LoadedConfig out;
 			bool liveOk = false, tmpOk = false, backupOk = false;
 			const std::string live = readText(path, &liveOk);
@@ -367,7 +368,13 @@ namespace Utils
 				return out;
 			}
 
-			if (backupOk && isUsableKeyValues(backup))
+			// The record only when it is whole (audit of the fix round PL-018):
+			// one key=value line was enough, so a record cut short -- the cp at
+			// boot before #102 left such records -- beat a whole temporary,
+			// and with nothing better was written back as the live file. A cut
+			// record is not the last known good; with nothing else, nothing is
+			// loaded and the defaults answer, as chksysconfig has it.
+			if (backupWhole)
 			{
 				out.source = LoadedConfig::Source::Backup;
 				out.text = backup;
