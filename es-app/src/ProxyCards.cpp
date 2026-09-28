@@ -166,9 +166,7 @@ namespace
 	// card is one too many (#308 1-raoffline F-RA-09).
 	std::string topUpWhy(const std::string& token)
 	{
-		if (token == "SOME_GAMES_NOT_SAVED")
-			return _("SOME GAMES COULDN'T BE SAVED");
-		return OfflineAchievements::scanWhy(token);
+		return CloudText::topUpWhy(token);
 	}
 
 	// One run of the top-up: the ctl on a thread of its own, this one

@@ -1422,3 +1422,32 @@ TEST_CASE("a stopped run's stamps: only the part the stop interrupted is restamp
 	// The trap's stamp from this run, with a why the scripts printed first.
 	CHECK(has(stampsToRestamp({ { "last-restore", "1789000003 130 IT_WAS_STOPPED" } }, started), "last-restore"));
 }
+
+// The scan's and the top-up's whys (moved from OfflineAchievements::scanWhy
+// and ProxyCards' topUpWhy so the table has a case). The ctl ends a scan or
+// a top-up with SOME_IMAGES_NOT_SAVED when achievement images could not be
+// fetched (#307 PL-060); the interface had no words for it and said
+// SOMETHING WENT WRONG.
+TEST_CASE("scan and top-up whys: every token the ctl stamps has words")
+{
+	CHECK(scanWhy("SOME_GAMES_NOT_SAVED") == "SOME GAMES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
+	CHECK(topUpWhy("SOME_GAMES_NOT_SAVED") == "SOME GAMES COULDN'T BE SAVED");
+	CHECK(scanWhy("RETROACHIEVEMENTS_STOPPED_ANSWERING") == "RETROACHIEVEMENTS STOPPED ANSWERING");
+	CHECK(topUpWhy("RETROACHIEVEMENTS_STOPPED_ANSWERING") == "RETROACHIEVEMENTS STOPPED ANSWERING");
+	CHECK(scanWhy("CANCELLED") == "YOU CANCELLED IT");
+	CHECK(scanWhy("") == "SOMETHING WENT WRONG");
+	CHECK(scanWhy("A_TOKEN_NEWER_THAN_THIS_BUILD") == "SOMETHING WENT WRONG");
+
+	// The images: the scan's sentence sends the player to the scan, the
+	// top-up's card already says it tries again by itself.
+	CHECK(scanWhy("SOME_IMAGES_NOT_SAVED") == "SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
+	CHECK(topUpWhy("SOME_IMAGES_NOT_SAVED") == "SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED");
+
+	// The scan page drops the instruction where the line is short, never a
+	// word: at 640x480 the whole sentence is 516 px of a 499 px line.
+	const std::string why = scanWhy("SOME_IMAGES_NOT_SAVED");
+	CHECK(shortenWhy(why) == "SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED");
+	auto measure = [](const std::string& t) { return 8.0f * (float) t.size(); };
+	CHECK(chooseThatFits({ why, shortenWhy(why) }, 400.0f, measure) == "SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED");
+	CHECK(chooseThatFits({ why, shortenWhy(why) }, 600.0f, measure) == why);
+}

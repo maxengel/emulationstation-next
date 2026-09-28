@@ -251,35 +251,10 @@ OfflineAchievementsText::AccountTotals OfflineAchievements::accountTotals()
 	return OfflineAchievementsText::parseAccountTotals(answer.first);
 }
 
+// The table is CloudText's, where it has a case (CloudText::scanWhy).
 std::string OfflineAchievements::scanWhy(const std::string& token)
 {
-	// The ctl's tokens (raofflineproxy-ctl, the scan's header), in the
-	// player's words (es-player-text.md: everyday, not formal).
-	if (token == "TOGGLE_OFF")
-		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
-	if (token == "NO_ACCOUNT")
-		return _("SIGN IN TO RETROACHIEVEMENTS FIRST.");
-	if (token == "SIGN_IN_REFUSED")
-		return _("RETROACHIEVEMENTS DIDN'T ACCEPT YOUR SIGN-IN");
-	if (token == "RETROACHIEVEMENTS_STOPPED_ANSWERING")
-		return _("RETROACHIEVEMENTS STOPPED ANSWERING");
-	if (token == "NO_GAMES_FOUND")
-		return _("NO GAMES WERE FOUND ON THIS CONSOLE");
-	if (token == "LIBRARY_UNREADABLE")
-		return _("YOUR GAMES COULDN'T BE READ");
-	if (token == "TOOK_TOO_LONG")
-		return _("IT TOOK TOO LONG");
-	// A fetch failed for some game, even among many that went through
-	// (audit #186 PL-24): the run could not finish, and the next scan tries
-	// those games again, since nothing marks them cached.
-	if (token == "SOME_GAMES_NOT_SAVED")
-		return _("SOME GAMES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
-	// The player's CANCEL on the scan page (D-UI-078): the ctl's INT trap
-	// stamps it so the row says so; not a failure, and the next scan
-	// carries on from what was saved.
-	if (token == "CANCELLED")
-		return _("YOU CANCELLED IT");
-	return _("SOMETHING WENT WRONG");
+	return CloudText::scanWhy(token);
 }
 
 void OfflineAchievements::topUpWhenOnline(Window* window)

@@ -202,15 +202,6 @@ CloudText::RunningProgress OfflineAchievements::runningProgress()
 	return p;
 }
 int OfflineAchievements::readyCount() { return 0; }
-std::string OfflineAchievements::scanWhy(const std::string& token)
-{
-	// The shipped words for the tokens these cases use (OfflineAchievements.cpp).
-	if (token == "SOME_GAMES_NOT_SAVED")
-		return "SOME GAMES COULDN'T BE SAVED. TRY THE SCAN AGAIN.";
-	if (token == "RETROACHIEVEMENTS_STOPPED_ANSWERING")
-		return "RETROACHIEVEMENTS STOPPED ANSWERING";
-	return "SOMETHING WENT WRONG";
-}
 void OfflineAchievements::topUpWhenOnline(Window* w) { ProxyCards::topUp(w, false); }
 void OfflineAchievements::topUpAfterIndex(Window* w) { ProxyCards::topUp(w, true); }
 int OfflineAchievements::runTopUp(bool afterIndex)

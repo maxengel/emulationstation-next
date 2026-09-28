@@ -910,6 +910,52 @@ CloudText::FlushStamp CloudText::parseFlushStamp(const std::string& text)
 	return stamp;
 }
 
+// Moved from OfflineAchievements::scanWhy and ProxyCards' topUpWhy, so the
+// table has a case (#308 follow-up): those two now ask here.
+std::string CloudText::scanWhy(const std::string& token)
+{
+	if (token == "TOGGLE_OFF")
+		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
+	if (token == "NO_ACCOUNT")
+		return _("SIGN IN TO RETROACHIEVEMENTS FIRST.");
+	if (token == "SIGN_IN_REFUSED")
+		return _("RETROACHIEVEMENTS DIDN'T ACCEPT YOUR SIGN-IN");
+	if (token == "RETROACHIEVEMENTS_STOPPED_ANSWERING")
+		return _("RETROACHIEVEMENTS STOPPED ANSWERING");
+	if (token == "NO_GAMES_FOUND")
+		return _("NO GAMES WERE FOUND ON THIS CONSOLE");
+	if (token == "LIBRARY_UNREADABLE")
+		return _("YOUR GAMES COULDN'T BE READ");
+	if (token == "TOOK_TOO_LONG")
+		return _("IT TOOK TOO LONG");
+	// A fetch failed for some game, even among many that went through
+	// (audit #186 PL-24): the run could not finish, and the next scan tries
+	// those games again, since nothing marks them cached.
+	if (token == "SOME_GAMES_NOT_SAVED")
+		return _("SOME GAMES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
+	// The image pass left achievement images behind (#307 PL-060; the ctl
+	// stamps it only for a failure that may pass, so a scan can fetch them):
+	// the games are cached, and the next scan tries the images again.
+	// Proposed words, for the maintainer to approve.
+	if (token == "SOME_IMAGES_NOT_SAVED")
+		return _("SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED. TRY THE SCAN AGAIN.");
+	// The player's CANCEL on the scan page (D-UI-078): the ctl's INT trap
+	// stamps it so the row says so; not a failure, and the next scan
+	// carries on from what was saved.
+	if (token == "CANCELLED")
+		return _("YOU CANCELLED IT");
+	return _("SOMETHING WENT WRONG");
+}
+
+std::string CloudText::topUpWhy(const std::string& token)
+{
+	if (token == "SOME_GAMES_NOT_SAVED")
+		return _("SOME GAMES COULDN'T BE SAVED");
+	if (token == "SOME_IMAGES_NOT_SAVED")
+		return _("SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED");
+	return scanWhy(token);
+}
+
 CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 {
 	ScanStamp stamp;

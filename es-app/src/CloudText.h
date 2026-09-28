@@ -471,6 +471,16 @@ namespace CloudText
 	};
 	ScanStamp parseScanStamp(const std::string& text);
 
+	// The ctl's why tokens (raofflineproxy-ctl's scan and top-up), in the
+	// player's words (es-player-text.md: everyday, not formal): scanWhy for
+	// the scan page and the row under SCAN GAMES, topUpWhy for the top-up's
+	// card -- the same, except where the scan's sentence sends the player to
+	// the scan page, since that card's action line already says it tries
+	// again by itself (#308 1-raoffline F-RA-09). A token neither knows is
+	// SOMETHING WENT WRONG.
+	std::string scanWhy(const std::string& token);
+	std::string topUpWhy(const std::string& token);
+
 	// "route=<scan|topup> at=<epoch> index=<i> total=<n> name=<game>" from
 	// raofflineproxy-ctl's running file (fork #189): the one line the ctl
 	// keeps beside its stamp while a scan or top-up runs its jobs, rewritten

@@ -301,7 +301,20 @@ void GuiOfflineScan::update(int deltaTime)
 
 		std::string detail;
 		if (!o.completed && !o.skipped && !s.why.empty())
-			detail = OfflineAchievements::scanWhy(s.why);
+		{
+			// The why whole, else its first sentence: a trailing instruction
+			// is the part that can go (D-UI-035), never a word cut short.
+			// SOME ACHIEVEMENT IMAGES COULDN'T BE SAVED. TRY THE SCAN AGAIN.
+			// is 516 px of the theme's bold at 15 px against this line's 499
+			// at 640x480, and the French of SOME GAMES... 521.
+			const std::string why = OfflineAchievements::scanWhy(s.why);
+			std::vector<std::string> forms = { why };
+			const std::string first = CloudText::shortenWhy(why);
+			if (!first.empty())
+				forms.push_back(first);
+			const auto font = mSmallFont;
+			detail = CloudText::chooseThatFits(forms, mLineWidth, [font](const std::string& t) { return font->sizeText(t).x(); });
+		}
 		else if (!o.completed && !o.skipped)
 			detail = _("SOMETHING WENT WRONG");
 		mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
