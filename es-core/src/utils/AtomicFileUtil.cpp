@@ -197,16 +197,25 @@ namespace Utils
 			if (ok != nullptr)
 				*ok = false;
 #if defined(_WIN32)
-			std::ifstream in(path, std::ios::binary);
-			if (!in)
+			// C stdio, whose ferror says whether a read failed. The stream
+			// version read failbit on its ostringstream as a failure, and
+			// `ss << in.rdbuf()` sets it when nothing is inserted: an empty
+			// file came back not read (audit of the fixes G-E1-06, claude).
+			FILE* file = std::fopen(path.c_str(), "rb");
+			if (file == nullptr)
 				return "";
-			std::ostringstream ss;
-			ss << in.rdbuf();
-			if (in.bad() || ss.fail())
+			std::string text;
+			char buffer[65536];
+			size_t n;
+			while ((n = std::fread(buffer, 1, sizeof(buffer), file)) > 0)
+				text.append(buffer, n);
+			const bool failed = std::ferror(file) != 0;
+			std::fclose(file);
+			if (failed)
 				return "";
 			if (ok != nullptr)
 				*ok = true;
-			return ss.str();
+			return text;
 #else
 			int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
 			if (fd < 0)
@@ -294,14 +303,52 @@ namespace Utils
 			bool liveOk = false, tmpOk = false, backupOk = false;
 			const std::string live = readText(path, &liveOk);
 			const std::string tmp = readText(path + ".tmp", &tmpOk);
+			const std::string backup = readText(path + ".backup", &backupOk);
 			const bool tmpWhole = tmpOk && isUsableKeyValues(tmp) && isComplete(tmp);
+			const bool backupWhole = backupOk && isUsableKeyValues(backup) && isComplete(backup);
+
+			// The mode the chosen text goes back with, and the record: the
+			// permission bits every copy on disk shares, so a recovery is never
+			// less private than a copy it came from (audit of the fixes
+			// G-E1-05: a 0600 temporary came back as a 0644 file and record).
+			int mode = 07777;
+			bool any = false;
+			for (const std::string& copy : { path, path + ".tmp", path + ".backup" })
+			{
+				const int m = modeOf(copy, -1);
+				if (m >= 0)
+				{
+					mode &= m;
+					any = true;
+				}
+			}
+			out.mode = any ? mode : 0644;
 
 			// The copy stopped part way: what is there is the start of the
 			// temporary, short of its end.
 			const bool liveCut = liveOk && tmpWhole && !isComplete(live)
 				&& live.size() < tmp.size() && tmp.compare(0, live.size(), live) == 0;
 
-			if (liveOk && isUsableKeyValues(live) && !liveCut)
+			// Or the live file stops part way through a line and is the start
+			// of the whole record beside it, written no earlier than the live
+			// file was (G-E1-04): the file was cut after the record was made
+			// from it, and the record is the file. A live file changed after
+			// the record -- a hand edit that left off the last line end -- is
+			// the owner's, and is read as it is.
+			bool cutOfRecord = false;
+#if defined(_WIN32)
+			(void) backupWhole;   // the mtime test below is POSIX's
+#else
+			if (liveOk && backupWhole && !isComplete(live) && live.size() < backup.size()
+				&& backup.compare(0, live.size(), live) == 0)
+			{
+				struct stat ls, bs;
+				cutOfRecord = ::stat(path.c_str(), &ls) == 0 && ::stat((path + ".backup").c_str(), &bs) == 0
+					&& ls.st_mtime <= bs.st_mtime + 1;
+			}
+#endif
+
+			if (liveOk && isUsableKeyValues(live) && !liveCut && !cutOfRecord)
 			{
 				// A temporary beside a whole file is a save that never reached
 				// its rename, or the shell's own write in flight; neither is the
@@ -320,7 +367,6 @@ namespace Utils
 				return out;
 			}
 
-			const std::string backup = readText(path + ".backup", &backupOk);
 			if (backupOk && isUsableKeyValues(backup))
 			{
 				out.source = LoadedConfig::Source::Backup;
@@ -361,9 +407,46 @@ namespace Utils
 #endif
 		}
 
-		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
-			const std::function<std::string(const std::string& current)>& merge, std::string* written)
+		std::map<std::string, std::string> parseKeyValues(const std::string& text)
 		{
+			std::map<std::string, std::string> values;
+			std::istringstream in(text);
+			std::string line;
+			while (std::getline(in, line))
+			{
+				const size_t idx = line.find('=');
+				if (idx == std::string::npos || line.find('#') == 0 || line.find(';') == 0)
+					continue;
+				const std::string key = line.substr(0, idx);
+				const std::string value = line.substr(idx + 1);
+				if (!key.empty() && !value.empty())
+					values[key] = value;
+			}
+			return values;
+		}
+
+		std::map<std::string, std::string> pendingAfterReload(const std::map<std::string, PendingChange>& pending,
+			const std::map<std::string, std::string>& reloaded)
+		{
+			std::map<std::string, std::string> kept;
+			for (const auto& change : pending)
+			{
+				const auto now = reloaded.find(change.first);
+				const bool hasNow = now != reloaded.cend();
+				if (hasNow != change.second.hadBase)
+					continue;   // added or removed by somebody since
+				if (hasNow && now->second != change.second.base)
+					continue;   // rewritten by somebody since
+				kept[change.first] = change.second.value;
+			}
+			return kept;
+		}
+
+		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			const std::function<std::string(const std::string& current)>& merge, std::string* written,
+			bool* baseComplete)
+		{
+
 			// Not without the lock (PL-024). This used to log and go ahead once
 			// the budget ran out -- "the player's change dropped on the floor
 			// is the worse outcome" -- and the change was dropped anyway,
@@ -382,6 +465,11 @@ namespace Utils
 #endif
 			// (On Windows a file not there yet is merged onto nothing and made,
 			// as SystemConf always did there.)
+
+			// A save merged onto a cut file lands (the change is the player's)
+			// but is not a record (G-E1-04).
+			if (baseComplete != nullptr)
+				*baseComplete = current.empty() || current.back() == '\n';
 
 			const std::string out = merge(current);
 			if (!writeText(path, out))
@@ -413,32 +501,49 @@ namespace Utils
 
 		// Remove the lock at `path` only if it still names `holder`, with no
 		// other remover between that look and the unlink (PL-041). Every
-		// remover of a stale lock -- this process on any thread, and any other
-		// process that takes the same guard -- takes an flock on `path`.reap
-		// for the few instructions this lasts. Under it nothing else can
-		// change what `path` names: a stale holder is gone and cannot release
-		// it, a live holder only ever releases a lock naming itself, and every
-		// other remover waits here. So the re-read and the unlink are one step
-		// as far as the lock's users are concerned. The guard is an flock, so
-		// a remover that dies holding it frees it with its last descriptor --
-		// there is no stale guard to clear. Without a guard file (the
-		// directory will not take one) this is the re-read and remove it was.
-		static void removeIfStill(const std::string& path, const std::string& holder)
+		// remover of a stale lock -- this process on any thread, and the
+		// shell's wait_lock, which takes the same guard -- takes an flock on
+		// `path`.reap for the few instructions this lasts. Under it nothing
+		// else can change what `path` names: a stale holder is gone and cannot
+		// release it, a live holder only ever releases a lock naming itself,
+		// and every other remover waits. So the re-read and the unlink are one
+		// step as far as the lock's users are concerned. The guard is an
+		// flock, so a remover that dies holding it frees it with its last
+		// descriptor -- there is no stale guard to clear.
+		//
+		// The guard is asked without waiting, until `deadline` (audit of the
+		// fixes G-E1-01: a blocking flock here held the interface thread past
+		// its budget for as long as another holder kept the guard). And a
+		// guard that cannot be had -- the file cannot be opened, the flock
+		// fails, the deadline comes -- removes nothing (G-E1-02): the re-read
+		// and unlink without it are the race the guard is for. False then;
+		// the caller waits on as for a live holder, and its budget ends it.
+		static bool removeIfStill(const std::string& path, const std::string& holder,
+			std::chrono::steady_clock::time_point deadline)
 		{
 			const std::string guard = path + ".reap";
 			int gfd = ::open(guard.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-			if (gfd >= 0)
+			if (gfd < 0)
+				return false;
+			for (;;)
 			{
-				while (::flock(gfd, LOCK_EX) != 0 && errno == EINTR)
+				if (::flock(gfd, LOCK_EX | LOCK_NB) == 0)
+					break;
+				if (errno == EINTR)
+					continue;
+				if (errno != EWOULDBLOCK || std::chrono::steady_clock::now() >= deadline)
 				{
+					::close(gfd);
+					return false;
 				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(5));
 			}
 			bool again = false;
 			const std::string current = readText(path, &again);
 			if (again && lockHolder(current) == holder)
 				::unlink(path.c_str());
-			if (gfd >= 0)
-				::close(gfd);   // and the flock with it
+			::close(gfd);   // and the flock with it
+			return true;
 		}
 #endif
 
@@ -605,14 +710,15 @@ namespace Utils
 					// first removed it and took it, and the second's remove,
 					// two steps after its re-read, took the first's new lock
 					// with it (PL-041).
-					removeIfStill(mPath, holder);
+					const bool reaped = removeIfStill(mPath, holder, started + std::chrono::milliseconds(timeoutMs));
 					if (expired())
 						return false;
 					// Retry at once, there is nothing to wait for -- unless the
-					// remove did not take (a directory that will not let go of
-					// the name), which a pause keeps from spinning.
+					// guard could not be had (G-E1-02), or the remove did not
+					// take (a directory that will not let go of the name),
+					// which a pause keeps from spinning.
 					bool still = false;
-					if (lockHolder(readText(mPath, &still)) == holder && still)
+					if (!reaped || (lockHolder(readText(mPath, &still)) == holder && still))
 						std::this_thread::sleep_for(std::chrono::milliseconds(50));
 					continue;
 				}

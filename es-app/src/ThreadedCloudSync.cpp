@@ -19,6 +19,7 @@
 #include <mutex>
 #include <thread>
 #include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include "LocaleES.h"
 
@@ -33,6 +34,9 @@ ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
 	  mStartedAt(time(nullptr))
 {
 	mGameExitSync = SystemConf::getInstance()->get("cloudsaves.gameexit") == "1";
+	// The script stamps as they are before anything runs, so a stop can tell
+	// the one its trap writes from an earlier run's (G-E1-04/06).
+	mStampsBefore = readStamps(mCommand);
 	// With the action row. The default is a two-row card (title and text),
 	// and this was created with the default, so the recovery clause run()
 	// composes -- what is in place, and where to try again (D-CLOUD-077) --
@@ -539,7 +543,7 @@ void ThreadedCloudSync::run()
 	// And only the part the stop interrupted: the stamp its trap wrote this
 	// run, whichever script and flags (the settings stamps included).
 	if (cancelled)
-		restampStoppedParts(mCommand, mStartedAt, token);
+		restampStoppedParts(mCommand, mStampsBefore, mStartedAt, token);
 
 	// Offline achievements no longer ride this card (fork #292, D-RA-030):
 	// the proxy sends them the moment RetroAchievements answers, and that
@@ -843,15 +847,39 @@ void ThreadedCloudSync::recordOutcome(Origin origin, int rc, const std::string& 
 	writeStamp(std::string("/storage/.cache/cloud_sync/last-sync-") + name, rc, token, why);
 }
 
-void ThreadedCloudSync::restampStoppedParts(const std::string& command, time_t runStarted, const std::string& token)
+static const std::string STAMP_DIR = "/storage/.cache/cloud_sync/";
+
+std::vector<CloudText::StampText> ThreadedCloudSync::readStamps(const std::string& command)
 {
-	static const std::string DIR = "/storage/.cache/cloud_sync/";
 	std::vector<CloudText::StampText> stamps;
 	for (auto& name : CloudText::scriptStampNames(command))
-		stamps.push_back({ name, Utils::FileSystem::readAllText(DIR + name) });
-	for (auto& name : CloudText::stampsToRestamp(stamps, runStarted))
 	{
-		writeStamp(DIR + name, CloudExit::Stopped, token, "");
+		const std::string path = STAMP_DIR + name;
+		std::string version;
+		struct stat st;
+		if (::stat(path.c_str(), &st) == 0)
+			version = std::to_string((unsigned long long) st.st_ino) + ":" + std::to_string((long long) st.st_mtim.tv_sec)
+				+ "." + std::to_string((long long) st.st_mtim.tv_nsec);
+		stamps.push_back({ name, version.empty() ? std::string() : Utils::FileSystem::readAllText(path), version });
+	}
+	return stamps;
+}
+
+void ThreadedCloudSync::restampStoppedParts(const std::string& command, time_t runStarted, const std::string& token)
+{
+	for (auto& name : CloudText::stampsToRestamp(readStamps(command), runStarted))
+	{
+		writeStamp(STAMP_DIR + name, CloudExit::Stopped, token, "");
+		LOG(LogInfo) << "ThreadedCloudSync: " << name << " restamped as " << token;
+	}
+}
+
+void ThreadedCloudSync::restampStoppedParts(const std::string& command, const std::vector<CloudText::StampText>& before,
+	time_t runStarted, const std::string& token)
+{
+	for (auto& name : CloudText::stampsToRestamp(readStamps(command), runStarted, &before))
+	{
+		writeStamp(STAMP_DIR + name, CloudExit::Stopped, token, "");
 		LOG(LogInfo) << "ThreadedCloudSync: " << name << " restamped as " << token;
 	}
 }

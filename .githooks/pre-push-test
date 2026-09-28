@@ -38,6 +38,17 @@ expect() {
   fi
 }
 
+# says <case> <text> : the last hook run's output carries the text
+says() {
+  if grep -q -F -- "$2" "${SCRATCH}/out"; then
+    echo "  ok    $1: says \"$2\""
+  else
+    echo "  FAIL  $1: expected the hook to say \"$2\""
+    sed 's/^/          /' "${SCRATCH}/out"
+    fail=1
+  fi
+}
+
 git init -q -b main work && cd work || exit 2
 git init -q --bare "${SCRATCH}/remote.git"
 git remote add origin "${SCRATCH}/remote.git"
@@ -50,6 +61,10 @@ echo "${FAKE}" >> notes.txt
 g add notes.txt && g commit -q -m root
 root="$(git rev-parse HEAD)"
 expect refused "a root commit with a secret, first push" "refs/heads/main ${root} refs/heads/main ${ZERO}"
+# A first push reads every commit the remote is not known to hold -- on the
+# ES tree the whole history, minutes -- and says so before it starts, so it
+# does not look like a hang (audit of the fixes G-E1-08).
+says "a first push says how much it is reading" "reading the 1 commit(s) origin is not known to hold"
 
 # A clean history, pushed, for the cases that need a remote tip.
 git checkout -q --orphan clean && git rm -q -rf . >/dev/null
@@ -118,6 +133,17 @@ binary="$(git rev-parse HEAD)"
 expect refused "a pr/* push carrying build-tests/es-unit-tests" "refs/heads/clean ${binary} refs/heads/pr/x ${base}"
 git reset -q --hard "${personal}"
 
+# 9. The ROCKNIX remote found whatever case its URL is spelt in (G-E1-08):
+#    GitHub's paths are not case-sensitive, and a clone whose remote reads
+#    rocknix/EmulationStation-Next found no base and refused every pr/* push.
+git remote add upstream2 https://github.com/rocknix/EmulationStation-Next.git
+git remote remove upstream
+git update-ref refs/remotes/upstream2/master "${base}"
+expect allowed "a clean pr/* push, the ROCKNIX URL in another case" "refs/heads/clean ${cleanpr} refs/heads/pr/x ${base}"
+git remote remove upstream2
+git remote add upstream https://github.com/ROCKNIX/emulationstation-next.git
+git update-ref refs/remotes/upstream/master "${base}"
+
 # 8. F-PB-18: with no ROCKNIX remote to compare with, the fork's own master
 #    is not a stand-in. It may already carry CLAUDE.md, and then a pr/*
 #    branch cut from it differs from it in nothing and went through.
@@ -131,5 +157,14 @@ echo "CHECK(maskSecrets(\"${FAKE}\") == \"devpassword=<redacted>\");" > es-app/t
 g add es-app && g commit -q -m fixture
 fixture="$(git rev-parse HEAD)"
 expect allowed "a maskSecrets fixture in a unit test" "refs/heads/clean ${fixture} refs/heads/clean ${personal}"
+
+# 10. A hook with no pattern file beside it scans nothing -- and so must
+#     refuse rather than pass (found by this test's own first run against a
+#     copy of the hook, 2026-09-28).
+mkdir -p "${SCRATCH}/lonely"
+cp "${HOOK}" "${SCRATCH}/lonely/pre-push"
+LONELY="${SCRATCH}/lonely/pre-push"
+printf '%s\n' "refs/heads/main ${root} refs/heads/main ${ZERO}" | "${LONELY}" origin "file://${SCRATCH}/remote.git" >"${SCRATCH}/out" 2>&1
+if [ $? -ne 0 ]; then echo "  ok    a hook with no pattern file: refused"; else echo "  FAIL  a hook with no pattern file: expected refused, hook exited 0"; fail=1; fi
 
 [ "${fail}" -eq 0 ] && echo "PASS" || { echo "FAIL"; exit 1; }

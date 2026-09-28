@@ -54,6 +54,11 @@ PERSONAL_PATTERNS=(
   'build-tests/'   # the unit tests' build directory and the binary a build leaves there (#308 F-PB-19)
 )
 . "$(dirname "$(readlink -f "$0")")/secret-patterns"
+# No patterns is no scan, and a scan that cannot run has not passed: with
+# the file missing, SECRET_PATTERNS was unset, the grep's substitution died
+# on it, and every push went through unread (found 2026-09-28, the audit of
+# the fixes of #307: a copy of this hook without the file beside it).
+[ -n "${SECRET_PATTERNS:-}" ] || { echo "pre-push: no credential patterns (.githooks/secret-patterns missing or empty beside this hook); refused, nothing was scanned" >&2; exit 1; }
 
 remote_name="${1:-}"
 hooks_path="$(git config --get core.hooksPath || true)"
@@ -70,10 +75,13 @@ zero=0000000000000000000000000000000000000000
 # master may already carry CLAUDE.md, so a pr/* branch cut from it differed
 # from it in nothing personal and went through. No ROCKNIX remote with a
 # master here, and a pr/* push is refused below.
+# Compared in lower case: GitHub's paths are not case-sensitive, and a
+# clone whose remote reads rocknix/EmulationStation-Next found no base and
+# refused every pr/* push (audit of the fixes G-E1-08).
 base_ref=""
 for remote in $(git remote); do
-  case "$(git remote get-url "${remote}" 2>/dev/null)" in
-    *[/:]ROCKNIX/emulationstation-next|*[/:]ROCKNIX/emulationstation-next.git|*[/:]ROCKNIX/emulationstation-next/)
+  case "$(git remote get-url "${remote}" 2>/dev/null | tr 'A-Z' 'a-z')" in
+    *[/:]rocknix/emulationstation-next|*[/:]rocknix/emulationstation-next.git|*[/:]rocknix/emulationstation-next/)
       git rev-parse --verify --quiet "refs/remotes/${remote}/master^{commit}" >/dev/null && { base_ref="${remote}/master"; break; } ;;
   esac
 done
@@ -97,6 +105,15 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     revs=("${remote_sha}..${local_sha}")
   else
     revs=("${local_sha}" --not "--remotes=${remote_name:-.}")
+    # On the ES tree a first push to a new remote is its whole history, read
+    # with -p: minutes, with nothing on the screen. Say how much before it
+    # starts, so it does not read as a hang (audit of the fixes G-E1-08).
+    if ! count="$(git rev-list --count "${revs[@]}" 2>/dev/null)"; then
+      echo "pre-push: ${where}: could not count the commits this push sends; nothing was scanned" >&2
+      status=1
+      continue
+    fi
+    echo "pre-push: ${where}: reading the ${count} commit(s) ${remote_name:-this remote} is not known to hold" >&2
   fi
 
   # 2. credential-shaped lines, every branch: every line ADDED by every
