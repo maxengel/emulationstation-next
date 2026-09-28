@@ -19,6 +19,11 @@ trap 'rm -rf "${SCRATCH}"' EXIT
 cd "${SCRATCH}" || exit 2
 
 FAKE="devpassword=QwErTyUiOpAsDfGh"   # credential-shaped, means nothing
+# The wordlist the guard reads is kept outside every tree; a stand-in stands
+# in for it here (#312), so this file names no listed word.
+printf "FORBIDDEN_PATTERNS='zebrafish[ ]quartet|qzx-estate'\\n" > "${SCRATCH}/wordlist"
+export FORBIDDEN_TERMS_FILE="${SCRATCH}/wordlist"
+unset FORBIDDEN_PATTERNS SECRET_PATTERNS_FILE
 ZERO=0000000000000000000000000000000000000000
 fail=0
 
@@ -166,5 +171,19 @@ cp "${HOOK}" "${SCRATCH}/lonely/pre-push"
 LONELY="${SCRATCH}/lonely/pre-push"
 printf '%s\n' "refs/heads/main ${root} refs/heads/main ${ZERO}" | "${LONELY}" origin "file://${SCRATCH}/remote.git" >"${SCRATCH}/out" 2>&1
 if [ $? -ne 0 ]; then echo "  ok    a hook with no pattern file: refused"; else echo "  FAIL  a hook with no pattern file: expected refused, hook exited 0"; fail=1; fi
+
+# 11. The wordlist (#312, D-WORKFLOW-061): a listed word added by a commit,
+#     one in a commit message -- the word itself never printed -- a credential
+#     list that does not compile, and no wordlist at all: each refused.
+g checkout -q -b words "${base}"
+echo 'the zebrafish quartet' > w.txt; g add w.txt; g commit -q -m words
+expect refused "a listed word added by a commit" "refs/heads/words $(git rev-parse HEAD) refs/heads/words ${ZERO}"
+if grep -q -i zebrafish "${SCRATCH}/out"; then echo "  FAIL  the refusal prints the word"; fail=1; else echo "  ok    the refusal never prints the word"; fi
+g checkout -q -b wmsg "${base}"; g commit -q --allow-empty -m 'about the qzx-estate'
+expect refused "a listed word in a commit message" "refs/heads/wmsg $(git rev-parse HEAD) refs/heads/wmsg ${ZERO}"
+says "the message is named" ":message:1"
+printf "SECRET_PATTERNS='['\\n" > "${SCRATCH}/badlist"
+SECRET_PATTERNS_FILE="${SCRATCH}/badlist" expect refused "a credential list that does not compile" "refs/heads/clean ${top} refs/heads/clean ${base}"
+FORBIDDEN_TERMS_FILE="${SCRATCH}/absent" expect refused "no wordlist at all" "refs/heads/clean ${top} refs/heads/clean ${base}"
 
 [ "${fail}" -eq 0 ] && echo "PASS" || { echo "FAIL"; exit 1; }

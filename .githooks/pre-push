@@ -5,7 +5,9 @@
 #   1. a pr/* branch must not differ from upstream/master in a personal path --
 #      the agent context files that live on test/qa-integration and the
 #      feature branches cut from it;
-#   2. every pushed branch is scanned for credential-shaped lines.
+#   2. every pushed branch is scanned for credential-shaped lines, and for the
+#      wordlist kept outside the tree (.githooks/guard-lib says where), in
+#      every added line and every commit message.
 #
 # Enable once per clone (shared by every worktree), pointing at the worktree
 # that always holds test/qa-integration -- this file lives on that branch:
@@ -45,7 +47,7 @@
 # commit, a rename that adds a line, a remote tip this clone lacks and a first
 # push to a second remote, a binary under build-tests/ on pr/*, and a clone
 # whose only master is the fork's. Run it after any change here; PASS or FAIL.
-set -u
+set -uo pipefail
 PERSONAL_PATTERNS=(
   'CLAUDE.md'
   'AGENTS.md'
@@ -53,12 +55,11 @@ PERSONAL_PATTERNS=(
   '.githooks/'
   'build-tests/'   # the unit tests' build directory and the binary a build leaves there (#308 F-PB-19)
 )
-. "$(dirname "$(readlink -f "$0")")/secret-patterns"
-# No patterns is no scan, and a scan that cannot run has not passed: with
-# the file missing, SECRET_PATTERNS was unset, the grep's substitution died
-# on it, and every push went through unread (found 2026-09-28, the audit of
-# the fixes of #307: a copy of this hook without the file beside it).
-[ -n "${SECRET_PATTERNS:-}" ] || { echo "pre-push: no credential patterns (.githooks/secret-patterns missing or empty beside this hook); refused, nothing was scanned" >&2; exit 1; }
+. "$(dirname "$(readlink -f "$0")")/guard-lib" || exit 1
+# No patterns is no scan, and a scan that cannot run has not passed: guard_load
+# refuses without both lists (the failure of 2026-09-28: a copy of this hook
+# without secret-patterns beside it let every push through).
+guard_load pre-push || exit 1
 
 remote_name="${1:-}"
 hooks_path="$(git config --get core.hooksPath || true)"
@@ -133,25 +134,28 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #    line added is R, not M, and --diff-filter=AM let it through unread
   #    (F-PB-12). And a list of commits that cannot be made is a refusal,
   #    not an empty scan: git log's failure used to vanish into /dev/null.
-  if ! added="$(git log --format='@@commit %h' -p --no-color --diff-merges=first-parent --diff-filter=ACMRT "${revs[@]}" -- 2>/dev/null)"; then
-    echo "pre-push: ${where}: could not list the commits this push sends (git log ${revs[*]} failed); nothing was scanned" >&2
-    status=1
-    continue
+  added="$(mktemp)"; lines="$(mktemp)"; cred="$(mktemp)"; msgs="$(mktemp)"
+  scan_ok=1
+  git log --format='commit %h' -p --no-color --diff-merges=first-parent --diff-filter=ACMRT "${revs[@]}" -- > "${added}" 2>/dev/null || scan_ok=0
+  guard_added_lines < "${added}" > "${lines}" || scan_ok=0
+  git log --format='commit %h%n%B' "${revs[@]}" 2>/dev/null \
+    | awk -v t="${guard_tab}" '/^commit [0-9a-f]+$/ { c = $2; n = 0; next } { n++; print c ":message:" n t $0 }' > "${msgs}" || scan_ok=0
+  # The two exemptions above, credential scan only; a filter that cannot run
+  # is a refusal (guard-lib's rule, PL-011).
+  grep -v -E -e "^[0-9a-f]+:es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp:[0-9]+${guard_tab}\+.*maskSecrets\(" \
+             -e "^[0-9a-f]+:\.githooks/pre-push-test:[0-9]+${guard_tab}\+FAKE=\"" "${lines}" > "${cred}"; rc=$?
+  [ "${rc}" -le 1 ] || scan_ok=0
+  if [ "${scan_ok}" != 1 ]; then
+    echo "pre-push: ${where}: could not list the commits this push sends (git log ${revs[*]}), or could not read them; nothing was scanned" >&2
+    rm -f "${added}" "${lines}" "${cred}" "${msgs}"; status=1; continue
   fi
-  hits="$(printf '%s\n' "${added}" \
-    | awk 'BEGIN { c = ""; f = "" }
-           /^@@commit / { c = substr($0, 10); next }
-           /^\+\+\+ b\// { f = substr($0, 7); next }
-           /^\+\+\+ / { next }
-           /^\+/ { print c ":" f ": " $0 }' \
-    | grep -v -E '^[0-9a-f]+:es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp: \+.*maskSecrets\(' \
-    | grep -v -E '^[0-9a-f]+:\.githooks/pre-push-test: \+FAKE="' \
-    | grep -E "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -5 || true)"
-  if [ -n "${hits}" ]; then
-    echo "pre-push: ${where}: a commit in this push adds a credential-shaped line:" >&2
-    echo "${hits}" | sed 's/^/    /' >&2
-    status=1
-  fi
+  refused=0
+  guard_scan "pre-push: ${where}" "${cred}" "a commit in this push adds a credential-shaped line" '' "${SECRET_PATTERNS}" redact || refused=1
+  guard_scan "pre-push: ${where}" "${lines}" "a commit in this push adds a listed word (the wordlist outside the tree)" -i "${FORBIDDEN_PATTERNS}" where || refused=1
+  guard_scan "pre-push: ${where}" "${msgs}" "a commit message in this push carries a credential-shaped line" '' "${SECRET_PATTERNS}" redact || refused=1
+  guard_scan "pre-push: ${where}" "${msgs}" "a commit message in this push carries a listed word" -i "${FORBIDDEN_PATTERNS}" where || refused=1
+  rm -f "${added}" "${lines}" "${cred}" "${msgs}"
+  [ "${refused}" -eq 0 ] || status=1
 
   # 1. personal paths, pr/* only -- pr/* as the remote will name it.
   case "${dest}" in pr/*) ;; *) continue ;; esac
