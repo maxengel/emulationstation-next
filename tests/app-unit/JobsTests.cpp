@@ -123,6 +123,25 @@ TEST_CASE("transfer job: a run that completed is not called stopped because a st
 	CloudTransferJob::dismiss(job);
 }
 
+// Audit of the fixes, E2 gpt G-E2-05: a stop that looked, found the run
+// not finished, and was descheduled while the run finished on its own
+// marked a completed run stopped -- after the run's end had cleared the
+// flags, so the page said SKIPPED - YOU CANCELLED IT over a run that
+// completed. The pause is the seam's, made wide on purpose.
+TEST_CASE("transfer job: a stop that looked before the run ended does not mark a completed run stopped")
+{
+	clearLog();
+	auto job = CloudTransferJob::start("sleep 0.3", "TEST", 1, 0);
+	REQUIRE(job != nullptr);
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));   // the pid line is in
+	CloudTransferJob::testPauseInStop = [] { std::this_thread::sleep_for(std::chrono::milliseconds(1000)); };
+	CloudTransferJob::stopByPlayer();
+	CloudTransferJob::testPauseInStop = nullptr;
+	REQUIRE(waitFor([&] { return job->finished(); }, 10));
+	CHECK_FALSE(job->stoppedByPlayer());
+	CloudTransferJob::dismiss(job);
+}
+
 // Last in this file, and so last in the run: main() letting the window go
 // cannot be undone in a process, and doctest runs a file's cases in order.
 //

@@ -17,6 +17,7 @@
 #include <sys/wait.h>
 
 std::mutex CloudTransferJob::sMutex;
+std::function<void()> CloudTransferJob::testPauseInStop;
 std::shared_ptr<CloudTransferJob> CloudTransferJob::sCurrent;
 
 // The run's starting state: every counter at its starting value. Once, at
@@ -75,14 +76,30 @@ void CloudTransferJob::dismiss(const std::shared_ptr<CloudTransferJob>& job)
 		sCurrent = nullptr;
 }
 
+// The look and the mark are one step (audit of the fixes, E2 gpt
+// G-E2-05): under the run's own lock, which its end holds while it
+// decides whether it was stopped and says it has finished. A stop that
+// looked, found the run going, and was descheduled while it finished on
+// its own used to mark a completed run stopped after the end had cleared
+// the flags; now the end waits for the mark, sees it with the command's
+// own 0, and says COMPLETED. The signal is sent under the lock too:
+// deliverStop takes nothing, and a kill does not block.
 bool CloudTransferJob::stopForLaunch(bool hard)
 {
 	auto job = current();
-	if (job == nullptr || job->finished())
+	if (job == nullptr)
 		return false;
-	job->mStoppedForGame = true;
-	job->requestStop(hard ? SIGKILL : SIGTERM);
-	const pid_t pid = job->mPid;
+	pid_t pid = 0;
+	{
+		std::unique_lock<std::mutex> lock(job->mMutex);
+		if (job->mFinished)
+			return false;
+		if (testPauseInStop)
+			testPauseInStop();
+		job->mStoppedForGame = true;
+		job->requestStop(hard ? SIGKILL : SIGTERM);
+		pid = job->mPid;
+	}
 	LOG(LogInfo) << "CloudTransferJob: stopped for a game (" << (hard ? "SIGKILL" : "SIGTERM") << ", group " << pid
 		<< (pid > 0 ? ")" : "; sent when the run says its pid)");
 	return true;
@@ -91,11 +108,19 @@ bool CloudTransferJob::stopForLaunch(bool hard)
 bool CloudTransferJob::stopByPlayer()
 {
 	auto job = current();
-	if (job == nullptr || job->finished())
+	if (job == nullptr)
 		return false;
-	job->mStoppedByPlayer = true;
-	job->requestStop(SIGTERM);
-	const pid_t pid = job->mPid;
+	pid_t pid = 0;
+	{
+		std::unique_lock<std::mutex> lock(job->mMutex);
+		if (job->mFinished)
+			return false;
+		if (testPauseInStop)
+			testPauseInStop();
+		job->mStoppedByPlayer = true;
+		job->requestStop(SIGTERM);
+		pid = job->mPid;
+	}
 	LOG(LogInfo) << "CloudTransferJob: cancelled by the player (SIGTERM, group " << pid
 		<< (pid > 0 ? ")" : "; sent when the run says its pid)");
 	return true;

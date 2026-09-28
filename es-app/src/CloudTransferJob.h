@@ -6,6 +6,7 @@
 #include <chrono>
 #include <ctime>
 #include <sys/types.h>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -78,6 +79,10 @@ public:
 	// inside are restamped with the player's own token. False when no run
 	// is in flight.
 	static bool stopByPlayer();
+	// Tests only: run inside a stop between its look at whether the run
+	// has finished and its marking the run stopped -- the seam audit G-E2-05
+	// named. Empty, and never set, in the application.
+	static std::function<void()> testPauseInStop;
 
 	const std::string& command() const { return mCommand; }
 	const std::string& title() const { return mTitle; }
