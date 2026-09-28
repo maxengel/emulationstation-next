@@ -5173,16 +5173,9 @@ static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured,
 	const std::string& label, const std::string& description, const std::function<void()>& action)
 {
 	slot.idle = description;
-	if (!configured)
-	{
-		cloudAddGatedEntry(s, window, false, label, description, action);
-		return;
-	}
-	auto entry = std::make_shared<CloudDimmableEntry>(window, Utils::String::toUpper(label), description, true);
-	slot.entry = entry;
-	ComponentListRow row;
-	row.addElement(entry, true);
-	row.makeAcceptInputHandler([window, action]
+	// One press for both branches: a row greyed at build time and set up
+	// since runs this too (cloudAddGatedEntry re-checks at the press).
+	const std::function<void()> press = [window, action]
 	{
 		if (const std::shared_ptr<CloudTransferJob> job = CloudTransferJob::current())
 		{
@@ -5190,7 +5183,17 @@ static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured,
 			return;
 		}
 		action();
-	});
+	};
+	if (!configured)
+	{
+		cloudAddGatedEntry(s, window, false, label, description, press);
+		return;
+	}
+	auto entry = std::make_shared<CloudDimmableEntry>(window, Utils::String::toUpper(label), description, true);
+	slot.entry = entry;
+	ComponentListRow row;
+	row.addElement(entry, true);
+	row.makeAcceptInputHandler(press);
 	s->addRow(row);
 }
 
@@ -5912,8 +5915,24 @@ static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, 
 	// -- these rows never once rendered dim (fork #182).
 	entry->setDimmed(true);
 	row.addElement(entry, true);
-	row.makeAcceptInputHandler([window]
+	// Configured is decided when the page is built, and setup is opened from
+	// this very row: CLOUD SETUP COMPLETE's FINISH closes back to the page it
+	// came from, built before rclone.conf existed, whose rows went on
+	// offering the setup just finished until the page was reopened (audit
+	// #307 PL-062). So the press asks again -- a stat, read uncached -- and a
+	// row that finds the cloud set up does what it says and stops drawing
+	// dim. Every page with these rows gets it, which reopening one page from
+	// FINISH would not. Weak: the row holds the entry, not the other way.
+	std::weak_ptr<MultiLineMenuEntry> weakEntry = entry;
+	row.makeAcceptInputHandler([window, weakEntry, action]
 	{
+		if (Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false))
+		{
+			if (auto shown = weakEntry.lock())
+				shown->setDimmed(false);
+			action();
+			return;
+		}
 		window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nSET IT UP NOW?"), _("YES"),
 			[window] { GuiMenu::openCloudAddRemote(window); },
 			_("NO"), nullptr));
