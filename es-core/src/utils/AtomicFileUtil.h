@@ -15,6 +15,13 @@
 // copy with it (fork #102, D-CLOUD-078). Written to a temporary name, synced,
 // and renamed into place, the file on disk is always a complete one; the
 // directory is synced afterwards so the rename itself survives a power cut.
+//
+// Every guarantee in this file is POSIX's, and holds on Linux, which is all
+// ROCKNIX builds (#307 PL-075). The _WIN32 branches keep upstream's Windows
+// build compiling and nothing more: writeText there removes `path` before it
+// renames the temporary into place, so a crash between the two leaves no file
+// at all; its temporary is the shared `path`.tmp; the lock is never taken
+// (acquire answers true); and the mode is not kept.
 namespace Utils
 {
 	namespace AtomicFile
