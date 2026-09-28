@@ -11,6 +11,8 @@
 #include "utils/FileSystemUtil.h"
 
 #include <atomic>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <chrono>
 #include <functional>
 #include <mutex>
@@ -60,7 +62,25 @@ namespace FakeLog
 
 void ThreadedCloudSync::writeStamp(const std::string&, int, const std::string&, const std::string&) {}
 std::string ThreadedCloudSync::whyForCode(int) { return "SOMETHING WENT WRONG"; }
-void ThreadedCloudSync::restampStoppedParts(const std::string&, time_t, const std::string&) {}
+// Which restamp a stopped run asks for, and when its snapshot was taken:
+// readStamps' version field says whether the command had started (its
+// marker file) at the moment of the snapshot.
+static std::string sMarker;
+static std::atomic<int> sClockRestamps{ 0 };
+static std::atomic<int> sSnapshotRestamps{ 0 };
+static std::string sSnapshotVersion;
+void ThreadedCloudSync::restampStoppedParts(const std::string&, time_t, const std::string&) { sClockRestamps++; }
+void ThreadedCloudSync::restampStoppedParts(const std::string&, const std::vector<CloudText::StampText>& before, time_t, const std::string&)
+{
+	sSnapshotRestamps++;
+	sSnapshotVersion = before.empty() ? "" : before[0].version;
+}
+std::vector<CloudText::StampText> ThreadedCloudSync::readStamps(const std::string&)
+{
+	struct stat st;
+	const bool started = !sMarker.empty() && ::stat(sMarker.c_str(), &st) == 0;
+	return { { "last-backup", "", started ? "after-the-command-started" : "before-the-command" } };
+}
 
 void Window::postToUiThread(const std::function<void()>& func, void*) { sPosts++; func(); }
 
@@ -152,6 +172,31 @@ TEST_CASE("transfer job: a stop that looked before the run ended does not mark a
 	REQUIRE(waitFor([&] { return job->finished(); }, 10));
 	CHECK_FALSE(job->stoppedByPlayer());
 	CloudTransferJob::dismiss(job);
+}
+
+// Orchestrator finding G-E2-O2 (E1's G-E1-04, on the page): a stop
+// restamped the stamps its run wrote by the clock -- a stop stamp an
+// earlier run left within the second read as this run's. The card takes a
+// snapshot when it starts and restamps only the files written since
+// (ThreadedCloudSync::readStamps, 54d5699b2); the page does the same, with
+// its snapshot taken before its command runs.
+TEST_CASE("transfer job: a stop restamps against the stamps as they were before the command")
+{
+	clearLog();
+	sMarker = "/tmp/e2-jobs-marker-" + std::to_string((long) ::getpid());
+	std::remove(sMarker.c_str());
+	sClockRestamps = 0; sSnapshotRestamps = 0; sSnapshotVersion.clear();
+	auto job = CloudTransferJob::start("touch '" + sMarker + "'; sleep 3", "TEST", 1, 0);
+	REQUIRE(job != nullptr);
+	std::this_thread::sleep_for(std::chrono::milliseconds(300));
+	REQUIRE(CloudTransferJob::stopByPlayer());
+	REQUIRE(waitFor([&] { return job->finished(); }, 10));
+	CloudTransferJob::dismiss(job);
+	std::remove(sMarker.c_str());
+	CHECK(sClockRestamps.load() == 0);
+	CHECK(sSnapshotRestamps.load() == 1);
+	CHECK(sSnapshotVersion == "before-the-command");
+	sMarker.clear();
 }
 
 // Last in this file, and so last in the run: main() letting the window go

@@ -623,6 +623,10 @@ void CloudTransferJob::run()
 	// together -- the shape ThreadedCloudSync gives its commands, for the
 	// same cancel (D-CLOUD-129). shellQuote, so a command with a quote in it
 	// survives the trip.
+	// The stamps before anything runs, on this thread rather than the
+	// interface's (a stat and a short read a stamp): what a stop's restamp
+	// compares against (G-E2-O2).
+	mStampsBefore = ThreadedCloudSync::readStamps(mCommand);
 	const std::string wrapped = "setsid sh -c "
 		+ Utils::String::shellQuote("echo \">>> pid $$\"; { trap '' PIPE; " + mCommand + " ; }") + " 2>&1";
 	FILE* pipe = popen(wrapped.c_str(), "r");
@@ -727,7 +731,7 @@ void CloudTransferJob::run()
 // finished before the stop read as stopped.
 void CloudTransferJob::restampStoppedParts(const char* token)
 {
-	ThreadedCloudSync::restampStoppedParts(mCommand, mStartedAt, token);
+	ThreadedCloudSync::restampStoppedParts(mCommand, mStampsBefore, mStartedAt, token);
 }
 
 // One line of a script's output: ANSI escapes, C0 controls and DEL dropped,
