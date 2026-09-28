@@ -83,6 +83,13 @@ FileData* FileData::mRunningGame = nullptr;
 // capture, then the exit sync -- fork #290) can tell whether another game
 // has been launched and left since it was posted. See launchGame.
 static std::atomic<unsigned> sExitGeneration{ 0 };
+// Counts game starts (GetGamesStarted).
+static std::atomic<unsigned> sGamesStarted{ 0 };
+
+unsigned FileData::GetGamesStarted()
+{
+	return sGamesStarted.load();
+}
 // PLAY NOW through the offline achievements' send card: the launch it
 // leads to comes back through this function (launchNow goes through
 // ViewController::launch), so the answer is kept for that one launch or
@@ -1076,6 +1083,7 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	auto p2kConv = convertP2kFile();
 
 	mRunningGame = gameToUpdate;
+	sGamesStarted++;
 
 	// Pause watchers before game launch
 	WatchersManager::pause();

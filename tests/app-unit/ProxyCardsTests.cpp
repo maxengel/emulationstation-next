@@ -43,6 +43,7 @@ namespace
 		std::atomic<bool> stampPresent{ false };
 		std::atomic<int> takeFlushedCalls{ 0 };
 		std::atomic<bool> gameRunning{ false };
+		std::atomic<unsigned> gamesStarted{ 0 };   // never reset: FileData's only grows
 		std::atomic<bool> syncRunning{ false };
 		std::vector<std::unique_ptr<AsyncNotificationComponent>> cards;
 		std::vector<Stamp> stamps;
@@ -109,6 +110,14 @@ namespace
 		return true;
 	}
 
+	// A game starting, as FileData::launchGame makes it: counted, then on
+	// the screen.
+	void gameStarts()
+	{
+		fake.gamesStarted++;
+		fake.gameRunning = true;
+	}
+
 	std::string join(const std::vector<std::string>& v)
 	{
 		std::string out;
@@ -127,6 +136,7 @@ namespace FakeLog
 }
 
 FileData* FileData::GetRunningGame() { return fake.gameRunning ? reinterpret_cast<FileData*>(1) : nullptr; }
+unsigned FileData::GetGamesStarted() { return fake.gamesStarted; }
 
 SystemConf* SystemConf::getInstance() { static SystemConf c; return &c; }
 std::string SystemConf::get(const std::string&) { return ""; }
@@ -332,7 +342,7 @@ TEST_CASE("top-up: a run stopped for a game says SKIPPED - YOU STARTED A GAME")
 	};
 	ProxyCards::topUp(&window, false);
 	REQUIRE(waitFor([] { return !cardsNow().empty(); }, 10));
-	fake.gameRunning = true;                     // the player launches over it
+	gameStarts();                                // the player launches over it
 	CHECK(ProxyCards::stopTopUp());
 	REQUIRE(waitFor([&stopped] { return stopped.load(); }, 10));
 	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -371,7 +381,7 @@ TEST_CASE("top-up: a stop for a game holds the queued run until that game has co
 	std::this_thread::sleep_for(std::chrono::milliseconds(7500));
 	CHECK_MESSAGE(fake.ctlCalls.load() == 1, "the queued run started before the game the stop was for");
 
-	fake.gameRunning = true;                      // the game starts
+	gameStarts();                                 // the game starts
 	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
 	CHECK(fake.ctlCalls.load() == 1);             // and nothing runs under it
 	fake.gameRunning = false;                     // it ends
@@ -382,6 +392,100 @@ TEST_CASE("top-up: a stop for a game holds the queued run until that game has co
 		CHECK(fake.ctlAfterIndex[1] == true);
 	}
 	REQUIRE(waitFor([] { return openCards() == 0 && fake.ctlActive == false; }, 30));
+	std::this_thread::sleep_for(std::chrono::milliseconds(6000));   // the watcher lets go
+}
+
+// Audit of the fix round, G2-E-app-05 (claude) / G2-E-app-02 (gpt): the
+// hold a stop sets was honoured only by the same watcher's next run. With
+// nothing queued behind the stop the watcher let go as the card ended and
+// cleared the hold on its way out, and a request that came after -- the
+// index ending while the launch was on its way -- started a fresh watcher
+// whose first run skipped the wait and went under the game the player had
+// been told it would wait for. The hold outlives the watcher's card, and
+// every run waits for a game that has the screen.
+TEST_CASE("top-up: a request after the stopped run's card still waits for the game")
+{
+	fake.reset();
+	fake.ctl = [](bool afterIndex)
+	{
+		if (!afterIndex)
+			while (!fake.stopSent)
+				std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		else
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		return afterIndex ? 0 : 143;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { return !cardsNow().empty(); }, 10));
+	CHECK(ProxyCards::stopTopUp());               // STOP IT AND PLAY, nothing queued
+	REQUIRE(waitFor([] { return fake.ctlActive == false; }, 10));
+
+	// The stopped run's card has its five seconds and ends; the launch is
+	// still on its way when the index asks for its run.
+	std::this_thread::sleep_for(std::chrono::milliseconds(7500));
+	ProxyCards::topUp(&window, true);
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	CHECK_MESSAGE(fake.ctlCalls.load() == 1, "a request after the stopped run's card started before the game the stop was for");
+
+	gameStarts();                                 // the game starts
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	CHECK(fake.ctlCalls.load() == 1);             // and nothing runs under it
+	fake.gameRunning = false;                     // it ends
+	REQUIRE(waitFor([] { return fake.ctlCalls.load() >= 2; }, 15));
+	{
+		std::lock_guard<std::mutex> g(fake.m);
+		REQUIRE(fake.ctlAfterIndex.size() == 2);
+		CHECK(fake.ctlAfterIndex[1] == true);
+	}
+	REQUIRE(waitFor([] { return openCards() == 0 && fake.ctlActive == false; }, 30));
+	std::this_thread::sleep_for(std::chrono::milliseconds(6000));   // the watcher lets go
+}
+
+// A request made while a game has the screen, with no stop behind it (the
+// index ending under a game): the watcher's first run waits for the game
+// as every later run does. It used to go at once.
+TEST_CASE("top-up: a first request while a game runs waits for the game to end")
+{
+	fake.reset();
+	fake.ctl = [](bool) { std::this_thread::sleep_for(std::chrono::milliseconds(300)); return 0; };
+	gameStarts();
+	ProxyCards::topUp(&window, true);
+	std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+	CHECK_MESSAGE(fake.ctlCalls.load() == 0, "the watcher's first run started under a running game");
+	fake.gameRunning = false;
+	REQUIRE(waitFor([] { return fake.ctlCalls.load() >= 1; }, 15));
+	REQUIRE(waitFor([] { return openCards() == 0 && fake.ctlActive == false; }, 30));
+	std::this_thread::sleep_for(std::chrono::milliseconds(6000));   // the watcher lets go
+}
+
+// The game a stop was for can start and end while the stopped run's card
+// still shows its outcome (a game quit at once). The hold is spent by that
+// game; watching for a running game alone would wait out the whole minute
+// for one already gone, and hold every request behind it.
+TEST_CASE("top-up: a game that came and went during the stopped run's card spends the hold")
+{
+	fake.reset();
+	fake.ctl = [](bool afterIndex)
+	{
+		if (!afterIndex)
+			while (!fake.stopSent)
+				std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		else
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		return afterIndex ? 0 : 143;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { return !cardsNow().empty(); }, 10));
+	CHECK(ProxyCards::stopTopUp());               // STOP IT AND PLAY, nothing queued
+	REQUIRE(waitFor([] { return fake.ctlActive == false; }, 10));
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	gameStarts();                                 // the game starts
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	fake.gameRunning = false;                     // and is quit at once
+	std::this_thread::sleep_for(std::chrono::milliseconds(6000));   // the card ends
+	ProxyCards::topUp(&window, true);
+	CHECK_MESSAGE(waitFor([] { return fake.ctlCalls.load() >= 2; }, 10), "the hold outlived the game it was for");
+	REQUIRE(waitFor([] { return openCards() == 0 && fake.ctlActive == false; }, 70));
 	std::this_thread::sleep_for(std::chrono::milliseconds(6000));   // the watcher lets go
 }
 
