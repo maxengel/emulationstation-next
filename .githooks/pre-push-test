@@ -95,14 +95,35 @@ g commit -q --allow-empty -m "clean on top"
 top="$(git rev-parse HEAD)"
 expect allowed "a clean commit over a tip this clone has" "refs/heads/clean ${top} refs/heads/clean ${base}"
 
-# 5. What was always right stays right: a pr/* push carrying a personal path.
+# 5. What was always right stays right: a pr/* push carrying a personal path,
+#    compared with ROCKNIX's master (a remote whose URL is ROCKNIX's).
 git checkout -q clean
+git remote add upstream https://github.com/ROCKNIX/emulationstation-next.git
 git update-ref refs/remotes/upstream/master "${base}"
+g commit -q --allow-empty -m "a clean change"
+cleanpr="$(git rev-parse HEAD)"
+expect allowed "a pr/* push with nothing personal in it" "refs/heads/clean ${cleanpr} refs/heads/pr/x ${base}"
 echo "# agent" > CLAUDE.md
 g add CLAUDE.md && g commit -q -m personal
 personal="$(git rev-parse HEAD)"
 expect refused "a pr/* push with CLAUDE.md" "refs/heads/clean ${personal} refs/heads/pr/x ${base}"
 expect allowed "the same commit to a feature branch" "refs/heads/clean ${personal} refs/heads/feature/x ${base}"
+
+# 7. F-PB-19: the unit-test binary a build leaves in build-tests/ is the
+#    fork's, like CLAUDE.md and .githooks/, and never travels on pr/*.
+git reset -q --hard "${cleanpr}"
+mkdir -p build-tests && printf '\177ELF' > build-tests/es-unit-tests
+g add build-tests && g commit -q -m binary
+binary="$(git rev-parse HEAD)"
+expect refused "a pr/* push carrying build-tests/es-unit-tests" "refs/heads/clean ${binary} refs/heads/pr/x ${base}"
+git reset -q --hard "${personal}"
+
+# 8. F-PB-18: with no ROCKNIX remote to compare with, the fork's own master
+#    is not a stand-in. It may already carry CLAUDE.md, and then a pr/*
+#    branch cut from it differs from it in nothing and went through.
+git remote remove upstream
+git update-ref refs/remotes/origin/master "${personal}"   # the fork's master, CLAUDE.md in it
+expect refused "a pr/* push with only the fork's master to compare with" "refs/heads/clean ${personal} refs/heads/pr/x ${base}"
 
 # 6. A unit test's maskSecrets fixture is exempt, and only that.
 mkdir -p es-app/tests/unit

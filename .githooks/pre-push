@@ -43,13 +43,15 @@
 # Its own test is .githooks/pre-push-test (#307 PL-078): a scratch repository,
 # the stdin lines git would send, and a case for each shape above plus a root
 # commit, a rename that adds a line, a remote tip this clone lacks and a first
-# push to a second remote. Run it after any change here; PASS or FAIL.
+# push to a second remote, a binary under build-tests/ on pr/*, and a clone
+# whose only master is the fork's. Run it after any change here; PASS or FAIL.
 set -u
 PERSONAL_PATTERNS=(
   'CLAUDE.md'
   'AGENTS.md'
   '.claude/'
   '.githooks/'
+  'build-tests/'   # the unit tests' build directory and the binary a build leaves there (#308 F-PB-19)
 )
 SECRET_PATTERNS='devpassword=[A-Za-z0-9._%-]{4,}|[?&]y=[A-Za-z0-9]{16,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY|"(access|refresh)_token" *: *"[A-Za-z0-9._-]{16,}|sk-[A-Za-z0-9_-]{24,}|(API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD)[A-Z_]* *[:=] *["'"'"']?[A-Za-z0-9+/=_-]{16,}'
 
@@ -62,10 +64,18 @@ esac
 
 status=0
 zero=0000000000000000000000000000000000000000
-# The upstream here is ROCKNIX/emulationstation-next, whose branch is master.
+# The upstream here is ROCKNIX/emulationstation-next, whose branch is master:
+# found by its URL, not by a remote's name (#308 F-PB-18). origin/master
+# used to be the last fallback, and this clone's origin is the fork -- whose
+# master may already carry CLAUDE.md, so a pr/* branch cut from it differed
+# from it in nothing personal and went through. No ROCKNIX remote with a
+# master here, and a pr/* push is refused below.
 base_ref=""
-for cand in upstream/master upstream/HEAD origin/master; do
-  git rev-parse --verify --quiet "${cand}^{commit}" >/dev/null && { base_ref="${cand}"; break; }
+for remote in $(git remote); do
+  case "$(git remote get-url "${remote}" 2>/dev/null)" in
+    *[/:]ROCKNIX/emulationstation-next|*[/:]ROCKNIX/emulationstation-next.git|*[/:]ROCKNIX/emulationstation-next/)
+      git rev-parse --verify --quiet "refs/remotes/${remote}/master^{commit}" >/dev/null && { base_ref="${remote}/master"; break; } ;;
+  esac
 done
 while read -r local_ref local_sha remote_ref remote_sha; do
   [ "${local_sha}" = "${zero}" ] && continue      # a deletion
@@ -124,7 +134,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
 
   # 1. personal paths, pr/* only -- pr/* as the remote will name it.
   case "${dest}" in pr/*) ;; *) continue ;; esac
-  [ -n "${base_ref}" ] || { echo "pre-push: ${where}: no upstream/master to compare against; git fetch upstream first" >&2; status=1; continue; }
+  [ -n "${base_ref}" ] || { echo "pre-push: ${where}: no ROCKNIX/emulationstation-next master to compare against (a remote with that URL, fetched); git fetch upstream first" >&2; status=1; continue; }
   if ! changed="$(git diff --name-only "${base_ref}...${local_sha}" 2>/dev/null)"; then
     echo "pre-push: ${where}: git diff ${base_ref}...${local_sha} failed; nothing was compared" >&2; status=1; continue
   fi
