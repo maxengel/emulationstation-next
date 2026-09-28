@@ -274,6 +274,34 @@ TEST_CASE("the connected row joins by the profile that is up, not by its SSID (#
 	CHECK_FALSE(unknown[0].saved);
 }
 
+// The audit of the fix round, gpt G2-E-app-01 (handed to stream E1): the
+// name decided before the active flag, so a saved profile named as the SSID
+// but not in use outranked the one profile that was -- NetworkManager's
+// "Home 1" beside an old "Home" -- and the connected row's FORGET and JOIN
+// went to the profile the device was not on.
+TEST_CASE("the connected row's profile is the one in use, over an inactive namesake (audit of the fix round, gpt G2-E-app-01)")
+{
+	auto rows = pickerRows({ "Home" }, { { "Home", false }, { "Home 1", true } }, "Home", true, true);
+	REQUIRE(rows.size() == 1);
+	CHECK(rows[0].connected);
+	CHECK(rows[0].profile == "Home 1");
+	CHECK(joinName(rows[0]) == "Home 1");
+
+	// Two up (a second adapter) and neither named as the SSID: which one is
+	// this device's cannot be told, and the namesake is known not to be in
+	// use, so none is claimed.
+	auto twoUp = pickerRows({ "Home" }, { { "Home", false }, { "Work", true }, { "Home 1", true } }, "Home", true, true);
+	REQUIRE(twoUp.size() == 1);
+	CHECK(twoUp[0].profile.empty());
+	CHECK(joinName(twoUp[0]) == "Home");
+
+	// None up -- the list's flags behind the join -- and a namesake: the
+	// namesake, as before.
+	auto noneUp = pickerRows({ "Home" }, { { "Home", false } }, "Home", true, true);
+	REQUIRE(noneUp.size() == 1);
+	CHECK(noneUp[0].profile == "Home");
+}
+
 // Audit of the fixes (#307), E2 claude G-E2-01: joinWifiNetwork returned
 // bool (true = joined) and returns the exit code now (0 = joined), so a
 // caller left testing it as a truth value compiles and reads every join

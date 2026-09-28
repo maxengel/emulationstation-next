@@ -88,28 +88,39 @@ std::vector<WifiText::PickerRow> WifiText::pickerRows(const std::vector<std::str
 	// The profile the device is on (#308 claude F-WF-12, gpt F-WF-03).
 	// wifictl speaks two names: current the SSID, saved and join a profile's
 	// name, and the two differ for a renamed profile or NetworkManager's
-	// "Home 1". So the connected row joins by a profile: the one named as
-	// its SSID when there is one, else the one profile that is up. Two up
-	// and neither named so (a second adapter; saved's ACTIVE is any
-	// adapter's, where current is this device's) is not guessed at: the row
-	// joins by its name, as before.
+	// "Home 1". So the connected row joins by a profile, in this order:
+	//   - the one named as its SSID, when that one is up;
+	//   - else the one profile that is up -- even beside a namesake that is
+	//     not: the name used to decide first, and an old "Home" left saved
+	//     beside the "Home 1" in use took the row's FORGET and JOIN (audit of
+	//     the fix round, gpt G2-E-app-01);
+	//   - else, with none up (the list's flags behind the join), the one
+	//     named as the SSID, as before.
+	// Two or more up and none of them named so (a second adapter: saved's
+	// ACTIVE is any adapter's, where current is this device's) is not
+	// guessed at, a namesake that is not up included -- it is the one
+	// profile known not to be this connection -- and the row joins by its
+	// name, as before.
 	std::string joinedProfile;
 	if (!joinedNow.empty() && savedKnown)
 	{
-		if (isSaved(joinedNow))
+		int up = 0;
+		bool namedUp = false;
+		std::string theOneUp;
+		for (const auto& network : saved)
+			if (network.inUse)
+			{
+				up++;
+				theOneUp = network.name;
+				if (network.name == joinedNow)
+					namedUp = true;
+			}
+		if (namedUp)
 			joinedProfile = joinedNow;
-		else
-		{
-			int up = 0;
-			for (const auto& network : saved)
-				if (network.inUse)
-				{
-					up++;
-					joinedProfile = network.name;
-				}
-			if (up != 1)
-				joinedProfile.clear();
-		}
+		else if (up == 1)
+			joinedProfile = theOneUp;
+		else if (up == 0 && isSaved(joinedNow))
+			joinedProfile = joinedNow;
 	}
 
 	if (!joinedNow.empty())
