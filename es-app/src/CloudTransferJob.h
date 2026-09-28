@@ -95,7 +95,8 @@ private:
 	friend class GuiCloudTransfer;
 
 	CloudTransferJob(const std::string& command, const std::string& title, int itemsExpected, int itemsAfterContent);
-	void run(std::shared_ptr<CloudTransferJob> self);
+	// The thread that runs it holds the job (start()), so nothing here does.
+	void run();
 	void handleLine(const std::string& line);
 	void refreshPercent();
 	void foldUnit();

@@ -61,7 +61,7 @@ std::shared_ptr<CloudTransferJob> CloudTransferJob::start(const std::string& com
 	sCurrent = job;
 	// Detached, and holding its own reference: the run ends when the command
 	// does, not when a page closes -- the scan job's shape.
-	std::thread([job] { job->run(job); }).detach();
+	std::thread([job] { job->run(); }).detach();
 	return job;
 }
 
@@ -573,7 +573,7 @@ void CloudTransferJob::refreshPercent()
 		mPercent = p;
 }
 
-void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
+void CloudTransferJob::run()
 {
 	int ret = -1;
 	// Braces around the whole command, not just " 2>&1" after it. The command
@@ -692,7 +692,6 @@ void CloudTransferJob::run(std::shared_ptr<CloudTransferJob> self)
 	mFinished = true;
 	LOG(LogInfo) << "CloudTransferJob: " << mTitle << " exited " << ret
 		<< " (" << mRunFiles << " files, " << mRunBytes << " bytes, " << mTiers.size() << " tiers reported)";
-	(void) self;
 }
 
 // The part the stop interrupted, and only it: ThreadedCloudSync's rule,

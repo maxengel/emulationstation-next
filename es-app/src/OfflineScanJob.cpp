@@ -42,7 +42,7 @@ std::shared_ptr<OfflineScanJob> OfflineScanJob::start(Window* window, const std:
 	// Detached, and holding its own reference: the run ends when the ctl
 	// does, not when a page closes -- the same shape as the top-up's thread
 	// (OfflineAchievements::topUpWhenOnline).
-	std::thread([job] { job->run(job); }).detach();
+	std::thread([job] { job->run(); }).detach();
 	return job;
 }
 
@@ -105,7 +105,7 @@ void OfflineScanJob::changed()
 	});
 }
 
-void OfflineScanJob::run(std::shared_ptr<OfflineScanJob> self)
+void OfflineScanJob::run()
 {
 	int ret = -1;
 	// Braces around the whole command: a trailing redirection binds to the
@@ -155,7 +155,6 @@ void OfflineScanJob::run(std::shared_ptr<OfflineScanJob> self)
 			<< " (cached " << mState.cached << ", skipped " << mState.skipped << ", ready " << mState.ready << ")";
 	}
 	changed();
-	(void) self;
 }
 
 // The ctl talks to the page through ">>> " lines (raofflineproxy-ctl's

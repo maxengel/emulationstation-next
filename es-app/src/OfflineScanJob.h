@@ -73,7 +73,8 @@ public:
 
 private:
 	OfflineScanJob(Window* window, const std::string& command);
-	void run(std::shared_ptr<OfflineScanJob> self);
+	// The thread that runs it holds the job (start()), so nothing here does.
+	void run();
 	void handleLine(const std::string& line);
 	void changed();
 	static std::string cleanLine(const std::string& raw);
