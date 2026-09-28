@@ -18,7 +18,8 @@ endif()
 
 get_filename_component(ES_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUTE)
 
-# Ten files of EmulationStation and no more: the pure text, the offline
+# The sources below and no more (the list is the record; a count beside it
+# went stale, #308 F-ES-29): the pure text, the offline
 # proxy's answers, the string helpers they call (with the credential mask
 # every logged command line goes through, fork #177), the token check's
 # retry schedule, the index's rule for what a game is owed, the time of day
