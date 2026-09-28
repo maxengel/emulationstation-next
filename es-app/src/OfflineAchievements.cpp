@@ -2,6 +2,7 @@
 #include <csignal>
 #include <cstdlib>
 #include "OfflineAchievements.h"
+#include "RunLock.h"
 #include "ApiSystem.h"
 #include "CloudText.h"
 #include "HttpReq.h"
@@ -315,10 +316,10 @@ int OfflineAchievements::markIndexOffline()
 
 bool OfflineAchievements::stopRun()
 {
-	if (!Utils::FileSystem::exists(SCAN_LOCK, false))
-		return false;
-	const std::string text = Utils::FileSystem::readAllText(SCAN_LOCK);
-	const long pid = atol(Utils::String::trim(text).c_str());
+	// The pid in the lock file names a run only while the lock is held, and
+	// only as the ctl (RunLock): a file a finished or killed run left names a
+	// pid that may belong to anything by now.
+	const long pid = RunLock::holder(SCAN_LOCK, "raofflineproxy-ctl");
 	if (pid <= 1)
 		return false;
 	return ::kill((pid_t) pid, SIGTERM) == 0;

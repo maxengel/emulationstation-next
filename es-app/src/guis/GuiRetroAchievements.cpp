@@ -367,6 +367,13 @@ GuiRetroAchievements::GuiRetroAchievements(Window* window, RetroAchievementInfo 
 	{
 		ComponentListRow row;
 
+		// Looked up here, on the interface thread: the device's summary
+		// leaves the console name to this lookup (RetroAchievements::
+		// getUserSummaryFromDevice, #308 F-RA-18).
+		FileData* file = game.id.empty() ? nullptr : getFileData(game.id);
+		if (game.consoleName.empty() && file != nullptr && file->getSourceFileData() != nullptr && file->getSourceFileData()->getSystem() != nullptr)
+			game.consoleName = file->getSourceFileData()->getSystem()->getFullName();
+
 		auto itstring = std::make_shared<RetroAchievementEntry>(mWindow, game);		
 		if (!game.id.empty())
 		{			
@@ -374,7 +381,6 @@ GuiRetroAchievements::GuiRetroAchievements(Window* window, RetroAchievementInfo 
 			// The game's hash from the gamelist goes with its id: offline,
 			// the proxy knows a game started once through RetroArch only by
 			// its hash (#180).
-			FileData* file = getFileData(game.id);
 			std::string hash = file != nullptr ? file->getMetadata(MetaDataId::CheevosHash) : "";
 			row.makeAcceptInputHandler([this, gameId, hash] { GuiGameAchievements::show(mWindow, gameId, hash); });
 

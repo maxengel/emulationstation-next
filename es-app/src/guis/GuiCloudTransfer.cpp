@@ -1,4 +1,5 @@
 #include "guis/GuiCloudTransfer.h"
+#include "TextFit.h"
 
 #include "guis/GuiMsgBox.h"
 
@@ -223,7 +224,9 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 		return true;
 	}
 	const Outcome o = outcome(job);
-	if (!o.completed && config->isMappedTo("a", input))
+	// OK, the player's mapping: the literal "a" was back's own button on a
+	// swapped one, so back retried (#308 5-cloud claude F-CS-07).
+	if (!o.completed && config->isMappedTo(BUTTON_OK, input))
 	{
 		// A new run of the same command; the finished one is let go, and the
 		// page shows the new run from its first line. The command is
@@ -322,7 +325,7 @@ std::vector<HelpPrompt> GuiCloudTransfer::getHelpPrompts()
 	}
 	const Outcome o = outcome(job);
 	if (!o.completed)
-		prompts.push_back(HelpPrompt("a", _("TRY AGAIN")));
+		prompts.push_back(HelpPrompt(BUTTON_OK, _("TRY AGAIN")));
 	// The page's one exit says what it does: CLOSE, or the word the
 	// action was given (setCompletedAction).
 	prompts.push_back(HelpPrompt(BUTTON_BACK, o.completed && mCompletedAction && !mCompletedHelpVerb.empty()
@@ -499,16 +502,22 @@ void GuiCloudTransfer::render(const Transform4x4f& parentTrans)
 		else
 			mBusyAnim.render(trans);
 	}
+
+	// The keys are the help bar's, drawn here: with full-screen menus on
+	// (every handheld) Window draws no help while a second page is open, so
+	// the footer used to spell them out as A and B (es-ui-style-guide.md,
+	// Interaction rules; the save state manager draws its bar the same way).
+	if (mWindow->peekGui() == this && Renderer::ScreenSettings::fullScreenMenus())
+		mWindow->renderHelpPromptsEarly(parentTrans);
 }
 
 // Clip to one line: a long ROM name gets an ellipsis, never a second line.
 std::string GuiCloudTransfer::fitOneLine(const std::shared_ptr<Font>& font, std::string text, float width)
 {
-	if (!font || text.empty() || font->sizeText(text).x() <= width)
+	if (!font)
 		return text;
-	while (text.size() > 4 && font->sizeText(text + "...").x() > width)
-		text.pop_back();
-	return text + "...";
+	// On characters, not bytes (TextFit; #308 gpt F-CS-32).
+	return TextFit::fitOneLine(text, width, [&font](const std::string& t) { return font->sizeText(t).x(); });
 }
 
 // The scripts name their two fixed units in English (">>> unit SETTINGS||",
@@ -803,10 +812,13 @@ void GuiCloudTransfer::update(int deltaTime)
 		mNote->setText(fitSentences(mSmallFont, note, mLineWidth));
 
 		mElapsed ->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		// 7. The retry lives on the surface that reported the failure: A runs
-		// the same command again (input), B closes; the help bar carries the
-		// same two. A run that completed has nothing to retry.
-		mFooter  ->setText(!o.completed ? _("A  TRY AGAIN     B  CLOSE")
+		// 7. The retry lives on the surface that reported the failure: OK
+		// runs the same command again (input), back closes, and the help bar
+		// -- drawn by this page (render) -- carries the two on the player's
+		// own buttons, which may be swapped; the line named them A and B
+		// (#308 5-cloud claude F-CS-07, gpt F-CS-36). A run that completed
+		// has nothing to retry.
+		mFooter  ->setText(!o.completed ? std::string()
 			: mCompletedAction && !mCompletedFooter.empty() ? mCompletedFooter
 			: _("PRESS ANY BUTTON TO CLOSE"));
 	}
@@ -928,19 +940,11 @@ void GuiCloudTransfer::update(int deltaTime)
 		mDetail->setText(fitOneLine(mSmallFont, totals, mLineWidth));
 
 		mElapsed->setText(std::string(_("ELAPSED")) + " " + elapsed);
-		// 7. That the page can be cancelled, and how: the longest form that
-		// fits the line (D-UI-035), so a 640x480 panel keeps the sentence to
-		// one row. A page that cannot be (setCompletedAction) says only that
-		// it takes a while.
-		if (cancellable())
-		{
-			std::shared_ptr<Font> font = mSmallFont;
-			mFooter->setText(CloudText::chooseThatFits(
-				{ _("THIS CAN TAKE A WHILE. PRESS B TO CANCEL."), _("PRESS B TO CANCEL.") },
-				mLineWidth, [font](const std::string& t) { return font ? font->sizeText(t).x() : 0.0f; }));
-		}
-		else
-			mFooter->setText(_("THIS CAN TAKE A WHILE."));
+		// 7. That it takes a while. How to cancel, where the page can be, is
+		// the help bar's, on the player's own back button: the line said
+		// PRESS B TO CANCEL, the wrong button on a swapped mapping (#308
+		// 5-cloud claude F-CS-07, gpt F-CS-36).
+		mFooter->setText(fitOneLine(mSmallFont, _("THIS CAN TAKE A WHILE."), mLineWidth));
 	}
 	lock.unlock();
 	if (justFinished)

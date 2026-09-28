@@ -425,17 +425,19 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 		return ret;
 	}
 
+	// No console name here: this runs on GuiLoading's worker, and the name
+	// is found through the game lists' FileData, which a folder rescan on
+	// the interface thread may be replacing at that moment (#308 1-raoffline
+	// claude F-RA-18; es-code-traps.md, a rescan that deletes FileData). The
+	// page's constructor, on the interface thread, looks each game up anyway
+	// for its hash, and fills the name from the same lookup.
 	std::vector<std::pair<std::string, RecentGame>> games;
 	for (const auto& game : stored)
 	{
-		FileData* file = GuiRetroAchievements::getFileData(std::to_string(game.id));
-
 		RecentGame recent;
 		recent.GameID = std::to_string(game.id);
 		recent.Title = game.title;
 		recent.ImageIcon = game.icon;
-		if (file != nullptr && file->getSourceFileData() != nullptr && file->getSourceFileData()->getSystem() != nullptr)
-			recent.ConsoleName = file->getSourceFileData()->getSystem()->getFullName();
 
 		Award award;
 		award.NumPossibleAchievements = game.achievements;
@@ -608,12 +610,10 @@ UserSummary RetroAchievements::getUserSummary(const std::string& userName, int g
 		// No summary from the device and no link to ask the web on. It used
 		// to fall through to the web request here -- a bounded PLEASE WAIT
 		// with no route under it (audit #258 PL-028); the game page has said
-		// the sentence instead since #242, and so does this.
-		if (getApiLogin().empty())
-		{
-			ret.Status = getMissingLoginMessage();
-			return ret;
-		}
+		// the sentence instead since #242, and so does this. Whatever the web
+		// key: it asked for one here, which is the online page's
+		// precondition and no use on this path (#308 1-raoffline claude
+		// F-RA-15; the game page's offline branch never asked).
 		LOG(LogWarning) << "RetroAchievements: offline, and the proxy gave no summary; saying so instead of asking the web";
 		ret.Username = usrName;
 		ret.Status = _("THE OFFLINE ACHIEVEMENTS SERVICE DIDN'T ANSWER. TRY AGAIN IN A MOMENT.");

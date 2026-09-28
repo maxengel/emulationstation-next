@@ -74,6 +74,9 @@
 #include "Gamelist.h"
 #include "TextToSpeech.h"
 #include "Paths.h"
+#include "JourneyTiers.h"
+#include "AppWindow.h"
+#include "utils/AtomicFileUtil.h"
 #include <set> 
 
 #if !WIN32
@@ -304,11 +307,35 @@ static std::string maintenancePlainLine(const std::string& line)
 // -- ViewController::saveState() saves es_settings.cfg on the way out whenever
 // the player has moved to another system since this boot, and that write
 // carries every other setting with it (#114).
+//
+// Re-reading is not enough after a factory reset: there is nothing to read,
+// Settings::loadFile leaves the old map as it stood, and the exit's
+// ViewController::saveState would write it all back with LastSystem. So the
+// exit is told to write nothing (#308 8-es claude F-ES-10). SystemConf needs
+// no telling: saveSystemConf refuses when the live file cannot be opened.
 static void maintenanceRestart()
 {
 	Settings::getInstance()->loadFile();
 	SystemConf::getInstance()->loadSystemConf();
+	ViewController::configurationReplaced();
 	Utils::Platform::quitES(Utils::Platform::QuitMode::REBOOT);
+}
+
+// What a failed maintenance run's dialog says after COULDN'T FINISH. The
+// why is the script's `>>> why` sentence (es-player-text.md, Outcome
+// vocabulary); backuptool's fail() prints a fuller one -- the same words,
+// then what is in place and how to recover -- as its last line, and that
+// one is said when it carries the why. Any other last line is a tool's,
+// printed after the why, and the why is said over it (#308 8-es claude
+// F-ES-13: the last line used to win whatever it was). A script that
+// printed no why is said by its last line, as before.
+static std::string maintenanceWhy(const std::string& last, const std::string& why)
+{
+	if (why.empty())
+		return last;
+	if (Utils::String::startsWith(last, why))
+		return last;
+	return why;
 }
 
 static void runMaintenanceCommand(Window* window, const std::string& cmd, const std::string& busyTitle,
@@ -336,7 +363,7 @@ static void runMaintenanceCommand(Window* window, const std::string& cmd, const 
 
 			if (rc == 0)
 				return std::pair<int, std::string>(0, "");
-			return std::pair<int, std::string>(rc, last.empty() ? why : last);
+			return std::pair<int, std::string>(rc, maintenanceWhy(last, why));
 		},
 		[window, doneText, failText, onCompleted](std::pair<int, std::string> result)
 		{
@@ -4008,6 +4035,23 @@ void GuiMenu::openCloudFolderEditor(Window* window, const std::string& current)
 static std::map<std::string, std::string> cloudSetupInfo();
 
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
+static std::string cloudShellQuote(const std::string& value);
+
+// The picker's selection, handed to the content script as it closes. The
+// names are folder names in the player's cloud (--scan's first field) --
+// the owner's own, or another of their devices', and still data: inside
+// double quotes $(, backticks and " stayed live for the shell
+// executeScriptLegacy runs, so a folder named a$(reboot)b ran (audit #307
+// PL-030). One single-quoted argument, as the script has always taken
+// them (it splits on the spaces itself); what it accepts as a name is the
+// script's to refuse.
+static std::string cloudSetSystemsCommand(const std::vector<std::string>& names)
+{
+	std::string picked;
+	for (auto& name : names)
+		picked += (picked.empty() ? "" : " ") + name;
+	return "/usr/bin/cloud_content_restore --set-systems " + cloudShellQuote(picked);
+}
 // Horizontal padding matching what ComponentList applies to selectable
 // rows, so informational text lines up with the actionable rows.
 #define CLOUD_SETUP_ROW_PADDING Vector4f(10, 0, 10, 0)
@@ -4086,7 +4130,7 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			r.selected = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
 			return r;
 		},
-		[window, onDone, proceedLabel, backup, perSystem, wholeDevice](CloudScanResult result)
+		[window, onDone, proceedLabel, backup, content, perSystem, wholeDevice](CloudScanResult result)
 		{
 			// A scan that could not read the cloud says so, and says what to
 			// do; only a scan that read it and found nothing shows the
@@ -4118,6 +4162,8 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			// missing fields as "nothing to move".
 			struct Found { std::string name; unsigned long cloudBytes; bool supported; unsigned long localBytes; int cloudNotHere; int hereNotCloud; unsigned long cloudNotHereBytes; unsigned long hereNotCloudBytes; bool sized; };
 			std::vector<Found> found;
+			Found bios{ "bios", 0, true, 0, 0, 0, 0, 0, false };
+			bool biosListed = false;
 			for (auto& line : result.scan)
 			{
 				auto p = Utils::String::split(Utils::String::trim(line), '|', true);
@@ -4137,12 +4183,37 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 					f.sized = true;
 				}
 				if (f.name == "bios")
-					continue;   // not a system; comes with the tier (D-CLOUD-043)
+				{
+					// Not a system; comes with the tier (D-CLOUD-043). Kept
+					// aside for the case below.
+					bios = f;
+					biosListed = true;
+					continue;
+				}
 				// Each direction lists only what it can act on: backup sends what
-				// is here, restore brings what is there.
-				if (backup ? f.localBytes == 0 : f.cloudBytes == 0)
+				// is here, restore brings what is there. A file counts when it
+				// would move, whatever its size: a system whose only file is
+				// empty read as nothing to move and was left out (#308 8a gpt
+				// F-ES-10).
+				if (backup ? (f.localBytes == 0 && f.hereNotCloud == 0) : (f.cloudBytes == 0 && f.cloudNotHere == 0))
 					continue;
 				found.push_back(f);
+			}
+			// BIOS files and no system to pick: the tier's other half still
+			// moves (#308 8a gpt F-ES-10). It used to end in NO SYSTEM ...
+			// HOLDS WHAT YOU TICKED with the BIOS files sitting there. The
+			// selection names bios alone: cloud_content_restore --selected
+			// refuses an empty selection before it adds bios, and both
+			// scripts take bios in the selection as the tier. Not for game
+			// content alone, which BIOS is not.
+			const bool biosToMove = biosListed && content
+				&& (backup ? (bios.localBytes > 0 || bios.hereNotCloud > 0) : (bios.cloudBytes > 0 || bios.cloudNotHere > 0));
+			if (found.empty() && biosToMove)
+			{
+				LOG(LogInfo) << "cloud content: no system to pick; BIOS files alone " << (backup ? "go up" : "come down");
+				ApiSystem::executeScriptLegacy(cloudSetSystemsCommand({ "bios" }));
+				onDone();
+				return;
 			}
 			if (found.empty())
 			{
@@ -4227,11 +4298,11 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			}
 			s->addSaveFunc([switches]
 			{
-				std::string picked;
+				std::vector<std::string> picked;
 				for (auto& entry : *switches)
 					if (entry.second->getState())
-						picked += (picked.empty() ? "" : " ") + entry.first;
-				ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --set-systems \"" + picked + "\"");
+						picked.push_back(entry.first);
+				ApiSystem::executeScriptLegacy(cloudSetSystemsCommand(picked));
 			});
 			// SELECT ALL / SELECT NONE is one button that reads as the thing it
 			// would do next, in the bar with BACK and the verb -- rows in the
@@ -4438,13 +4509,16 @@ static std::string cloudLastLabel(time_t when)
 	return _("LAST") + std::string(" ") + Utils::Time::timeToString(when, fmt);
 }
 
-static std::string cloudLastRunDetail(const std::string& name)
+// The run a row reports. SYNC SAVES WITH THE CLOUD moves saves both ways,
+// and so do the two automatic syncs; a row that counted only the manual one
+// said NOT DONE ON THIS DEVICE YET on a device that had been syncing all
+// along, so it reports the newest sync by any route (#112). The row's line
+// and its confirmation's LAST TIME both read this one, so they speak of the
+// same run: the confirmation read the manual stamp alone, and could explain
+// a failure the row no longer showed (#308 8a gpt F-ES-16).
+static CloudLastRun cloudLatestRun(const std::string& name)
 {
 	CloudLastRun r = cloudReadLastRun(name);
-	// SYNC SAVES WITH THE CLOUD moves saves both ways, and so do the two
-	// automatic syncs; a row that counted only the manual one said NOT DONE
-	// ON THIS DEVICE YET on a device that had been syncing all along. It
-	// reports the newest sync by any route (#112).
 	if (name == "sync-manual")
 		for (auto* other : { "sync-exit", "sync-startup" })
 		{
@@ -4452,6 +4526,12 @@ static std::string cloudLastRunDetail(const std::string& name)
 			if (a.ran && (!r.ran || a.when > r.when))
 				r = a;
 		}
+	return r;
+}
+
+static std::string cloudLastRunDetail(const std::string& name)
+{
+	const CloudLastRun r = cloudLatestRun(name);
 	if (!r.ran)
 		return _("NOT DONE ON THIS DEVICE YET");
 	const time_t when = r.when;
@@ -4472,7 +4552,7 @@ static std::string cloudLastRunDetail(const std::string& name)
 // dialog then reads as it always has.
 static std::string cloudLastRunWhy(const std::string& name)
 {
-	const CloudLastRun r = cloudReadLastRun(name);
+	const CloudLastRun r = cloudLatestRun(name);
 	if (!r.ran || r.why.empty())
 		return "";
 	return std::string("\n\n") + _("LAST TIME IT COULDN'T FINISH:") + " " + r.why + ".";
@@ -4655,14 +4735,41 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// left to itself sleeps five seconds and reboots, which takes the
 		// screen away at the exact moment it has the outcome on it. An older
 		// backuptool ignores the option and restarts as it always did (#114).
+		//
+		// What else was ticked rides across the restart in a record of its own
+		// (JourneyTiers, audit #307 PL-029): the start builds the continuation
+		// from it, where it used to run everything whatever was ticked -- the
+		// dialog promising the ticks, the continuation restoring ROMs and BIOS
+		// over Wi-Fi to a player who had asked for saves. It is written on YES,
+		// not before the question, so a NO leaves nothing behind. With nothing
+		// else ticked there is nothing to continue: no marker is asked for, the
+		// dialog does not promise one, and a record an earlier attempt left is
+		// removed.
 		if (!backup && wantSettings)
 		{
-			add("SETTINGS", "echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only"
-				" && { echo '>>> doing unpack' ; /usr/bin/backuptool restore --then-cloud --no-restart ; }");
+			const bool rest = wantSaves || wantContent || wantMedia;
+			add("SETTINGS", std::string("echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only"
+				" && { echo '>>> doing unpack' ; /usr/bin/backuptool restore")
+				+ (rest ? " --then-cloud" : "") + " --no-restart ; }");
 			cmd += " ; exit $rc";
-			window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FIRST, THEN RESTART?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. ANYTHING ELSE YOU TICKED IS RESTORED AFTER THE RESTART. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED."), _("YES"),
-				[window, s, cmd]
+			const std::string question = rest
+				? _("RESTORE SETTINGS FIRST, THEN RESTART?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. ANYTHING ELSE YOU TICKED IS RESTORED AFTER THE RESTART. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED.")
+				: _("RESTORE SETTINGS, THEN RESTART?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED.");
+			window->pushGui(new GuiMsgBox(window, question, _("YES"),
+				[window, s, cmd, rest, wantSaves, wantContent, wantMedia]
 				{
+					const std::string record = JourneyTiers::PATH;
+					if (rest)
+					{
+						Utils::FileSystem::createDirectory(Utils::FileSystem::getParent(record));
+						// A record that could not be written leaves the start with a
+						// marker and no record: it then offers everything, and its
+						// prompt names everything, so nothing runs that it did not say.
+						if (!Utils::AtomicFile::writeText(record, JourneyTiers::record(wantSaves, wantContent, wantMedia)))
+							LOG(LogWarning) << "restore: the journey record could not be written to " << record << "; the start will offer everything";
+					}
+					else if (Utils::FileSystem::exists(record, false))
+						Utils::FileSystem::removeFile(record);
 					s->close();
 					auto page = new GuiCloudTransfer(window, cmd, _("RESTORING SETTINGS FROM THE CLOUD"), 1);
 					page->setCompletedAction([]
@@ -4676,6 +4783,7 @@ static void cloudOpenTransfer(Window* window, bool backup)
 						// carries every other setting with it.
 						Settings::getInstance()->loadFile();
 						SystemConf::getInstance()->loadSystemConf();
+						ViewController::configurationReplaced();
 						Utils::Platform::quitES(Utils::Platform::QuitMode::REBOOT);
 					}, _("RESTART"), _("PRESS ANY BUTTON TO RESTART"),
 					   _("THIS DEVICE RESTARTS SO YOUR RESTORED SETTINGS TAKE EFFECT."));
@@ -4767,6 +4875,18 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	{
 		content->setOnChangedCallback([rebuildButtons] { rebuildButtons(); });
 		media->setOnChangedCallback([rebuildButtons] { rebuildButtons(); });
+		// Each switch's callback holds rebuildButtons, which holds both
+		// switches (and run, and the line builders, which hold them too): a
+		// cycle that kept every closed form alive, with its switches, its
+		// run and a pointer to the page it was built for (#308 8a gpt
+		// F-ES-11). The page lets go of the callbacks as it closes, and the
+		// rest goes with the page's rows. Owned by the page, as the picker's
+		// rebuild is (es-code-traps.md, a button bar rebuilt from a button).
+		s->onFinalize([content, media]
+		{
+			content->setOnChangedCallback(nullptr);
+			media->setOnChangedCallback(nullptr);
+		});
 	}
 
 	window->pushGui(s);
@@ -4956,7 +5076,7 @@ static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 			[](const std::string&) {}).second;
 		if (rc != 0)
 			return;
-		window->postToUiThread([window, s, alive]
+		AppWindow::post(window, [window, s, alive]
 		{
 			if (alive.expired())
 				return;
@@ -4986,24 +5106,14 @@ static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 // chose for these rows (2026-09-06: a stamp on MATCH read as a third kind of
 // row beside two submenus); it changes only while there is a run to report.
 
-// A hub row that can be dimmed while another row's run is in flight. The
-// dim has to be applied by the entry itself: ComponentList::render sets
-// every element's colour every frame from the theme, so a colour set once
-// is gone by the first frame (the same class the offline scan row uses in
-// GuiRetroAchievementsSettings.cpp; a shared home is for the day a third
-// page needs it).
-class CloudDimmableEntry : public MultiLineMenuEntry
-{
-public:
-	using MultiLineMenuEntry::MultiLineMenuEntry;
-	void setDimmed(bool dimmed) { mDimmed = dimmed; }
-	void setColor(unsigned int color) override
-	{
-		MultiLineMenuEntry::setColor(mDimmed ? (color & 0xFFFFFF00) | 0x50 : color);
-	}
-private:
-	bool mDimmed = false;
-};
+// A hub row is dimmed while another row's run is in flight, by the entry
+// itself: ComponentList::render sets every element's colour every frame
+// from the theme, so a colour set once is gone by the first frame.
+// MultiLineMenuEntry::setDimmed does that (ComponentListFlags::dimmed, the
+// same 0x50), as the offline scan row in GuiRetroAchievementsSettings.cpp
+// uses it; the page's own subclass for it went (#308 8-es claude F-ES-25).
+// It applied the dim at the next frame, where setDimmed applies it at once;
+// nothing else differed.
 
 // The three rows, held weakly as every row on a page is, each with the line
 // it returns to.
@@ -5011,7 +5121,7 @@ struct CloudHubRows
 {
 	struct Row
 	{
-		std::weak_ptr<CloudDimmableEntry> entry;
+		std::weak_ptr<MultiLineMenuEntry> entry;
 		std::string idle;
 	};
 	Row backup, restore, match;
@@ -5127,16 +5237,9 @@ static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured,
 	const std::string& label, const std::string& description, const std::function<void()>& action)
 {
 	slot.idle = description;
-	if (!configured)
-	{
-		cloudAddGatedEntry(s, window, false, label, description, action);
-		return;
-	}
-	auto entry = std::make_shared<CloudDimmableEntry>(window, Utils::String::toUpper(label), description, true);
-	slot.entry = entry;
-	ComponentListRow row;
-	row.addElement(entry, true);
-	row.makeAcceptInputHandler([window, action]
+	// One press for both branches: a row greyed at build time and set up
+	// since runs this too (cloudAddGatedEntry re-checks at the press).
+	const std::function<void()> press = [window, action]
 	{
 		if (const std::shared_ptr<CloudTransferJob> job = CloudTransferJob::current())
 		{
@@ -5144,7 +5247,17 @@ static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured,
 			return;
 		}
 		action();
-	});
+	};
+	if (!configured)
+	{
+		cloudAddGatedEntry(s, window, false, label, description, press);
+		return;
+	}
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
+	slot.entry = entry;
+	ComponentListRow row;
+	row.addElement(entry, true);
+	row.makeAcceptInputHandler(press);
 	s->addRow(row);
 }
 
@@ -5227,8 +5340,13 @@ void GuiMenu::openCloud(Window* window)
 		// currently have, which seems like a miss" (maintainer, 2026-09-10,
 		// fork #110). The name is the player's own label for the remote when
 		// they gave it one, otherwise the provider's name.
-		const std::string provider = CloudText::providerLabel(cloudSetupInfo()["REMOTE_TYPE"]);
-		const std::string remoteName = cloudSetupInfo()["REMOTE_NAME"];
+		//
+		// One cloud_setup --info for the page: it runs rclone listremotes, a
+		// route lookup and systemctl, synchronously on the interface thread,
+		// and the page asked it three times -- once for a name nothing read
+		// (#308 8-es claude F-ES-03).
+		std::map<std::string, std::string> info = cloudSetupInfo();
+		const std::string provider = CloudText::providerLabel(info["REMOTE_TYPE"]);
 		if (!provider.empty())
 			s->addWithLabel(_("CONNECTED TO"), std::make_shared<TextComponent>(window, provider,
 				ThemeData::getMenuTheme()->Text.font, ThemeData::getMenuTheme()->Text.color));
@@ -5270,10 +5388,21 @@ void GuiMenu::openCloud(Window* window)
 		// heading rather than something you can act on; not "choose" or
 		// "select", which promise a list to pick from, when this opens a
 		// keyboard and you type a path.
-		const std::string syncpath = cloudSetupInfo()["SAVES_REMOTE"];
+		//
+		// A changed folder rebuilds this page, so the line under the row
+		// names the new one: with no onDone the page kept the folder it was
+		// built with until it was reopened (#308 8-es claude F-ES-27). The
+		// editor calls it only when the script took the folder; the new page
+		// goes up before the old one closes, so nothing flashes between.
+		const std::string syncpath = info["SAVES_REMOTE"];
+		// One line under the row (D-UI-023): the sentence around the path took
+		// 580 of the 620 px a 640x480 description has, so any real path
+		// wrapped to a third line (#308 8-es claude F-ES-14; Roboto-Bold at
+		// 15 and 20 px, the budget noted at openRestoreRelink's DEVICE
+		// PASSWORD row).
 		s->addWithDescription(_("CHANGE CLOUD FOLDER"),
-			_("THE FOLDER IN YOUR CLOUD THAT HOLDS YOUR SAVES. CURRENT:") + " " + syncpath,
-			nullptr, [window, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, nullptr); },
+			_("YOUR SAVES ARE IN:") + " " + syncpath,
+			nullptr, [window, s, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, [window, s] { GuiMenu::openCloud(window); s->close(); }); },
 			"", false, true);
 	}
 	// Moved here from NETWORK SETTINGS. Offered, never automatic: the first
@@ -5312,9 +5441,14 @@ void GuiMenu::openCloud(Window* window)
 	{
 		// One line under the label on both panels (D-UI-023; the budget is
 		// noted at openRestoreRelink's DEVICE PASSWORD row).
+		// FINISH from here finishes the restore, as it does from NETWORK
+		// SETTINGS: the row exists only while the marker does, and passing
+		// false -- from when the row was always there -- left the marker, so
+		// the page came back at the next start after FINISH (#308 8a gpt
+		// F-ES-06).
 		s->addWithDescription(_("FINISH RESTORE PROCESS"),
 			_("RE-ENTER THE PASSWORDS BACKUPS LEAVE OUT (WI-FI, ACCOUNTS, DEVICE)."), nullptr,
-			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
+			[window] { GuiMenu::openRestoreRelink(window, true); }, "", false, true);
 	}
 
 	window->pushGui(s);
@@ -5382,8 +5516,11 @@ void GuiMenu::openGamesSettings()
 	// A device upgraded from before the row had two spellings can hold "0",
 	// which matches no entry, so the row showed INCREMENT PER SAVE while the
 	// launcher ran with auto-index off. "0" reads as DO NOT INCREMENT, which
-	// is what it does and what Batocera's launcher makes of it (fork #209,
-	// D-UI-083); the row's next save writes "2".
+	// is what it does (fork #209, D-UI-083); the row's next save writes "2".
+	// The launcher that reads it is ROCKNIX's setsettings.sh, set_savestates:
+	// `0|2|false|none` turn savestate_auto_index off, anything else on -- so
+	// the old INCREMENT SLOT ("0") and DO NOT INCREMENT ("2") were one
+	// behaviour under two names (#308 8-es claude F-ES-18).
 	std::string incrementalValue = SystemConf::getInstance()->get("global.incrementalsavestates");
 	if (incrementalValue == "0")
 		incrementalValue = "2";
@@ -5866,8 +6003,24 @@ static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, 
 	// -- these rows never once rendered dim (fork #182).
 	entry->setDimmed(true);
 	row.addElement(entry, true);
-	row.makeAcceptInputHandler([window]
+	// Configured is decided when the page is built, and setup is opened from
+	// this very row: CLOUD SETUP COMPLETE's FINISH closes back to the page it
+	// came from, built before rclone.conf existed, whose rows went on
+	// offering the setup just finished until the page was reopened (audit
+	// #307 PL-062). So the press asks again -- a stat, read uncached -- and a
+	// row that finds the cloud set up does what it says and stops drawing
+	// dim. Every page with these rows gets it, which reopening one page from
+	// FINISH would not. Weak: the row holds the entry, not the other way.
+	std::weak_ptr<MultiLineMenuEntry> weakEntry = entry;
+	row.makeAcceptInputHandler([window, weakEntry, action]
 	{
+		if (Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false))
+		{
+			if (auto shown = weakEntry.lock())
+				shown->setDimmed(false);
+			action();
+			return;
+		}
 		window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nSET IT UP NOW?"), _("YES"),
 			[window] { GuiMenu::openCloudAddRemote(window); },
 			_("NO"), nullptr));
@@ -6006,12 +6159,34 @@ static void cloudSetupAddFact(GuiSettings* s, Window* window, const std::string&
 	s->addWithLabel(label, std::make_shared<TextComponent>(window, value, theme->Text.font, theme->Text.color), false, func);
 }
 
+// The sign-in pages that own a waiting `cloud_oauth serve` (#308 8a gpt
+// F-ES-17). A page handed on to the next one by cloudSetupPresent leaves
+// the session to it; a page that closes any other way -- EXIT, back -- is
+// the player leaving the sign-in, and the session is cancelled then rather
+// than left listening until its own 900-second timeout. The interface
+// thread only, like the pages.
+static std::set<GuiSettings*> sOAuthSessionPages;
+
+static void cloudOAuthOwnSession(GuiSettings* s)
+{
+	sOAuthSessionPages.insert(s);
+	s->onFinalize([s]
+	{
+		if (sOAuthSessionPages.erase(s) == 0)
+			return;   // handed on: the next page owns the session
+		LOG(LogInfo) << "cloud_oauth: the sign-in was left; cancelling its session";
+		Utils::Platform::runSystemCommand("/usr/bin/cloud_oauth cancel", "", nullptr);
+	});
+}
+
 // Show a freshly built wizard page: give it the standard large-menu
 // height (the cap MenuComponent::updateSize applies) so the window does
 // not jump between steps, push it, then close the page it replaces -
 // closing first would flash the menu underneath.
 static void cloudSetupPresent(Window* window, GuiSettings* s, GuiSettings* prev)
 {
+	if (prev != nullptr)
+		sOAuthSessionPages.erase(prev);   // handed on, not left
 	if (!Renderer::ScreenSettings::fullScreenMenus())
 	{
 		float width = Renderer::getScreenWidth() * 0.90f;
@@ -6796,7 +6971,12 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 					{
 						std::string out = Utils::Platform::GetShOutput(
 							"timeout 60 /usr/bin/cloud_remote " + cmd + " 2>&1");
-						LOG(LogInfo) << "cloud_remote create: " << out;
+						// Masked: the command carries the form's pass=, key= and
+						// token= values, and a script that echoes its arguments
+						// in a usage or an error would put them in es_log.txt
+						// (#308 8-es claude F-ES-21; fork #177's rule, every
+						// logged command line).
+						LOG(LogInfo) << "cloud_remote create: " << Utils::String::maskSecrets(out);
 						return out;
 					},
 					[window, s](std::string out)
@@ -6967,8 +7147,18 @@ static bool cloudOAuthAwaitSession(std::string& url, bool& onDevice,
 			return true;
 
 		url.clear();
-		Utils::Platform::runSystemCommand("sleep 0.5", "", nullptr);
+		// A sleep, not a shell running sleep (#308 8-es claude F-ES-16): a
+		// fork and exec every poll for nothing, and runSystemCommand is not
+		// a promise to wait for its child.
+		std::this_thread::sleep_for(std::chrono::milliseconds(500));
 	}
+
+	// A script that answered `info` and never said waiting has had its say:
+	// failed, or not yet, for the whole poll. The address `url` still holds
+	// then is not this session's (#308 8a gpt F-ES-18) -- the case the wait
+	// above exists to rule out. Fail closed.
+	if (understood)
+		return false;
 
 	// An image whose cloud_oauth predates `info` still answers `url`.
 	auto lines = Utils::Platform::GetShOutputLines("/usr/bin/cloud_oauth url");
@@ -7035,13 +7225,16 @@ static void cloudOAuthPresentChoice(Window* window, const CloudBackend& backend,
 		}, "", false, true);
 
 	s->addWithDescription(_("WITH MY PHONE"),
-		_("SCAN THE CODE, THEN CHOOSE CONTINUE. YOUR PHONE BECOMES A KEYBOARD FOR THIS SCREEN."),
+		// One line (D-UI-023): the sentence this replaced measured 929 of
+		// 780 px at 1280x800 and 701 of 620 at 640x480 (#308 F-ES-14).
+		_("YOUR PHONE BECOMES THE KEYBOARD. SCAN THE CODE, THEN CONTINUE."),
 		nullptr, [window, backend, remoteName, s, ready]
 		{
 			cloudOAuthShowSignIn(window, backend, remoteName, s, true, ready);
 		}, "", false, true);
 
 	cloudSetupSetButtons(s, nullptr);
+	cloudOAuthOwnSession(s);
 	cloudSetupPresent(window, s, prev);
 }
 
@@ -7068,6 +7261,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 		// well, which offered to continue with a sign-in that had not begun.
 		s->getMenu().clearButtons();
 		s->getMenu().addButton(_("GO BACK"), _("go back"), [s] { s->close(); });
+		cloudOAuthOwnSession(s);
 		cloudSetupPresent(window, s, prev);
 		return;
 	}
@@ -7178,6 +7372,7 @@ static void cloudOAuthShowSignIn(Window* window, const CloudBackend& backend,
 			}));
 	});
 
+	cloudOAuthOwnSession(s);
 	cloudSetupPresent(window, s, prev);
 
 	// After the page is on the stack, never while it is being built: this
@@ -7219,8 +7414,22 @@ static void cloudOAuthShowConnected(Window* window, const CloudBackend& backend,
 	cloudSetupAddInfoRow(s, window, "2.  " + _("BACK UP SAVES TO THE CLOUD, OR RESTORE THEM"));
 	cloudSetupAddInfoRow(s, window, "3.  " + _("MANAGE CLOUD STORAGE"));
 
-	cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
-		_("CONNECTING A PROVIDER ONLY GIVES THE DEVICE SOMEWHERE TO PUT THINGS. TURN ON THE SYSTEMS YOU WANT KEPT. ROMS AND BIOS FILES ARE NEVER INCLUDED."));
+	// Which is true of this device: what syncs on its own is two switches
+	// under MANAGE CLOUD STORAGE (SYNC SAVES DURING STARTUP, WHEN EXITING A
+	// GAME), not systems, and a device whose settings were restored may have
+	// them on already -- its next exit syncs to the cloud just connected. The
+	// page said NOTHING SYNCS YET whatever the switches said, told the player
+	// to turn on systems, and said ROMs and BIOS are never included, which
+	// the ROMS AND BIOS tier has not been true of since D-UI-022 (#308 8a gpt
+	// F-ES-19).
+	const bool syncsOnItsOwn = SystemConf::getInstance()->get("cloudsaves.startup") == "1"
+		|| SystemConf::getInstance()->get("cloudsaves.gameexit") == "1";
+	if (syncsOnItsOwn)
+		cloudSetupAddProse(s, window, _("YOUR SAVES ALREADY SYNC"),
+			_("THIS DEVICE WAS SET TO SYNC THEM, SO FROM NOW ON THEY GO TO THIS CLOUD."));
+	else
+		cloudSetupAddProse(s, window, _("NOTHING SYNCS YET"),
+			_("CONNECTING ONLY GIVES THIS DEVICE SOMEWHERE TO PUT THINGS. TO SYNC SAVES ON THEIR OWN, TURN IT ON UNDER MANAGE CLOUD STORAGE."));
 
 	// One button, and it leaves. There is nothing left to continue to -- the
 	// sign-in is done, and the page it would return to is the provider list,
@@ -7461,6 +7670,9 @@ void GuiMenu::openCloudSetup(Window* window)
 // the sanitized system.cfg drops `wifi.key`, so a settings restore
 // disconnects Wi-Fi, and the cloud-journey continuation that follows
 // this page needs the network back.
+static void networkApplyWifi(Window* window, const std::string& title,
+	const std::function<bool()>& apply, const std::function<void(bool)>& onDone);
+
 void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 {
 	const std::string restoreMarker = "/storage/.config/.restore-finish-pending";
@@ -7498,17 +7710,37 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	{
 		auto wifi = new GuiSettings(window, _("WI-FI PASSWORD"));
 		wifi->addInputTextConfigRow(_("WI-FI PASSWORD"), "wifi.key", true);
-		wifi->addSaveFunc([]
+		// The association behind the spinner every other Wi-Fi apply in this
+		// file uses (networkApplyWifi): it ran from a save function on the
+		// interface thread, and wifictl connect can take the better part of
+		// two minutes -- a frozen screen after a restore, with no word (#308
+		// 8-es claude F-ES-02, 8a gpt F-ES-07). The page comes back when it
+		// ends, and a failure is said over it.
+		// The key row writes SystemConf in memory only, and the page has no
+		// save function to write the file (GuiSettings::save returns early
+		// without one): written here, before the association reads it.
+		wifi->onFinalize([window, s, reopen]
 		{
-			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
-			std::string key = SystemConf::getInstance()->get("wifi.key");
-			if (SystemConf::getInstance()->getBool("wifi.enabled") && !ssid.empty() && !key.empty())
+			SystemConf::getInstance()->saveSystemConf();
+			s->close();
+			const std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
+			const std::string key = SystemConf::getInstance()->get("wifi.key");
+			const std::string country = SystemConf::getInstance()->get("wifi.country");
+			if (!SystemConf::getInstance()->getBool("wifi.enabled") || ssid.empty() || key.empty())
 			{
-				LOG(LogInfo) << "restore relink: reconnecting wifi to " << ssid;
-				ApiSystem::getInstance()->enableWifi(ssid, key, SystemConf::getInstance()->get("wifi.country"));
+				reopen();
+				return;
 			}
+			LOG(LogInfo) << "restore relink: reconnecting wifi to " << ssid;
+			networkApplyWifi(window, _("CONNECTING TO WI-FI"),
+				[ssid, key, country] { return ApiSystem::getInstance()->enableWifi(ssid, key, country); },
+				[window, reopen](bool ok)
+				{
+					reopen();
+					if (!ok)
+						window->pushGui(new GuiMsgBox(window, _("WI-FI CONFIGURATION ERROR")));
+				});
 		});
-		wifi->onFinalize([s, reopen] { s->close(); reopen(); });
 		window->pushGui(wifi);
 	});
 
@@ -7533,7 +7765,9 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 				// The web API key is held back from backups too (#68).
 				ra->addInputTextConfigRow(_("WEB API KEY"), "global.retroachievements.key", true);
 #endif
-				ra->onFinalize([s, reopen] { s->close(); reopen(); });
+				// Written here: the rows set memory only, and a page with no
+				// save function writes no file (GuiSettings::save).
+				ra->onFinalize([s, reopen] { SystemConf::getInstance()->saveSystemConf(); s->close(); reopen(); });
 				window->pushGui(ra);
 			});
 
@@ -7549,7 +7783,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 				// The developer password is held back from backups too (#64).
 				ss->addInputTextConfigRow(_("DEVELOPER PASSWORD"), "ScreenScraperDevPass", true, true);
 #endif
-				ss->onFinalize([s, reopen] { s->close(); reopen(); });
+				ss->onFinalize([s, reopen] { Settings::getInstance()->saveFile(); s->close(); reopen(); });
 				window->pushGui(ss);
 			});
 	}
@@ -7566,7 +7800,7 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 		{
 			auto np = new GuiSettings(window, _("NETPLAY PASSWORD"));
 			np->addInputTextConfigRow(_("NETPLAY PASSWORD"), "global.netplay.password", true);
-			np->onFinalize([s, reopen] { s->close(); reopen(); });
+			np->onFinalize([s, reopen] { SystemConf::getInstance()->saveSystemConf(); s->close(); reopen(); });
 			window->pushGui(np);
 		});
 	}
@@ -7643,10 +7877,15 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	// LATER keeps the marker, so this page returns on the next boot -- but
 	// nothing said so, leaving the player unable to tell defer from discard.
 	// One line under the label, as above: the page name is the long part,
-	// so the sentence around it is a fragment.
-	s->addWithDescription(_("LATER KEEPS THIS LIST"),
-		_("BACK AT STARTUP, OR IN NETWORK SETTINGS > FINISH RESTORE PROCESS."),
-		nullptr, nullptr, "", false, true);
+	// so the sentence around it is a fragment. Only when there is a marker
+	// to keep: the RetroAchievements prompt at startup opens this page with
+	// none (main.cpp), and then nothing brings it back -- both rows that
+	// would are shown only while the marker is there (#308 8-es claude
+	// F-ES-12). Read uncached, like those rows.
+	if (Utils::FileSystem::exists(restoreMarker, false))
+		s->addWithDescription(_("LATER KEEPS THIS LIST"),
+			_("BACK AT STARTUP, OR IN NETWORK SETTINGS > FINISH RESTORE PROCESS."),
+			nullptr, nullptr, "", false, true);
 
 	// FINISH consumes the marker; LATER leaves it so the next boot
 	// offers this page again. Consuming on completion rather than on
@@ -8943,7 +9182,7 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 			if (first.empty() && a.physical)
 				first = a.address;
 		}
-		window->postToUiThread([ip, addresses, first, lines, notConnected, fill]
+		AppWindow::post(window, [ip, addresses, first, lines, notConnected, fill]
 		{
 			if (auto held = addresses.lock())
 				*held = lines;
@@ -8958,7 +9197,7 @@ static void networkSettingsFillIn(Window* window, GuiSettings* s,
 	std::thread([window, status, connected, notConnected, fill]
 	{
 		const bool online = ApiSystem::getInstance()->ping();
-		window->postToUiThread([status, online, connected, notConnected, fill]
+		AppWindow::post(window, [status, online, connected, notConnected, fill]
 		{
 			fill(status, online ? connected : notConnected);
 		});
@@ -8993,7 +9232,7 @@ static void networkSettingsFillInSsid(Window* window, GuiSettings* s, const std:
 		std::string joined;
 		const bool answered = ApiSystem::getInstance()->getCurrentWifiSsid(joined);
 		const std::string text = !answered ? couldNotCheck : (joined.empty() ? notConnected : joined);
-		window->postToUiThread([list, value, text]
+		AppWindow::post(window, [list, value, text]
 		{
 			// A value that changes width after its row was laid out has to
 			// be laid out again (networkSettingsFillIn). Both are held

@@ -2,12 +2,20 @@
 #include "SaveStateJobQueue.h"
 #include "ApiSystem.h"
 #include "Log.h"
+#include "RunLock.h"
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+
+// The cloud scripts' transfer lock. A macro so a test can hold one of its
+// own (tests/app-unit, bookkeeper-tests); the device's is this one.
+#ifndef CLOUD_SYNC_LOCK_PATH
+#define CLOUD_SYNC_LOCK_PATH "/var/run/cloud_sync.lock"
+#endif
 
 namespace
 {
@@ -29,8 +37,59 @@ namespace
 	std::mutex gWorkerMutex;
 	Worker* gWorker = nullptr;
 
-	void runDelete(const SaveStateJob& job)
+	// A cloud transfer -- a back up, a restore, a sync, started here or from
+	// a shell -- holds the scripts' lock while it runs, and a deletion made
+	// under it retires and unlinks a state the transfer may be copying, in a
+	// manifest the transfer may be reading (audit #307 PL-068). The manager
+	// refuses a DELETE while the lock is held; a deletion already queued
+	// when a transfer starts waits here for it to end, polled twice a
+	// second, however long it takes -- the tile stays hidden meanwhile
+	// (isPending). At exit it waits five seconds more and no longer: a
+	// deletion still waiting then is not made, the file stays, and its tile
+	// is back at the next start, which is honest where deleting under the
+	// transfer would not be. True when the deletion may go ahead.
+	bool transferGone(Worker* w, const SaveStateJob& job)
 	{
+		if (!RunLock::held(CLOUD_SYNC_LOCK_PATH))
+			return true;
+		LOG(LogInfo) << "save state deletion waits: a cloud transfer holds the lock (" << job.stateFile << ")";
+		bool stopping = false;
+		std::chrono::steady_clock::time_point giveUpAt;
+		for (;;)
+		{
+			bool stop;
+			{
+				std::unique_lock<std::mutex> lock(w->mutex);
+				if (!w->stop)
+					w->wake.wait_for(lock, std::chrono::milliseconds(500), [w] { return w->stop; });
+				stop = w->stop;
+			}
+			if (!RunLock::held(CLOUD_SYNC_LOCK_PATH))
+			{
+				LOG(LogInfo) << "save state deletion goes ahead: the cloud transfer has ended (" << job.stateFile << ")";
+				return true;
+			}
+			if (!stop)
+				continue;
+			if (!stopping)
+			{
+				stopping = true;
+				giveUpAt = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			}
+			else if (std::chrono::steady_clock::now() >= giveUpAt)
+			{
+				LOG(LogWarning) << "save state deletion not made at exit: a cloud transfer still held the lock; " << job.stateFile << " stays";
+				return false;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		}
+	}
+
+	void runDelete(Worker* w, const SaveStateJob& job)
+	{
+		if (!transferGone(w, job))
+			return;
+
 		// Record the deletion before the file goes (#21 R3, D-CLOUD-053): the
 		// next pass then propagates a decided deletion instead of asking about
 		// an absence it cannot explain (D-CLOUD-037). With --unlink the script
@@ -110,7 +169,7 @@ namespace
 			}
 
 			if (job.kind == SaveStateJob::Kind::Delete)
-				runDelete(job);
+				runDelete(w, job);
 			else
 				runCopy(job);
 

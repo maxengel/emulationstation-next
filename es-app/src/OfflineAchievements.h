@@ -99,11 +99,14 @@ namespace OfflineAchievements
 	bool toggleOn();
 
 	// Whether the pages should read from the device: the toggle on, the
-	// backend present, and the proxy's own online_state.json -- its
-	// reachability probe of RetroAchievements, refreshed every fifteen
-	// seconds while the service runs -- saying it is not reachable. A file
-	// that is missing or unreadable is unknown, and unknown is never read
-	// as offline: the web is asked then, as it always was. A file read, no
+	// backend present, and either no address on any wired or wireless
+	// interface (fork #190: the proxy's monitor notices a dropped link only
+	// at its next probe, so the device's own link is asked first) or the
+	// proxy's own online_state.json -- its reachability probe of
+	// RetroAchievements, refreshed every fifteen seconds while the service
+	// runs -- saying it is not reachable. With an address, a file that is
+	// missing or unreadable is unknown, and unknown is read as online: the
+	// web is asked then, bounded. File reads and an interface query, no
 	// process.
 	bool proxyOffline();
 	// The store's games for the signed-in account in one read (raofflineproxy-ctl

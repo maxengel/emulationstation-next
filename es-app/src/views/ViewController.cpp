@@ -1,4 +1,5 @@
 #include "views/ViewController.h"
+#include "DisplayAspect.h"
 
 #include "animations/Animation.h"
 #include "animations/LambdaAnimation.h"
@@ -35,6 +36,12 @@
 #include "Gamelist.h"
 
 ViewController* ViewController::sInstance = nullptr;
+static bool sConfigurationReplaced = false;
+
+void ViewController::configurationReplaced()
+{
+	sConfigurationReplaced = true;
+}
 
 ViewController* ViewController::get()
 {
@@ -60,6 +67,14 @@ void ViewController::init(Window* window)
 void ViewController::saveState()
 {
 	if (sInstance == nullptr)
+		return;
+
+	// The files on disk are not the ones this process read (a factory reset
+	// removed them, a settings restore replaced them). Settings::loadFile
+	// cannot re-read a file that is gone and leaves the old map standing,
+	// so the saveFile below would write every pre-reset setting back with
+	// LastSystem (#308 8-es claude F-ES-10).
+	if (sConfigurationReplaced)
 		return;
 
 	if (Settings::getInstance()->getString("StartupSystem") != "lastsystem")
@@ -1450,6 +1465,9 @@ void ViewController::reloadAllGames(Window* window, bool deleteCurrentGui, bool 
 
 	CollectionSystemManager::init(window);		
 	SystemData::loadConfig(window);
+	// The screenshot -> game cache was built from the library just replaced
+	// (DisplayAspect; #308 8-es claude F-ES-15, 8a gpt F-ES-09).
+	DisplayAspect::forgetScreenshots();
 	
 	ViewController::get()->goToSystemView(systemName, true, viewMode);	
 	ViewController::get()->reloadAll(nullptr, false); // Avoid reloading themes a second time
