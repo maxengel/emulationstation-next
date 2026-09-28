@@ -163,3 +163,39 @@ TEST_CASE("the harness: a load, a change and a save, as the interface makes them
 	CHECK(get(path + ".backup") == "system.hostname=A\naudio.volume=40\n");
 	CHECK_FALSE(SystemConfTestAccess::recovered());
 }
+
+// ------------------------------------------------------------ G2-E-core-06
+
+TEST_CASE("a reload that reads nothing keeps every change still waiting to be saved (audit of the fix round, gpt G2-E-core-06)")
+{
+	// The reload cleared the pending changes, read nothing, and then
+	// compared them with the empty reading: every change to a key the file
+	// held looked like somebody had removed the key since, and was dropped
+	// -- from the pending set and from memory -- before the false came back.
+	// Nothing read is no evidence about any key.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	put(path, "system.hostname=A\naudio.volume=70\n");
+	SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 300);
+	REQUIRE(conf->get("audio.volume") == "70");
+
+	// The player's change; the save is refused for the lock (PL-024) and kept.
+	CHECK(conf->set("audio.volume", "40"));
+	{
+		PidLock other(lockPath);
+		REQUIRE(other.acquire(1000));
+		CHECK_FALSE(conf->saveSystemConf());
+	}
+
+	// The file and its record gone for the moment: the reload reads nothing.
+	REQUIRE(std::rename(path.c_str(), (dir / "aside").c_str()) == 0);
+	REQUIRE(std::remove((path + ".backup").c_str()) == 0);
+	CHECK_FALSE(conf->loadSystemConf(true));
+	CHECK(conf->get("audio.volume") == "40");
+
+	// The file back: the next save makes the change.
+	REQUIRE(std::rename((dir / "aside").c_str(), path.c_str()) == 0);
+	CHECK(conf->saveSystemConf());
+	CHECK(get(path) == "system.hostname=A\naudio.volume=40\n");
+}

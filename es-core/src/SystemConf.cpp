@@ -128,11 +128,29 @@ bool SystemConf::loadSystemConf(bool keepPending)
 	}
 	const auto bases = mPendingBase;
 	const std::set<std::string> unsaved = changedConf;
+	const auto onDiskBefore = mOnDisk;
 
 	changedConf.clear();
 	mPendingBase.clear();
 	mOnDisk.clear();
 	const bool loaded = loadFromDisk();
+
+	// Nothing read is no evidence about any key (audit of the fix round,
+	// gpt G2-E-core-06): the empty reading made every change to a key the
+	// file held look removed by somebody since, and it was dropped from the
+	// pending set and from memory before the false came back. The changes
+	// stay, with their bases and the last reading of the file, for the
+	// next save or the next reload that reads something.
+	if (!loaded && keepPending)
+	{
+		changedConf = unsaved;
+		mPendingBase = bases;
+		mOnDisk = onDiskBefore;
+		if (!unsaved.empty())
+			LOG(LogWarning) << "loadSystemConf: " << mSystemConfFile << " could not be read -- the " << unsaved.size()
+				<< " change(s) not saved yet are kept for the next save";
+		return false;
+	}
 
 	const auto kept = Utils::AtomicFile::pendingAfterReload(pending, mOnDisk);
 	// A change dropped here must not linger in memory where the file has no

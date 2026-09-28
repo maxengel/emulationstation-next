@@ -19,9 +19,11 @@ public:
 	// made yet -- one the lock refused (PL-024) -- except where the file now
 	// holds a key differently than when it was changed (audit of the fixes
 	// G-E1-03, Utils::AtomicFile::pendingAfterReload): the Wi-Fi picker's
-	// reload after wifictl join wrote the network. Without it every change
-	// is dropped and the file's values stand, which is what a reload after
-	// a settings restore or a factory reset is for.
+	// reload after wifictl join wrote the network. A reload that reads
+	// nothing keeps them all and answers false (audit of the fix round,
+	// G2-E-core-06). Without it every change is dropped and the file's
+	// values stand, which is what a reload after a settings restore or a
+	// factory reset is for.
     bool loadSystemConf(bool keepPending = false);
     bool saveSystemConf();
 
