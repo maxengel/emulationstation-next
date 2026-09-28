@@ -3,7 +3,10 @@
 # no SDL, no cross toolchain:
 #
 #   cmake -S tests/app-unit -B build-app-unit && cmake --build build-app-unit
-#   ./build-app-unit/proxycards-tests
+#   ./build-app-unit/app-unit-tests && ./build-app-unit/proxycards-tests
+#
+# app-unit-tests: header-only pure code the application calls (the journey
+# tiers a settings-first restore carries across its restart).
 #
 # proxycards-tests: the shipped es-app/src/ProxyCards.cpp itself, compiled
 # against the small doubles under fakes/ -- the window, the card, the cloud
@@ -22,6 +25,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-g -fno-omit-frame-pointer -fsanitize=address,undefined)
 add_link_options(-fsanitize=address,undefined)
 find_package(Threads REQUIRED)
+
+add_executable(app-unit-tests
+	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/JourneyTiersTests.cpp
+)
+target_include_directories(app-unit-tests PRIVATE
+	${ES_ROOT}/es-app/src
+	${ES_ROOT}/es-core/src
+	${ES_ROOT}/external
+)
 
 configure_file(${ES_ROOT}/es-app/src/ProxyCards.cpp ${CMAKE_BINARY_DIR}/under-test/ProxyCards.cpp COPYONLY)
 add_executable(proxycards-tests

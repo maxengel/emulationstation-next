@@ -58,6 +58,7 @@
 #include "LaunchCommand.h"
 #include "ThreadedCloudSync.h"
 #include "CloudExit.h"
+#include "JourneyTiers.h"
 
 #ifdef WIN32
 #include <Windows.h>
@@ -944,35 +945,86 @@ int main(int argc, char* argv[])
 	// declines, so a crash or a power cut while the prompt is on screen
 	// leaves it for the next boot rather than losing the continuation.
 	std::string journeyMarker = "/storage/.config/.cloud-journey-pending";
-	const bool journeyPending = Utils::FileSystem::exists(journeyMarker);
+	bool journeyPending = Utils::FileSystem::exists(journeyMarker);
+	// What else the restore form had ticked (JourneyTiers, audit #307
+	// PL-029): the continuation is built from it, and the prompt names it.
+	// Read uncached, like every file another process leaves. A record with
+	// no marker is a settings restore that failed or never ran, and goes.
+	// A marker with no record is one an earlier build left, and keeps the
+	// continuation and the prompt it always had (D-WORKFLOW-050).
+	const std::string journeyRecord = JourneyTiers::PATH;
+	JourneyTiers::Tiers journeyTiers;
+	if (Utils::FileSystem::exists(journeyRecord, false))
+	{
+		if (journeyPending)
+			journeyTiers = JourneyTiers::parse(Utils::FileSystem::readAllText(journeyRecord));
+		else
+			Utils::FileSystem::removeFile(journeyRecord);
+	}
+	if (journeyPending && journeyTiers.known && !journeyTiers.any())
+	{
+		// Nothing else was ticked: nothing to offer. This build's form asks
+		// for no marker then; one left anyway is consumed here.
+		LOG(LogInfo) << "journey: the marker's record names nothing to restore; consumed";
+		std::remove(journeyMarker.c_str());
+		Utils::FileSystem::removeFile(journeyRecord);
+		journeyPending = false;
+	}
 	if (journeyPending)
 	{
-		window.pushGui(new GuiMsgBox(&window, _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES, AND SAVES FROM THE CLOUD NOW?"), _("YES"),
-			[&window, journeyMarker] {
+		std::string question;
+		if (!journeyTiers.known)
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nDOWNLOAD YOUR GAMES, BIOS FILES, AND SAVES FROM THE CLOUD NOW?");
+		else if (journeyTiers.saves && journeyTiers.content && journeyTiers.media)
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nRESTORE YOUR SAVES, ROMS, BIOS, AND GAME CONTENT FROM THE CLOUD NOW?");
+		else if (journeyTiers.saves && journeyTiers.content)
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nRESTORE YOUR SAVES, ROMS, AND BIOS FROM THE CLOUD NOW?");
+		else if (journeyTiers.saves && journeyTiers.media)
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nRESTORE YOUR SAVES AND GAME CONTENT FROM THE CLOUD NOW?");
+		else if (journeyTiers.content && journeyTiers.media)
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nRESTORE YOUR ROMS, BIOS, AND GAME CONTENT FROM THE CLOUD NOW?");
+		else if (journeyTiers.saves)
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nRESTORE YOUR SAVES FROM THE CLOUD NOW?");
+		else if (journeyTiers.content)
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nRESTORE YOUR ROMS AND BIOS FROM THE CLOUD NOW?");
+		else
+			question = _("YOUR SETTINGS WERE RESTORED.\n\nRESTORE YOUR GAME CONTENT FROM THE CLOUD NOW?");
+		window.pushGui(new GuiMsgBox(&window, question, _("YES"),
+			[&window, journeyMarker, journeyRecord, journeyTiers] {
 			std::remove(journeyMarker.c_str());
+			Utils::FileSystem::removeFile(journeyRecord);
 			// The first thing a new device does, on the transfer page every
 			// other cloud run of this size uses (#114). It was a fullscreen
 			// console until now: raw script output, no outcome, and nothing
 			// to press when it went wrong.
 			//
-			// Two parts, composed the way GuiMenu's transfer page composes
-			// them (cloudOpenTransfer): each reports itself as it ends
-			// (">>> tier <label>|<rc>") and the run's status is accumulated
-			// rather than taken from the last part. They are not chained
-			// with && any more -- ROMs that could not be reached used to
-			// skip the saves silently, which on a device with nothing on it
-			// is the half that matters most.
-			std::string cmd = "rc=0";
-			cmd += " ; _t=0 ; { /usr/bin/cloud_content_restore --all ; } || _t=$? ; echo \">>> tier RESTORING ROMS AND BIOS|$_t\" ; [ \"$_t\" = 0 ] || rc=$_t";
-			cmd += " ; _t=0 ; { /usr/bin/cloud_restore --yes ; } || _t=$? ; echo \">>> tier RESTORING SAVES|$_t\" ; [ \"$_t\" = 0 ] || rc=$_t";
-			cmd += " ; exit $rc";
-			// The content script announces how many systems it has and the
-			// page counts from that; the two single-item phases that follow
-			// it -- the saves restore and the settings-archive phase inside
-			// the same script -- are what the count has to keep room for.
-			window.pushGui(new GuiCloudTransfer(&window, cmd, _("RESTORING FROM THE CLOUD"), 2, 2));
-			}, _("LATER"), [journeyMarker] {
+			// Each part reports itself as it ends and the run's status is
+			// accumulated rather than taken from the last part
+			// (JourneyTiers::command, the restore form's composition): ROMs
+			// that could not be reached used to skip the saves silently, which
+			// on a device with nothing on it is the half that matters most.
+			const std::string cmd = JourneyTiers::command(journeyTiers);
+			// How many items the page counts from before a script says. An
+			// earlier build's continuation: the content script announces how
+			// many systems it has, and the two single-item phases after it --
+			// the saves restore and the settings-archive phase inside the same
+			// script -- are what the count keeps room for. This build's: one
+			// for saves, one per system the picker's selection names.
+			int items = 2, itemsAfterContent = 2;
+			if (journeyTiers.known)
+			{
+				items = journeyTiers.saves ? 1 : 0;
+				itemsAfterContent = 0;
+				if (journeyTiers.content || journeyTiers.media)
+					for (auto& line : Utils::String::split(Utils::FileSystem::readAllText("/storage/.cache/cloud_sync/content-systems"), '\n', true))
+						if (!Utils::String::trim(line).empty())
+							items++;
+			}
+			LOG(LogInfo) << "journey: the continuation starts (" << (journeyTiers.known ? "the ticked tiers" : "an earlier build's marker: everything") << ")";
+			window.pushGui(new GuiCloudTransfer(&window, cmd, _("RESTORING FROM THE CLOUD"), items, itemsAfterContent));
+			}, _("LATER"), [journeyMarker, journeyRecord] {
 			std::remove(journeyMarker.c_str());
+			Utils::FileSystem::removeFile(journeyRecord);
 			}));
 	}
 

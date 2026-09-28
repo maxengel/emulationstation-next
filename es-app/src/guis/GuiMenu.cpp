@@ -74,6 +74,8 @@
 #include "Gamelist.h"
 #include "TextToSpeech.h"
 #include "Paths.h"
+#include "JourneyTiers.h"
+#include "utils/AtomicFileUtil.h"
 #include <set> 
 
 #if !WIN32
@@ -4655,14 +4657,41 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		// left to itself sleeps five seconds and reboots, which takes the
 		// screen away at the exact moment it has the outcome on it. An older
 		// backuptool ignores the option and restarts as it always did (#114).
+		//
+		// What else was ticked rides across the restart in a record of its own
+		// (JourneyTiers, audit #307 PL-029): the start builds the continuation
+		// from it, where it used to run everything whatever was ticked -- the
+		// dialog promising the ticks, the continuation restoring ROMs and BIOS
+		// over Wi-Fi to a player who had asked for saves. It is written on YES,
+		// not before the question, so a NO leaves nothing behind. With nothing
+		// else ticked there is nothing to continue: no marker is asked for, the
+		// dialog does not promise one, and a record an earlier attempt left is
+		// removed.
 		if (!backup && wantSettings)
 		{
-			add("SETTINGS", "echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only"
-				" && { echo '>>> doing unpack' ; /usr/bin/backuptool restore --then-cloud --no-restart ; }");
+			const bool rest = wantSaves || wantContent || wantMedia;
+			add("SETTINGS", std::string("echo '>>> unit SETTINGS||' ; /usr/bin/cloud_restore --yes --system-only"
+				" && { echo '>>> doing unpack' ; /usr/bin/backuptool restore")
+				+ (rest ? " --then-cloud" : "") + " --no-restart ; }");
 			cmd += " ; exit $rc";
-			window->pushGui(new GuiMsgBox(window, _("RESTORE SETTINGS FIRST, THEN RESTART?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. ANYTHING ELSE YOU TICKED IS RESTORED AFTER THE RESTART. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED."), _("YES"),
-				[window, s, cmd]
+			const std::string question = rest
+				? _("RESTORE SETTINGS FIRST, THEN RESTART?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. ANYTHING ELSE YOU TICKED IS RESTORED AFTER THE RESTART. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED.")
+				: _("RESTORE SETTINGS, THEN RESTART?\n\nYOUR EXISTING CONFIGURATION IS REPLACED. WI-FI AND ACCOUNT PASSWORDS MUST BE RE-ENTERED.");
+			window->pushGui(new GuiMsgBox(window, question, _("YES"),
+				[window, s, cmd, rest, wantSaves, wantContent, wantMedia]
 				{
+					const std::string record = JourneyTiers::PATH;
+					if (rest)
+					{
+						Utils::FileSystem::createDirectory(Utils::FileSystem::getParent(record));
+						// A record that could not be written leaves the start with a
+						// marker and no record: it then offers everything, and its
+						// prompt names everything, so nothing runs that it did not say.
+						if (!Utils::AtomicFile::writeText(record, JourneyTiers::record(wantSaves, wantContent, wantMedia)))
+							LOG(LogWarning) << "restore: the journey record could not be written to " << record << "; the start will offer everything";
+					}
+					else if (Utils::FileSystem::exists(record, false))
+						Utils::FileSystem::removeFile(record);
 					s->close();
 					auto page = new GuiCloudTransfer(window, cmd, _("RESTORING SETTINGS FROM THE CLOUD"), 1);
 					page->setCompletedAction([]
