@@ -336,3 +336,28 @@ TEST_CASE("two waiters on a stale lock never both hold it (PL-041)")
 	CHECK(overlaps == 0);
 	CHECK(failures == 0);
 }
+
+// ------------------------------------------------------------ F-ES-07
+
+TEST_CASE("a lock path that can never be a lock ends the wait within its budget (#308 8b gpt F-ES-07)")
+{
+	// A directory where the lock goes: the create fails with EEXIST, the
+	// read fails, and the loop retried at once without looking at the clock
+	// -- forever, on the interface thread. It must answer false in its
+	// budget and leave the directory alone.
+	ScratchDir dir;
+	const std::string lockPath = dir / ".system.cfg.lock";
+	REQUIRE(mkdir(lockPath.c_str(), 0755) == 0);
+
+	const auto started = std::chrono::steady_clock::now();
+	const int rc = inChildWithin(5, [&] {
+		PidLock lock(lockPath);
+		return lock.acquire(300) ? 1 : 0;
+	});
+	const long ms = (long) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+	CHECK(rc == 0);          // -1 is the deadline killing a loop that never returned
+	CHECK(ms < 3000);
+	struct stat st;
+	REQUIRE(stat(lockPath.c_str(), &st) == 0);
+	CHECK(S_ISDIR(st.st_mode));
+}

@@ -345,6 +345,20 @@ namespace Utils
 				}
 			}
 
+			// The clock is read on every pass, whichever way the pass went
+			// (#308 F-ES-07): the budget used to be checked only after a live
+			// holder was found, so a lock that could never be read or never
+			// be removed -- a directory where the lock goes -- kept the
+			// interface thread in this loop for good.
+			auto expired = [&]() {
+				const long elapsed = (long) std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - started).count();
+				if (elapsed < timeoutMs)
+					return false;
+				::unlink(staging.c_str());
+				return true;
+			};
+
 			for (;;)
 			{
 				int made = -1;
@@ -393,11 +407,32 @@ namespace Utils
 					return true;
 				}
 
-				// Held -- or was. Read who by, and ask the kernel.
+				// Held -- or was. Something that is not a file where the lock
+				// goes is nobody's lock and never will be: nothing here or in
+				// the shell removes a directory, so there is nothing to wait
+				// for.
+				struct stat st;
+				if (::lstat(mPath.c_str(), &st) == 0 && !S_ISREG(st.st_mode))
+				{
+					::unlink(staging.c_str());
+					return false;
+				}
+
+				// Read who by, and ask the kernel.
 				bool ok = false;
 				const std::string holder = lockHolder(readText(mPath, &ok));
 				if (!ok)
-					continue;   // released between the create and the read: try again at once
+				{
+					if (expired())
+						return false;
+					// Released between the create and the read: try again at
+					// once. Anything else that stops the read -- a lock this
+					// process may not read -- is tried again after a pause,
+					// until the budget is spent.
+					if (::access(mPath.c_str(), F_OK) == 0)
+						std::this_thread::sleep_for(std::chrono::milliseconds(50));
+					continue;
+				}
 
 				bool numeric = !holder.empty();
 				for (char c : holder)
@@ -435,16 +470,19 @@ namespace Utils
 					// two steps after its re-read, took the first's new lock
 					// with it (PL-041).
 					removeIfStill(mPath, holder);
-					continue;   // retry at once: there is nothing to wait for
+					if (expired())
+						return false;
+					// Retry at once, there is nothing to wait for -- unless the
+					// remove did not take (a directory that will not let go of
+					// the name), which a pause keeps from spinning.
+					bool still = false;
+					if (lockHolder(readText(mPath, &still)) == holder && still)
+						std::this_thread::sleep_for(std::chrono::milliseconds(50));
+					continue;
 				}
 
-				const long elapsed = (long) std::chrono::duration_cast<std::chrono::milliseconds>(
-					std::chrono::steady_clock::now() - started).count();
-				if (elapsed >= timeoutMs)
-				{
-					::unlink(staging.c_str());
+				if (expired())
 					return false;
-				}
 				std::this_thread::sleep_for(std::chrono::milliseconds(50));
 			}
 #endif
