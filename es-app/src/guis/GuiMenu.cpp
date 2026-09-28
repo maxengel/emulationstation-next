@@ -6929,7 +6929,12 @@ static void cloudRemoteShowForm(Window* window, const CloudBackend& backend,
 					{
 						std::string out = Utils::Platform::GetShOutput(
 							"timeout 60 /usr/bin/cloud_remote " + cmd + " 2>&1");
-						LOG(LogInfo) << "cloud_remote create: " << out;
+						// Masked: the command carries the form's pass=, key= and
+						// token= values, and a script that echoes its arguments
+						// in a usage or an error would put them in es_log.txt
+						// (#308 8-es claude F-ES-21; fork #177's rule, every
+						// logged command line).
+						LOG(LogInfo) << "cloud_remote create: " << Utils::String::maskSecrets(out);
 						return out;
 					},
 					[window, s](std::string out)
