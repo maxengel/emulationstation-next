@@ -509,6 +509,69 @@ TEST_CASE("top-up: a failure reads its why only from this run's stamp")
 	CHECK(card->text.front() == "COULDN'T FINISH - SOMETHING WENT WRONG");
 }
 
+// Audit of the fix round PL-031 (the interface's half of stream D's
+// ctl): added=unknown is a count nobody measured, where the ctl used to
+// write the cache count. The card said "5 MORE GAMES ARE READY." from the
+// cached= beside it; it says how many are ready, which is known, or
+// COMPLETED alone when that is not either -- never a count of new games.
+TEST_CASE("top-up: added=unknown says how many games are ready, never a count of new ones")
+{
+	fake.reset();
+	fake.ctl = [](bool)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+		std::lock_guard<std::mutex> g(fake.m);
+		fake.scan = CloudText::parseScanStamp(std::to_string((long long) time(nullptr))
+			+ " 0 topup cached=5 skipped=0 ready=14 limit=0 indexed=0 errors=0 added=unknown");
+		return 0;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { auto c = cardsNow(); return !c.empty() && c.back()->closed; }, 30));
+	auto* card = cardsNow().back();
+	INFO("text: " << join(card->text) << "  action: " << join(card->action));
+	CHECK(card->text.front() == "COMPLETED");
+	REQUIRE(!card->action.empty());
+	CHECK(card->action.front() == "14 GAMES ARE READY.");
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));   // the watcher lets go
+
+	// With no ready total either, the card says COMPLETED and claims
+	// nothing -- not EVERYTHING'S UP TO DATE, which a run that cached five
+	// games and could not count them cannot know.
+	fake.reset();
+	fake.ctl = [](bool)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+		std::lock_guard<std::mutex> g(fake.m);
+		fake.scan = CloudText::parseScanStamp(std::to_string((long long) time(nullptr))
+			+ " 0 topup cached=5 skipped=0 ready=0 limit=0 indexed=0 errors=0 added=unknown");
+		return 0;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { auto c = cardsNow(); return !c.empty() && c.back()->closed; }, 30));
+	card = cardsNow().back();
+	INFO("text: " << join(card->text) << "  action: " << join(card->action));
+	CHECK(card->text.front() == "COMPLETED");
+	CHECK(card->action.empty());
+
+	// A stamp with a number keeps it (an older ctl's, or one that measured).
+	fake.reset();
+	fake.ctl = [](bool)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+		std::lock_guard<std::mutex> g(fake.m);
+		fake.scan = CloudText::parseScanStamp(std::to_string((long long) time(nullptr))
+			+ " 0 topup cached=5 skipped=0 ready=14 limit=0 added=2");
+		return 0;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { auto c = cardsNow(); return !c.empty() && c.back()->closed; }, 30));
+	card = cardsNow().back();
+	INFO("text: " << join(card->text) << "  action: " << join(card->action));
+	REQUIRE(!card->action.empty());
+	CHECK(card->action.front() == "2 MORE GAMES ARE READY.");
+	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+}
+
 // A top-up's own failure carries no instruction to run a scan: the card's
 // action line already says it will try again.
 TEST_CASE("top-up: SOME_GAMES_NOT_SAVED says so without sending the player to a scan")

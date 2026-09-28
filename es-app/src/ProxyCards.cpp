@@ -336,19 +336,24 @@ namespace
 		std::vector<std::string> action;
 		std::string outcome;
 		const bool ok = rc == 0;
+		// Added is said only of games new to the store; a run that re-read
+		// what was there says how many are ready (#298, the maintainer:
+		// "if it's just doing an update, it can say X number of games
+		// ready for offline play"). A stamp an older ctl wrote has no
+		// added=, and cached stood for it. added=unknown is a count nobody
+		// measured (the store could not be read, PL-031): no count of new
+		// games is said, only how many are ready -- and with no ready total
+		// either, COMPLETED alone, since EVERYTHING'S UP TO DATE would claim
+		// what nobody counted.
+		// A run with nothing new writes no stamp (the row's line keeps the
+		// last scan that said something), so its count is the ready file's;
+		// a stamp from before this run says nothing about it.
+		const bool addedUnknown = stamped && s.added == CloudText::ScanStamp::AddedUnknown;
+		const int added = !stamped || addedUnknown ? 0 : s.added >= 0 ? s.added : s.cached;
+		const int ready = stamped ? s.ready : OfflineAchievements::readyCount();
 		if (ok)
 		{
 			outcome = _("COMPLETED");
-			// Added is said only of games new to the store; a run that re-read
-			// what was there says how many are ready (#298, the maintainer:
-			// "if it's just doing an update, it can say X number of games
-			// ready for offline play"). A stamp an older ctl wrote has no
-			// added=, and cached stood for it.
-			// A run with nothing new writes no stamp (the row's line keeps the
-			// last scan that said something), so its count is the ready file's;
-			// a stamp from before this run says nothing about it.
-			const int added = stamped ? (s.added >= 0 ? s.added : s.cached) : 0;
-			const int ready = stamped ? s.ready : OfflineAchievements::readyCount();
 			// The title says RETROACHIEVEMENTS (OFFLINE); the line says only
 			// what changed (D-UI-107, the maintainer's rule for every card).
 			if (added == 1)
@@ -359,7 +364,7 @@ namespace
 				action.push_back(_("1 GAME IS READY."));
 			else if (ready > 1)
 				action.push_back(Utils::String::format(_("%d GAMES ARE READY.").c_str(), ready));
-			else
+			else if (!addedUnknown)
 				action.push_back(_("EVERYTHING'S UP TO DATE."));
 		}
 		else if (stoppedForGame)
@@ -377,8 +382,8 @@ namespace
 		card->updateText(CloudText::outcomeCandidates(outcome), action);
 		card->updatePercent(ok ? 100 : -1);
 		LOG(LogInfo) << "ProxyCards: the top-up card ended rc " << rc << " cached " << s.cached << " added " << s.added << " ready " << s.ready
-			<< " says added " << (ok && stamped ? (s.added >= 0 ? s.added : s.cached) : 0)
-			<< " ready " << (ok && stamped ? s.ready : OfflineAchievements::readyCount())
+			<< " says added " << (!ok ? 0 : added) << (addedUnknown ? " (the ctl could not count them)" : "")
+			<< " ready " << (!ok ? 0 : ready)
 			<< (stoppedForGame ? " (stopped for a game)" : "");
 		std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 		card->close();

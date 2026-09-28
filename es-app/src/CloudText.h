@@ -467,7 +467,8 @@ namespace CloudText
 		bool topup = false;   // the automatic run, not one the player pressed
 		int cached = 0;       // games this run cached, new and re-read alike
 		int added = -1;       // games new to the store this run (the ctl's added=, fork #298); -1 when the
-		                      // stamp does not say -- an older ctl's, where cached stood for it
+		                      // stamp does not say -- an older ctl's, where cached stood for it;
+		                      // AddedUnknown when the ctl said added=unknown (PL-031, below)
 		int skipped = 0;      // ROMs RetroAchievements does not know
 		int ready = 0;        // games cached in all, after the run
 		bool limit = false;   // the proxy's cap was reached
@@ -475,6 +476,12 @@ namespace CloudText
 		int errors = 0;       // games a fetch failed for: what makes rc 1 with why=SOME_GAMES_NOT_SAVED
 		bool truncated = false; // the walk stopped at the client's cap of files; a second run reaches the rest
 		std::string why;
+		// added=unknown (audit of the fix round PL-031): the ctl could not
+		// read the store before or after a run that cached games, so how
+		// many were new was never counted. Not -1: that is an older ctl's
+		// stamp, where cached stood for the count; this one has no count
+		// to stand in, and the card says how many are ready instead.
+		static constexpr int AddedUnknown = -2;   // constexpr: inline, so a use by reference links
 	};
 	ScanStamp parseScanStamp(const std::string& text);
 

@@ -1130,6 +1130,13 @@ CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 				stamp.why = value;
 			continue;
 		}
+		// The ctl's word for a count it could not measure (PL-031): an
+		// answer of its own, where any other non-number says nothing.
+		if (key == "added" && value == "unknown")
+		{
+			stamp.added = ScanStamp::AddedUnknown;
+			continue;
+		}
 		long long n = 0;
 		if (!number(value, n) || n > 1000000)
 			continue;
