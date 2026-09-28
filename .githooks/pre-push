@@ -108,7 +108,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #    One exemption, as narrow as it reads: a line in a unit test that hands
   #    its string to maskSecrets( is a fixture for the credential mask itself
   #    (fork #177) and is credential-shaped on purpose; anything else in a
-  #    test file is still scanned.
+  #    test file is still scanned. The second exemption is this guard's own
+  #    test: .githooks/pre-push-test builds a scratch repository around a
+  #    FAKE= value that is credential-shaped on purpose, and a guard that
+  #    refuses its own proof cannot be pushed (2026-09-28, #307 PL-078).
   #    Every class of change that can add a line is read -- a rename with a
   #    line added is R, not M, and --diff-filter=AM let it through unread
   #    (F-PB-12). And a list of commits that cannot be made is a refusal,
@@ -125,6 +128,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
            /^\+\+\+ / { next }
            /^\+/ { print c ":" f ": " $0 }' \
     | grep -v -E '^[0-9a-f]+:es-app/tests/unit/[A-Za-z0-9]+Tests\.cpp: \+.*maskSecrets\(' \
+    | grep -v -E '^[0-9a-f]+:\.githooks/pre-push-test: \+FAKE="' \
     | grep -E "${SECRET_PATTERNS}" | sed -E "s/(${SECRET_PATTERNS})/[REDACTED]/g" | head -5 || true)"
   if [ -n "${hits}" ]; then
     echo "pre-push: ${where}: a commit in this push adds a credential-shaped line:" >&2
