@@ -5288,7 +5288,7 @@ static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured,
 // meant knowing which half of the split you wanted before you could start.
 // Direction first, then what moves -- the split the system actually keeps is
 // the one the player is shown.
-void GuiMenu::openCloud(Window* window)
+void GuiMenu::openCloud(Window* window, bool onFolderRow)
 {
 	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 	auto s = new GuiSettings(window, _("CLOUD"));
@@ -5413,6 +5413,10 @@ void GuiMenu::openCloud(Window* window)
 		// built with until it was reopened (#308 8-es claude F-ES-27). The
 		// editor calls it only when the script took the folder; the new page
 		// goes up before the old one closes, so nothing flashes between.
+		// And it opens on this row (audit of the fixes, G-E2-O1; D-UI-042):
+		// the rebuilt page opened on its first row with this one scrolled
+		// off the foot, so the player could not see the confirmation, and
+		// the next A opened BACK UP TO THE CLOUD instead of the editor.
 		const std::string syncpath = info["SAVES_REMOTE"];
 		// One line under the row (D-UI-023): the sentence around the path took
 		// 580 of the 620 px a 640x480 description has, so any real path
@@ -5421,8 +5425,8 @@ void GuiMenu::openCloud(Window* window)
 		// PASSWORD row).
 		s->addWithDescription(_("CHANGE CLOUD FOLDER"),
 			_("YOUR SAVES ARE IN:") + " " + syncpath,
-			nullptr, [window, s, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, [window, s] { GuiMenu::openCloud(window); s->close(); }); },
-			"", false, true);
+			nullptr, [window, s, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, [window, s] { GuiMenu::openCloud(window, true); s->close(); }); },
+			"", onFolderRow, true);
 	}
 	// Moved here from NETWORK SETTINGS. Offered, never automatic: the first
 	// layout put everything under /GAMES with backups nested inside saves, and
