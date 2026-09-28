@@ -93,10 +93,26 @@ static std::atomic<bool> sPlayThroughSend{ false };
 // whose cloud_capture is running, 0 when none. The launch waits for it, as
 // it waits for a sync or a transfer to be gone: a game launched under it
 // writes a save the capture is hashing, and the manifest records a hash the
-// file no longer has. A capture a launch gave up waiting for is not waited
-// for again.
+// file no longer has.
 static std::atomic<unsigned> sCaptureInFlight{ 0 };
-static std::atomic<unsigned> sCaptureGivenUp{ 0 };
+// When it started (steady clock, ms), for the one case the gate lets a
+// launch go over it: a capture so old it is hung, not slow.
+static std::atomic<long long> sCaptureStartedMs{ 0 };
+// The capture a launch is waiting on behind the spinner: its exit sync is
+// the gate's to decide (a launch that goes owns it; one that is refused
+// leaves it to the capture), so the capture's own post leaves it alone.
+static std::atomic<unsigned> sCaptureWaitedOn{ 0 };
+static const long CaptureHungSeconds = 120;
+
+static long long steadyMs()
+{
+	return (long long) std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static long captureAgeSeconds()
+{
+	return (long) ((steadyMs() - sCaptureStartedMs.load()) / 1000);
+}
 
 FileData::FileData(FileType type, const std::string& path, SystemData* system)
 	: mPath(path), mType(type), mSystem(system), mParent(nullptr), mDisplayName(nullptr), mMetadata(type == GAME ? GAME_METADATA : FOLDER_METADATA) // metadata is REALLY set in the constructor!
@@ -829,17 +845,34 @@ static void launchWhenGone(Window* window, FileData* game, const LaunchGameOptio
 // (D-UI-095): the launch waits for it. Most captures are done within a
 // moment, and a moment is waited for here, on this thread, so a spinner
 // does not flash (es-ui-style-guide.md, Waiting). A longer one is waited
-// for behind the spinner, bounded, and this launch then owns the exit sync
-// -- the task the capture posts sees the generation move and leaves the
-// sync to this game's exit, as it did when a launch came in between -- so
-// the player is not asked about a sync that started while they waited.
-// Past the bound the game starts anyway: a manifest one hash behind is
-// corrected at the next capture, and a launch is not held for bookkeeping.
+// for behind the spinner, bounded.
+//
+// At the bound the launch is refused and says why (audit of the fixes, E2
+// gpt G-E2-03): it used to start anyway, under the capture it was waiting
+// on, and every later launch skipped the same capture -- the overlap the
+// gate exists to prevent, only later. A capture is local hashing of one
+// game's saves and ends in a second or two; one still running after ten
+// is stalled, and the next press waits for it again. Only a capture so old
+// it is hung (CaptureHungSeconds) stops holding the device, with a warning:
+// a player kept from every game for bookkeeping is the worse failure.
+//
+// The exit sync is the gate's to decide while a launch waits (claude
+// G-E2-06): a launch that goes owns it -- the generation moves at the
+// moment it goes, so the capture's post leaves the sync to that game's
+// exit and the player is not asked about a sync that started while they
+// waited -- and a launch refused at the bound leaves it to the capture,
+// whose post runs it when the capture ends. The generation used to move as
+// the spinner went up, before the launch was certain.
 static bool captureGate(Window* window, FileData* game, const LaunchGameOptions& options)
 {
 	const unsigned capturing = sCaptureInFlight.load();
-	if (capturing == 0 || capturing == sCaptureGivenUp.load())
+	if (capturing == 0)
 		return true;
+	if (captureAgeSeconds() >= CaptureHungSeconds)
+	{
+		LOG(LogWarning) << "launch: the last game's capture has run " << captureAgeSeconds() << " s and is taken as hung; the game starts";
+		return true;
+	}
 
 	const auto started = std::chrono::steady_clock::now();
 	while (sCaptureInFlight.load() == capturing && std::chrono::steady_clock::now() - started < std::chrono::milliseconds(300))
@@ -851,7 +884,7 @@ static bool captureGate(Window* window, FileData* game, const LaunchGameOptions&
 	}
 
 	LOG(LogInfo) << "launch: waiting for the last game's saves to be recorded";
-	++sExitGeneration;
+	sCaptureWaitedOn = capturing;
 	window->pushGui(new GuiLoading<bool>(window, _("RECORDING YOUR LAST GAME'S SAVES..."),
 		[capturing](IGuiLoadingHandler*)
 		{
@@ -859,16 +892,26 @@ static bool captureGate(Window* window, FileData* game, const LaunchGameOptions&
 			while (sCaptureInFlight.load() == capturing)
 			{
 				if (std::chrono::steady_clock::now() - waited >= std::chrono::seconds(10))
-				{
-					LOG(LogWarning) << "launch: the last game's capture did not finish within 10 s; the game starts anyway";
-					sCaptureGivenUp = capturing;
-					break;
-				}
+					return false;
 				std::this_thread::sleep_for(std::chrono::milliseconds(50));
 			}
 			return true;
 		},
-		[window, game, options](bool) { launchNow(window, game, options); }));
+		[window, game, options, capturing](bool)
+		{
+			// Decided by the capture itself, not the wait's answer: one that
+			// ended as the bound came has ended.
+			if (sCaptureInFlight.load() == capturing)
+			{
+				sCaptureWaitedOn = 0;
+				LOG(LogWarning) << "launch: the last game's capture did not finish within 10 s; the game was not started";
+				window->pushGui(new GuiMsgBox(window, _("YOUR LAST GAME'S SAVES ARE STILL BEING RECORDED. TRY AGAIN IN A MOMENT.")));
+				return;
+			}
+			++sExitGeneration;
+			sCaptureWaitedOn = 0;
+			launchNow(window, game, options);
+		}));
 	return false;
 }
 
@@ -1195,7 +1238,10 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 		&& Utils::FileSystem::exists("/usr/bin/cloud_backup");
 	const unsigned generation = ++sExitGeneration;
 	if (!capture.empty())
+	{
+		sCaptureStartedMs = steadyMs();
 		sCaptureInFlight = generation;   // before the thread, so a launch on the next frame sees it
+	}
 	std::thread([window, capture, exitSync, generation]
 	{
 		bool captureFailed = false;
@@ -1226,6 +1272,14 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 			if (generation != sExitGeneration.load() || mRunningGame != nullptr)
 			{
 				LOG(LogInfo) << "exit: another game was launched since; its exit syncs";
+				return;
+			}
+			// A launch is waiting on this capture behind the spinner: if it
+			// goes it owns the sync, as above; it can only be refused while
+			// the capture runs, and this capture has ended (captureGate).
+			if (sCaptureWaitedOn.load() == generation)
+			{
+				LOG(LogInfo) << "exit: a launch waited for this capture; its game's exit syncs";
 				return;
 			}
 			if (exitSync && !ThreadedCloudSync::isRunning())

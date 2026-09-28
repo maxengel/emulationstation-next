@@ -39,7 +39,9 @@ public:
 
         static void updateGameLists(Window* window, bool confirm = true);
         static void editKeyboardMappings(Window *window, IKeyboardMapContainer* mapping, bool editable);
-        static void openCloud(Window* window);
+        // onFolderRow: open with the cursor on CHANGE CLOUD FOLDER -- the
+        // page a changed folder rebuilds, which keeps the player's place.
+        static void openCloud(Window* window, bool onFolderRow = false);
 	static void openCloudSetup(Window* window);
 	// The cloud folder editor (CHANGE CLOUD FOLDER), for a dialog that
 	// found the configured folder missing beside one with a near name (#127).

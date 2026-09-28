@@ -4765,11 +4765,27 @@ static void cloudOpenTransfer(Window* window, bool backup)
 					if (rest)
 					{
 						Utils::FileSystem::createDirectory(Utils::FileSystem::getParent(record));
-						// A record that could not be written leaves the start with a
-						// marker and no record: it then offers everything, and its
-						// prompt names everything, so nothing runs that it did not say.
-						if (!Utils::AtomicFile::writeText(record, JourneyTiers::record(wantSaves, wantContent, wantMedia)))
+						// This restore's ticks, or no record at all: an earlier
+						// attempt's record at the same path was read as this one's
+						// when the write failed (audit of the fixes, E2 gpt G-E2-01).
+						// No record leaves the start with a marker and nothing to
+						// read: it offers everything and its prompt names
+						// everything. A record that can be neither replaced nor
+						// removed stops the restore here, before anything changes.
+						const JourneyTiers::Replaced replaced = JourneyTiers::replaceRecord(
+							JourneyTiers::record(wantSaves, wantContent, wantMedia),
+							[&record](const std::string& text) { return Utils::AtomicFile::writeText(record, text); },
+							[&record]() { return Utils::FileSystem::removeFile(record); },
+							[&record]() { return Utils::FileSystem::exists(record, false); });
+						if (replaced == JourneyTiers::Replaced::NoRecord)
 							LOG(LogWarning) << "restore: the journey record could not be written to " << record << "; the start will offer everything";
+						else if (replaced == JourneyTiers::Replaced::OldRecordStands)
+						{
+							LOG(LogError) << "restore: an earlier journey record at " << record << " could be neither replaced nor removed; the restore was not started";
+							s->close();
+							window->pushGui(new GuiMsgBox(window, _("COULDN'T SAVE WHAT YOU TICKED, SO NOTHING WAS RESTORED."), _("OK")));
+							return;
+						}
 					}
 					else if (Utils::FileSystem::exists(record, false))
 						Utils::FileSystem::removeFile(record);
@@ -5272,7 +5288,7 @@ static void cloudAddTransferRow(GuiSettings* s, Window* window, bool configured,
 // meant knowing which half of the split you wanted before you could start.
 // Direction first, then what moves -- the split the system actually keeps is
 // the one the player is shown.
-void GuiMenu::openCloud(Window* window)
+void GuiMenu::openCloud(Window* window, bool onFolderRow)
 {
 	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 	auto s = new GuiSettings(window, _("CLOUD"));
@@ -5397,6 +5413,10 @@ void GuiMenu::openCloud(Window* window)
 		// built with until it was reopened (#308 8-es claude F-ES-27). The
 		// editor calls it only when the script took the folder; the new page
 		// goes up before the old one closes, so nothing flashes between.
+		// And it opens on this row (audit of the fixes, G-E2-O1; D-UI-042):
+		// the rebuilt page opened on its first row with this one scrolled
+		// off the foot, so the player could not see the confirmation, and
+		// the next A opened BACK UP TO THE CLOUD instead of the editor.
 		const std::string syncpath = info["SAVES_REMOTE"];
 		// One line under the row (D-UI-023): the sentence around the path took
 		// 580 of the 620 px a 640x480 description has, so any real path
@@ -5405,8 +5425,8 @@ void GuiMenu::openCloud(Window* window)
 		// PASSWORD row).
 		s->addWithDescription(_("CHANGE CLOUD FOLDER"),
 			_("YOUR SAVES ARE IN:") + " " + syncpath,
-			nullptr, [window, s, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, [window, s] { GuiMenu::openCloud(window); s->close(); }); },
-			"", false, true);
+			nullptr, [window, s, syncpath] { cloudSetupOpenSyncPathEditor(window, syncpath, [window, s] { GuiMenu::openCloud(window, true); s->close(); }); },
+			"", onFolderRow, true);
 	}
 	// Moved here from NETWORK SETTINGS. Offered, never automatic: the first
 	// layout put everything under /GAMES with backups nested inside saves, and
@@ -7737,11 +7757,16 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 			LOG(LogInfo) << "restore relink: reconnecting wifi to " << ssid;
 			networkApplyWifi(window, _("CONNECTING TO WI-FI"),
 				[ssid, key, country] { return ApiSystem::getInstance()->enableWifi(ssid, key, country); },
-				[window, reopen](bool ok)
+				[window, reopen, ssid](bool ok)
 				{
 					reopen();
+					// The picker's words for the same failure (GuiWifi::connect):
+					// WI-FI CONFIGURATION ERROR was upstream's, in a register
+					// a player does not speak (D-UI-031; audit of the fixes, E2
+					// claude G-E2-08).
 					if (!ok)
-						window->pushGui(new GuiMsgBox(window, _("WI-FI CONFIGURATION ERROR")));
+						window->pushGui(new GuiMsgBox(window,
+							Utils::String::format(_("COULDN'T CONNECT TO %s.").c_str(), ssid.c_str()) + "\n\n" + _("CHECK THE KEY AND TRY AGAIN.")));
 				});
 		});
 		window->pushGui(wifi);
@@ -9480,9 +9505,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 #endif
 				// This runs as the page closes, so the spinner and then the
 				// verdict appear over whatever the page returns to.
-				networkApplyWifi(window, _("CONNECTING TO WI-FI"), apply, [window](bool ok)
+				networkApplyWifi(window, _("CONNECTING TO WI-FI"), apply, [window, newSSID](bool ok)
 				{
-					window->pushGui(new GuiMsgBox(window, ok ? _("WI-FI ENABLED") : _("WI-FI CONFIGURATION ERROR")));
+					// The picker's words for a failure (G-E2-08), not upstream's
+					// WI-FI CONFIGURATION ERROR.
+					window->pushGui(new GuiMsgBox(window, ok ? _("WI-FI ENABLED")
+						: Utils::String::format(_("COULDN'T CONNECT TO %s.").c_str(), newSSID.c_str()) + "\n\n" + _("CHECK THE KEY AND TRY AGAIN.")));
 				});
 			}
 		}

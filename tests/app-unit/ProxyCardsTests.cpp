@@ -343,6 +343,48 @@ TEST_CASE("top-up: a run stopped for a game says SKIPPED - YOU STARTED A GAME")
 	CHECK(card->text.front() == "SKIPPED - YOU STARTED A GAME");
 }
 
+// Audit of the fixes, E2 claude G-E2-02 / gpt G-E2-04: STOP IT AND PLAY
+// over a top-up with a second request queued. The launch waits only for
+// the ctl to be gone (topUpRunning), and then starts its game; the watcher
+// waited for a game that was already running, found none yet -- the launch
+// was still on its way -- and started the queued run under it. The queued
+// run waits for the game the stop was for, to start and to end.
+TEST_CASE("top-up: a stop for a game holds the queued run until that game has come and gone")
+{
+	fake.reset();
+	fake.ctl = [](bool afterIndex)
+	{
+		if (!afterIndex)
+			while (!fake.stopSent)
+				std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		else
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+		return afterIndex ? 0 : 143;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { return !cardsNow().empty(); }, 10));
+	ProxyCards::topUp(&window, true);            // the index's request, queued
+	CHECK(ProxyCards::stopTopUp());               // STOP IT AND PLAY; the game has not started yet
+	REQUIRE(waitFor([] { return fake.ctlActive == false; }, 10));
+
+	// The stopped run's card has its five seconds; the launch is on its way.
+	std::this_thread::sleep_for(std::chrono::milliseconds(7500));
+	CHECK_MESSAGE(fake.ctlCalls.load() == 1, "the queued run started before the game the stop was for");
+
+	fake.gameRunning = true;                      // the game starts
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	CHECK(fake.ctlCalls.load() == 1);             // and nothing runs under it
+	fake.gameRunning = false;                     // it ends
+	REQUIRE(waitFor([] { return fake.ctlCalls.load() >= 2; }, 15));
+	{
+		std::lock_guard<std::mutex> g(fake.m);
+		REQUIRE(fake.ctlAfterIndex.size() == 2);
+		CHECK(fake.ctlAfterIndex[1] == true);
+	}
+	REQUIRE(waitFor([] { return openCards() == 0 && fake.ctlActive == false; }, 30));
+	std::this_thread::sleep_for(std::chrono::milliseconds(6000));   // the watcher lets go
+}
+
 // A failed run's why is this run's stamp's, or none: an old stamp's token
 // describes another run.
 TEST_CASE("top-up: a failure reads its why only from this run's stamp")

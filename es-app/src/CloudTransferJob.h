@@ -2,10 +2,13 @@
 #ifndef ES_APP_CLOUD_TRANSFER_JOB_H
 #define ES_APP_CLOUD_TRANSFER_JOB_H
 
+#include "CloudText.h"
+
 #include <atomic>
 #include <chrono>
 #include <ctime>
 #include <sys/types.h>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -78,6 +81,10 @@ public:
 	// inside are restamped with the player's own token. False when no run
 	// is in flight.
 	static bool stopByPlayer();
+	// Tests only: run inside a stop between its look at whether the run
+	// has finished and its marking the run stopped -- the seam audit G-E2-05
+	// named. Empty, and never set, in the application.
+	static std::function<void()> testPauseInStop;
 
 	const std::string& command() const { return mCommand; }
 	const std::string& title() const { return mTitle; }
@@ -176,7 +183,12 @@ private:
 	// ticked only while a page was up read 0:05 after ten minutes; the
 	// run's own clock is right in either design.
 	std::chrono::steady_clock::time_point mStarted;
-	time_t mStartedAt;   // wall clock, to tell a stamp this run wrote from an older one
+	time_t mStartedAt;   // wall clock, for a stamp the snapshot below cannot place
+	// The script stamps as they were before the command ran
+	// (ThreadedCloudSync::readStamps): a stop restamps only the files
+	// written since, not what the clock calls this run's (orchestrator
+	// finding G-E2-O2; E1's G-E1-04 on the card, 54d5699b2).
+	std::vector<CloudText::StampText> mStampsBefore;
 
 	// Stopped for a game or by the player: the scripts' trap stamped each
 	// part it was inside with 130 and no token; say what happened in their

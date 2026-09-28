@@ -1574,3 +1574,34 @@ TEST_CASE("a match's done page: what it removed, nothing about the cloud having 
 	// And the refusal it answers is a sentence the page can translate.
 	CHECK(isKnownWhy("SOMETHING CHANGED SINCE YOU CHECKED"));
 }
+
+// Audit of the fixes (#307), E2 claude G-E2-08(c): the labels
+// EmulationStation composes for its own parts reach the page as raw English
+// (">>> unit"/">>> tier"), and the page named them in the player's language
+// only for SETTINGS and SAVES. Every label a composer prints is listed, as
+// every why a script prints is (the emitter table above).
+TEST_CASE("the page's item names: every label EmulationStation composes has its translation")
+{
+	struct Label { const char* label; const char* from; };
+	static const Label labels[] = {
+		{ "SETTINGS", "GuiMenu.cpp cloudOpenTransfer add(\"SETTINGS\"), the scripts' >>> unit SETTINGS||" },
+		{ "SAVES", "GuiMenu.cpp cloudOpenTransfer add(\"SAVES\"), the scripts' >>> unit SAVES||; JourneyTiers.h" },
+		{ "ROMS AND BIOS", "GuiMenu.cpp cloudOpenTransfer; JourneyTiers.h" },
+		{ "GAME CONTENT", "GuiMenu.cpp cloudOpenTransfer; JourneyTiers.h" },
+		{ "ROMS, BIOS, AND GAME CONTENT", "GuiMenu.cpp cloudOpenTransfer; JourneyTiers.h" },
+		{ "RESTORING SAVES", "main.cpp the startup sync; GuiMenu.cpp SYNC SAVES; JourneyTiers.h" },
+		{ "BACKING UP SAVES", "main.cpp the startup sync; GuiMenu.cpp SYNC SAVES" },
+		{ "RESTORING ROMS AND BIOS", "JourneyTiers.h, an earlier build's marker" },
+	};
+	for (auto& l : labels)
+	{
+		INFO(l.from << "  ->  " << l.label);
+		CHECK(isKnownUnitLabel(l.label));
+		CHECK(unitLabel(l.label) == l.label);   // the unit build has no gettext: the English back
+	}
+	for (auto& pair : unitLabels())
+		CHECK(pair.first == pair.second);
+	// A system's folder is shown as it came, upper-cased.
+	CHECK(unitLabel("snes") == "SNES");
+	CHECK_FALSE(isKnownUnitLabel("SNES"));
+}

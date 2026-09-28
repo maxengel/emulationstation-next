@@ -122,6 +122,19 @@ namespace WifiText
 	enum class JoinFailure { ServiceNotAnswering, MayBeKey };
 	JoinFailure joinFailure(int exitCode);
 
+	// wifictl join's answer, as ApiSystem::joinWifiNetwork gives it: the
+	// exit code (0 joined; 1 not joined; 2 NetworkManager not answering;
+	// 124 the timeout's bound), in a type that does not turn into a bool.
+	// The call returned bool, true for joined, until #308 F-WF-03/06, and 0
+	// means joined now: a caller left testing it as a truth value would
+	// compile and read every join backwards (audit of the fixes, E2 claude
+	// G-E2-01). This one does not compile.
+	struct JoinAnswer
+	{
+		int code = 1;
+		bool joined() const { return code == 0; }
+	};
+
 	// What `wifictl forget` printed: "forgotten" when the profile went, then
 	// "disconnected" on a second line when it was the one in use. A
 	// "disconnected" with no "forgotten" before it is not a forget that

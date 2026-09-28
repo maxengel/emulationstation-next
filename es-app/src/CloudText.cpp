@@ -1039,6 +1039,40 @@ std::string CloudText::matchRecovery()
 	return _("TRY AGAIN: MATCH THIS DEVICE TO THE CLOUD");
 }
 
+// The composers' labels (the case in CloudTextTests lists where each is
+// printed). The page knew SETTINGS and SAVES alone, and a French page named
+// its other parts in English (audit of the fixes, E2 claude G-E2-08).
+std::vector<std::pair<std::string, std::string>> CloudText::unitLabels()
+{
+	return {
+		{ "SETTINGS", _("SETTINGS") },
+		{ "SAVES", _("SAVES") },
+		{ "ROMS AND BIOS", _("ROMS AND BIOS") },
+		{ "GAME CONTENT", _("GAME CONTENT") },
+		{ "ROMS, BIOS, AND GAME CONTENT", _("ROMS, BIOS, AND GAME CONTENT") },
+		{ "RESTORING SAVES", _("RESTORING SAVES") },
+		{ "BACKING UP SAVES", _("BACKING UP SAVES") },
+		{ "RESTORING ROMS AND BIOS", _("RESTORING ROMS AND BIOS") },
+	};
+}
+
+std::string CloudText::unitLabel(const std::string& label)
+{
+	const std::string upper = Utils::String::toUpper(label);
+	for (auto& l : unitLabels())
+		if (l.first == upper)
+			return l.second;
+	return upper;
+}
+
+bool CloudText::isKnownUnitLabel(const std::string& label)
+{
+	for (auto& l : unitLabels())
+		if (l.first == label)
+			return true;
+	return false;
+}
+
 CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 {
 	ScanStamp stamp;

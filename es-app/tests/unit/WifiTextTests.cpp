@@ -9,6 +9,7 @@
 #include "WifiText.h"
 
 #include <string>
+#include <type_traits>
 #include <vector>
 
 using namespace WifiText;
@@ -271,4 +272,19 @@ TEST_CASE("the connected row joins by the profile that is up, not by its SSID (#
 	REQUIRE(unknown.size() == 1);
 	CHECK(unknown[0].profile.empty());
 	CHECK_FALSE(unknown[0].saved);
+}
+
+// Audit of the fixes (#307), E2 claude G-E2-01: joinWifiNetwork returned
+// bool (true = joined) and returns the exit code now (0 = joined), so a
+// caller left testing it as a truth value compiles and reads every join
+// backwards. The answer is a type that does not turn into a bool.
+TEST_CASE("a join's answer is not a truth value (#308 F-WF-03/06; audit G-E2-01)")
+{
+	static_assert(!std::is_convertible<JoinAnswer, bool>::value, "a join's answer must not read as a truth value");
+	static_assert(!std::is_constructible<bool, JoinAnswer>::value, "nor be cast to one");
+	CHECK(JoinAnswer{ 0 }.joined());
+	CHECK_FALSE(JoinAnswer{ 1 }.joined());
+	CHECK_FALSE(JoinAnswer{ 2 }.joined());
+	CHECK_FALSE(JoinAnswer().joined());
+	CHECK(joinFailure(JoinAnswer{ 2 }.code) == JoinFailure::ServiceNotAnswering);
 }

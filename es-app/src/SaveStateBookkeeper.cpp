@@ -6,7 +6,14 @@
 #include "utils/FileSystemUtil.h"
 #include "utils/StringUtil.h"
 
+#include <atomic>
+#include <cerrno>
 #include <chrono>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -91,10 +98,74 @@ namespace
 		}
 	}
 
+	// The transfer lock, taken for the deletion (gpt's coverage note on
+	// PL-068, audit of the fixes, E2): transferGone asks whether the lock
+	// is held and the deletion followed, so a transfer that started between
+	// the answer and the deletion ran beside it. Held, the lock turns the
+	// question and the act into one: a transfer that starts meanwhile finds
+	// it taken, and the scripts give a busy lock a second -- longer than a
+	// retire and an unlink. Exclusive and non-blocking, as the scripts take
+	// it; created when no transfer has made it yet. Released when this goes.
+	std::atomic<bool> gHoldsTransferLock{ false };
+
+	struct TransferLock
+	{
+		int fd = -1;
+		bool take()
+		{
+#if defined(_WIN32)
+			return true;   // no transfer scripts, no lock (isFlockHeld's own answer there)
+#else
+			fd = ::open(CLOUD_SYNC_LOCK_PATH, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+			if (fd < 0)
+				return false;
+			int r;
+			do
+				r = ::flock(fd, LOCK_EX | LOCK_NB);
+			while (r != 0 && errno == EINTR);
+			if (r == 0)
+			{
+				gHoldsTransferLock = true;
+				return true;
+			}
+			::close(fd);
+			fd = -1;
+			return false;
+#endif
+		}
+		~TransferLock()
+		{
+#if !defined(_WIN32)
+			if (fd >= 0)
+			{
+				gHoldsTransferLock = false;
+				::close(fd);   // and the lock with it
+			}
+#endif
+		}
+	};
+
 	void runDelete(Worker* w, const SaveStateJob& job)
 	{
-		if (!transferGone(w, job))
-			return;
+		// Asked, then taken: a transfer that took the lock between the two
+		// sends the deletion back to waiting for it; a lock that cannot be
+		// taken at all fails closed, as isFlockHeld does -- it waits.
+		TransferLock held;
+		for (;;)
+		{
+			if (!transferGone(w, job))
+				return;
+			if (held.take())
+				break;
+			LOG(LogInfo) << "save state deletion waits: the transfer lock was taken as the deletion began (" << job.stateFile << ")";
+			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+			std::unique_lock<std::mutex> lock(w->mutex);
+			if (w->stop)
+			{
+				LOG(LogWarning) << "save state deletion not made at exit: the transfer lock could not be taken; " << job.stateFile << " stays";
+				return;
+			}
+		}
 
 		// Record the deletion before the file goes (#21 R3, D-CLOUD-053): the
 		// next pass then propagates a decided deletion instead of asking about
@@ -230,6 +301,11 @@ bool SaveStateBookkeeper::isPending(const std::string& stateFile)
 		return false;
 	std::lock_guard<std::mutex> lock(w->mutex);
 	return w->queue.isPending(stateFile);
+}
+
+bool SaveStateBookkeeper::holdsTransferLock()
+{
+	return gHoldsTransferLock;
 }
 
 unsigned SaveStateBookkeeper::completed()

@@ -43,10 +43,11 @@ namespace JourneyTiers
 			+ "media=" + (media ? "1" : "0") + "\n";
 	}
 
-	// known only when the first line says journey-tiers=1: anything else --
-	// no file, an empty one, a later format -- is not this build's record,
-	// and the continuation falls back to the one the marker always meant.
-	// Keys this build does not know are passed over.
+	// known only when the first line says journey-tiers=1 and the three
+	// tiers follow, each 0 or 1: anything else -- no file, an empty one, one
+	// cut short, a later format -- is not this build's record, and the
+	// continuation falls back to the one the marker always meant. Keys this
+	// build does not know are passed over.
 	inline Tiers parse(const std::string& text)
 	{
 		Tiers t;
@@ -61,14 +62,59 @@ namespace JourneyTiers
 			lines.push_back(line);
 		if (lines.empty() || lines[0] != "journey-tiers=1")
 			return t;
-		t.known = true;
+		// Whole, or not known (audit of the fixes, E2 gpt G-E2-02): all
+		// three tiers there, each 0 or 1. A record cut short after its
+		// first line read as one naming nothing, and the start consumed the
+		// marker without offering anything; not known, it offers everything
+		// and says so -- what a marker with no record has always meant.
+		int seen[3] = { 0, 0, 0 };
+		bool* tier[3] = { &t.saves, &t.content, &t.media };
+		const char* key[3] = { "saves=", "content=", "media=" };
 		for (size_t i = 1; i < lines.size(); i++)
-		{
-			if (lines[i] == "saves=1")   t.saves = true;
-			if (lines[i] == "content=1") t.content = true;
-			if (lines[i] == "media=1")   t.media = true;
-		}
+			for (int k = 0; k < 3; k++)
+			{
+				const std::string prefix = key[k];
+				if (lines[i].compare(0, prefix.size(), prefix) != 0)
+					continue;
+				const std::string value = lines[i].substr(prefix.size());
+				if (value != "0" && value != "1")
+					return Tiers();
+				*tier[k] = value == "1";
+				seen[k]++;
+			}
+		if (seen[0] != 1 || seen[1] != 1 || seen[2] != 1)
+			return Tiers();
+		t.known = true;
 		return t;
+	}
+
+	// Writing the record for a new restore: what is at PATH afterwards.
+	//   Written          this restore's ticks
+	//   NoRecord         none -- the start offers everything, and its prompt
+	//                    names everything
+	//   OldRecordStands  an earlier attempt's record, which could be neither
+	//                    replaced nor removed: the restore must not start
+	// The file operations are handed in, so the rule has a case without a
+	// card to fail.
+	enum class Replaced { Written, NoRecord, OldRecordStands };
+	// (Audit of the fixes, E2 gpt G-E2-01: a write that failed used to be
+	// logged and passed over, and an earlier attempt's record at the same
+	// path was then read as this restore's.) The old record goes first; a
+	// write that fails then leaves none.
+	template <class Write, class Remove, class Exists>
+	Replaced replaceRecord(const std::string& text, Write write, Remove remove, Exists exists)
+	{
+		if (exists())
+			remove();
+		if (exists())
+			return Replaced::OldRecordStands;
+		if (write(text))
+			return Replaced::Written;
+		// A write that failed part-way may have left something: gone, or
+		// the restore does not start.
+		if (exists() && !remove())
+			return Replaced::OldRecordStands;
+		return exists() ? Replaced::OldRecordStands : Replaced::NoRecord;
 	}
 
 	// The continuation a journey marker offers: every part as its own tier,

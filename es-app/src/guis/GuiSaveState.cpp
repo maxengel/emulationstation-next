@@ -27,7 +27,10 @@ static std::string savesTreeBusy(const std::string& cardWords)
 {
 	if (ThreadedCloudSync::isRunning())
 		return cardWords;
-	if (Utils::AtomicFile::isFlockHeld("/var/run/cloud_sync.lock"))
+	// Not while it is this process's own: a deletion holds the lock for its
+	// moment (SaveStateBookkeeper, runDelete), and a press then is queued
+	// behind it, not refused as a transfer.
+	if (Utils::AtomicFile::isFlockHeld("/var/run/cloud_sync.lock") && !SaveStateBookkeeper::holdsTransferLock())
 		return _("A SYNC IS ALREADY RUNNING.") + std::string("\n\n") + _("WAIT FOR IT TO FINISH, THEN TRY AGAIN.");
 	return "";
 }

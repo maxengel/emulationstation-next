@@ -51,6 +51,16 @@ namespace
 	// the player's choice, said in the sync card's words for the same
 	// choice, not a failure (#308 1-raoffline F-RA-09 / F-RA-17).
 	static std::atomic<bool> sTopUpStoppedForGame{ false };
+	// And the queue waits for that game (audit of the fixes, E2 claude
+	// G-E2-02 / gpt G-E2-04): the launch waits only for the ctl to be gone,
+	// so when the stopped run's card ended no game was running yet -- the
+	// launch was on its way -- and the queued run started under it. Set by
+	// stopTopUp, taken by the watcher before its next run.
+	static std::atomic<bool> sTopUpHeldForLaunch{ false };
+	// How long the watcher waits for the launch a stop was for to become a
+	// running game: one that never does (a later question's KEEP WAITING)
+	// lets the queue go after this.
+	const int LaunchStartSeconds = 60;
 	// #305 (the maintainer: saves first, then the RetroAchievements work as
 	// one batch): at the link's return the owed saves sync goes first when
 	// one is owed, and the batch -- the send card, the top-up -- starts when
@@ -361,6 +371,21 @@ namespace
 	// game to end rather than start under it: the ctl reads the network and
 	// the store, and a player who chose STOP IT AND PLAY was told it would
 	// try again later, not the moment the game started.
+	// Before every run after the watcher's first: a stop for a game holds
+	// the queue until that game has started (or LaunchStartSeconds passed
+	// without it), and no run starts while a game has the screen.
+	void waitForTheGame()
+	{
+		if (sTopUpHeldForLaunch.exchange(false))
+		{
+			LOG(LogInfo) << "ProxyCards: the top-up was stopped for a game; the queued run waits for that game";
+			for (int i = 0; i < LaunchStartSeconds * 10 && FileData::GetRunningGame() == nullptr; i++)
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+		while (FileData::GetRunningGame() != nullptr)
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+
 	void topUpWatcher(Window* window)
 	{
 		bool first = true;
@@ -374,17 +399,26 @@ namespace
 				// the flag still up and left itself here: take it, unless a
 				// watcher it started has taken the flag first.
 				if (sTopUpWanted.load() == 0 || sTopUpRunning.exchange(true))
+				{
+					// Nothing queued behind the stop: the hold was for no run,
+					// and the next watcher's second run is not this game's.
+					sTopUpHeldForLaunch = false;
 					return;
+				}
 				continue;
 			}
-			if (!first)
-				while (FileData::GetRunningGame() != nullptr)
-					std::this_thread::sleep_for(std::chrono::seconds(1));
-			first = false;
-			if (wanted & 2)
-				runTopUp(window, true);
-			if (wanted & 1)
-				runTopUp(window, false);
+			// The wait before each run, not once before both: a game that
+			// starts between the index's run and the link's would otherwise
+			// have the second start under it (gpt G-E2-04).
+			for (const int kind : { 2, 1 })
+			{
+				if (!(wanted & kind))
+					continue;
+				if (!first)
+					waitForTheGame();
+				first = false;
+				runTopUp(window, kind == 2);
+			}
 		}
 	}
 }
@@ -505,11 +539,13 @@ namespace ProxyCards
 
 	bool stopTopUp()
 	{
-		// Before the signal: the watcher reads it the moment the ctl exits.
+		// Before the signal: the watcher reads both the moment the ctl exits.
 		sTopUpStoppedForGame = true;
+		sTopUpHeldForLaunch = true;
 		if (OfflineAchievements::stopRun())
 			return true;
 		sTopUpStoppedForGame = false;
+		sTopUpHeldForLaunch = false;
 		return false;
 	}
 

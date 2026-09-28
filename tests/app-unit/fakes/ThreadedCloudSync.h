@@ -3,6 +3,8 @@
 // the stamps the code under test writes.
 #include <ctime>
 #include <string>
+#include <vector>
+#include "CloudText.h"
 class Window;
 class ThreadedCloudSync
 {
@@ -15,4 +17,7 @@ public:
 	static void writeStamp(const std::string& path, int rc, const std::string& token, const std::string& why);
 	static std::string whyForCode(int rc);
 	static void restampStoppedParts(const std::string& command, time_t runStarted, const std::string& token);
+	static void restampStoppedParts(const std::string& command, const std::vector<CloudText::StampText>& before,
+		time_t runStarted, const std::string& token);
+	static std::vector<CloudText::StampText> readStamps(const std::string& command);
 };

@@ -61,9 +61,10 @@ TEST_CASE("the display's turn is the core's, unless rotation is forbidden, plus 
 
 TEST_CASE("the record is one digit and reads back, and anything else reads as none")
 {
-	CHECK(CaptureRotationText::recordText(1) == "turns=1\nfrom=own-launch\n");
-	CHECK(CaptureRotationText::recordText(5) == "turns=1\nfrom=own-launch\n");
-	CHECK(CaptureRotationText::recordText(-1) == "turns=3\nfrom=own-launch\n");
+	CHECK(CaptureRotationText::recordText(1) == "turns=1\nfrom=checked-launch\n");
+	CHECK(CaptureRotationText::recordText(5) == "turns=1\nfrom=checked-launch\n");
+	CHECK(CaptureRotationText::recordText(-1) == "turns=3\nfrom=checked-launch\n");
+	CHECK(CaptureRotationText::parseRecord("turns=2\nfrom=checked-launch\n") == 2);
 	CHECK(CaptureRotationText::parseRecord("turns=2\nfrom=own-launch\n") == 2);
 	// longer than the three bytes readAllText's byte-order-mark check reads
 	CHECK(CaptureRotationText::recordText(0).size() > 3);
@@ -83,18 +84,18 @@ TEST_CASE("the record is one digit and reads back, and anything else reads as no
 TEST_CASE("a record says its turn came from the game's own launch, and one that does not say so is not trusted")
 {
 	CHECK(CaptureRotationText::recordFromOwnLaunch(CaptureRotationText::recordText(0)));
-	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=own-launch\n"));
-	CHECK(CaptureRotationText::recordFromOwnLaunch("from=own-launch\nturns=3\n"));
-	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\r\nfrom=own-launch\r\n"));
-	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\n  from=own-launch"));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=checked-launch\n"));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("from=checked-launch\nturns=3\n"));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\r\nfrom=checked-launch\r\n"));
+	CHECK(CaptureRotationText::recordFromOwnLaunch("turns=3\n  from=checked-launch"));
 	// the records every build before fork #288 wrote
 	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\n"));
 	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("1\n"));
 	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch(""));
 	// a line of its own, never a substring of a longer one
-	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\n# from=own-launch\n"));
-	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=own-launch-maybe\n"));
-	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=own-launchfrom=own-launch\n"));
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\n# from=checked-launch\n"));
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=checked-launch-maybe\n"));
+	CHECK_FALSE(CaptureRotationText::recordFromOwnLaunch("turns=3\nfrom=checked-launchfrom=checked-launch\n"));
 }
 
 TEST_CASE("the core's table gives a game its turn by ROM name, and nothing to the rest")
@@ -125,7 +126,7 @@ TEST_CASE("a session's reading is written only from a launch's log, and a zero o
 
 	// No banner: no launch in the log, nothing it says is this game's. The
 	// record a real session wrote stays -- it used to become turns=0 with
-	// from=own-launch, the line that makes it trusted over the table.
+	// the own-launch line, the line that makes it trusted over the table.
 	CHECK_FALSE(shouldRecord(noLaunch, record3, fold(turnsFromLog(noLaunch), ""), 0));
 	CHECK_FALSE(shouldRecord("", record3, fold(turnsFromLog(""), ""), 3));
 	// A launch whose core never asked is a real zero: it corrects a record.
@@ -140,4 +141,24 @@ TEST_CASE("a session's reading is written only from a launch's log, and a zero o
 	CHECK_FALSE(shouldRecord(launch, record3, 3, 0));
 	// A record from before the own-launch line: rewritten so it says so.
 	CHECK(shouldRecord(launch, "turns=3\n", 3, 0));
+}
+
+// Audit of the fixes (#307), E2 gpt G-E2-06: builds between fork #288 and
+// the checked reading (187ff9f1c, 190f62550) stamped from=own-launch on
+// records they read from a launch that failed (the previous game's log) or
+// a log with no launch in it (a 0 nobody read). Nothing can tell such a
+// record from a good one, so no own-launch record from those builds is
+// trusted: the core's table stands in until the game's next exit rewrites
+// it, as fork #288 did for the records before the line existed. The claim
+// this build writes is a new line, from=checked-launch.
+TEST_CASE("a record an earlier build stamped from its own launch is not trusted; the checked claim is")
+{
+	using namespace CaptureRotationText;
+	CHECK_FALSE(recordFromOwnLaunch("turns=3\nfrom=own-launch\n"));
+	CHECK(recordFromOwnLaunch(recordText(3)));
+	CHECK(recordText(1) == "turns=1\nfrom=checked-launch\n");
+	// A session that reads the same turn rewrites the old claim as the new.
+	const std::string launch = "[INFO] === Build =======================================\n[INFO] [Environ] SET_ROTATION: \"3\" (270 deg).\n";
+	CHECK(shouldRecord(launch, "turns=3\nfrom=own-launch\n", 3, 0));
+	CHECK_FALSE(shouldRecord(launch, recordText(3), 3, 0));
 }
