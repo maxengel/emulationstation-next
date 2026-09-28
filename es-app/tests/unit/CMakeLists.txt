@@ -101,6 +101,8 @@ target_include_directories(es-file-tests PRIVATE
 )
 find_package(Threads REQUIRED)
 target_link_libraries(es-file-tests PRIVATE Threads::Threads)
+# The tree whose sources a case reads (the PL-069 guard on ThreadedCloudSync).
+target_compile_definitions(es-file-tests PRIVATE ES_ROOT_DIR="${ES_ROOT}")
 set_target_properties(es-file-tests PROPERTIES
 	CXX_STANDARD 17
 	CXX_STANDARD_REQUIRED ON

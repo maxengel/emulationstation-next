@@ -20,11 +20,13 @@
 #include <cstring>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <dirent.h>
+#include <pthread.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -695,11 +697,24 @@ TEST_CASE("a thread that ends unjoined keeps its stack; a detached one gives it 
 	// with `delete this`, never joining, detaching or deleting the thread: a
 	// joinable thread that has ended keeps its stack mapping and its control
 	// block until somebody joins it, so every sync -- two a game -- left one
-	// behind for the life of the interface. The class needs a Window and
-	// cannot be built here; this is the pattern it used and the one it uses
-	// now, sequentially, as the syncs run. It also says what to measure on
-	// the VM: the task count does not move (the kernel reaps the thread
-	// either way); VmSize does, by a stack a sync.
+	// behind for the life of the interface. This is the pattern it used and
+	// the one it uses now, sequentially, as the syncs run; the case below
+	// holds ThreadedCloudSync itself to the second. It also says what to
+	// measure on the VM: the task count does not move (the kernel reaps the
+	// thread either way); VmSize does, by a stack a sync.
+	//
+	// The thresholds are this host's own stack size, not a number
+	// (audit of the fixes G-E1-07 gpt / G-E1-05 claude): glibc gives a new
+	// thread RLIMIT_STACK's size, 8 MiB on most hosts and 2 MiB where the
+	// limit is unlimited, and a fixed 4 MiB floor was one host's.
+	pthread_attr_t attr;
+	REQUIRE(pthread_attr_init(&attr) == 0);
+	size_t stack = 0;
+	REQUIRE(pthread_attr_getstacksize(&attr, &stack) == 0);
+	pthread_attr_destroy(&attr);
+	const long stackKiB = (long) (stack / 1024);
+	REQUIRE(stackKiB > 0);
+
 	const int tasksBefore = taskCount();
 	const long before = vmSizeKiB();
 	for (int i = 0; i < 20; i++)
@@ -724,10 +739,38 @@ TEST_CASE("a thread that ends unjoined keeps its stack; a detached one gives it 
 	}
 	const long detached = vmSizeKiB() - before2;
 
-	INFO("VmSize growth, 20 unjoined threads: " << leaked << " KiB; 20 detached: " << detached << " KiB");
-	CHECK(leaked > 20 * 4096);      // a stack each, at least 4 MiB of address space apiece
-	CHECK(detached < 4 * 8192);     // a stack or two, reused from glibc's cache
-	CHECK(tasksAfterLeak == tasksBefore);   // why `ls /proc/<pid>/task` cannot see it
+	INFO("thread stack " << stackKiB << " KiB; VmSize growth, 20 unjoined threads: " << leaked << " KiB; 20 detached: " << detached << " KiB");
+	CHECK(leaked >= 20 * stackKiB / 2);   // most of a stack each, kept
+	CHECK(detached <= 4 * stackKiB);      // a stack or a few, reused
+	CHECK(tasksAfterLeak == tasksBefore); // why `ls /proc/<pid>/task` cannot see it
+}
+
+TEST_CASE("ThreadedCloudSync starts its thread detached and keeps no handle to leak (PL-069, G-E1-07)")
+{
+	// The case above is the mechanism; this one holds the class to it. The
+	// class needs a Window and cannot be built here, so its source is read:
+	// no `new std::thread`, no thread member, and the one thread it starts is
+	// detached where it is made. Reverting to the leaking shape fails here.
+	// ES_SOURCE_ROOT overrides the tree read (to show this fail on an old one).
+	const char* root = getenv("ES_SOURCE_ROOT");
+	const std::string base = root != nullptr && *root != '\0' ? root : ES_ROOT_DIR;
+	// The code, not its comments: the comment that tells the story names
+	// the old shape.
+	auto code = [](const std::string& text) {
+		std::string out;
+		std::istringstream in(text);
+		std::string line;
+		while (std::getline(in, line))
+			out += line.substr(0, line.find("//")) + "\n";
+		return out;
+	};
+	const std::string cpp = code(get(base + "/es-app/src/ThreadedCloudSync.cpp"));
+	const std::string h = code(get(base + "/es-app/src/ThreadedCloudSync.h"));
+	REQUIRE_FALSE(cpp.empty());
+	REQUIRE_FALSE(h.empty());
+	CHECK(cpp.find("new std::thread") == std::string::npos);
+	CHECK(h.find("std::thread*") == std::string::npos);
+	CHECK(cpp.find("std::thread(&ThreadedCloudSync::run, this).detach();") != std::string::npos);
 }
 
 // ------------------------------------------------------ G-E1-03
