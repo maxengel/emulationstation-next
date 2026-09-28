@@ -6,7 +6,8 @@
 #   ./build-app-unit/app-unit-tests && ./build-app-unit/proxycards-tests
 #
 # app-unit-tests: header-only pure code the application calls (the journey
-# tiers a settings-first restore carries across its restart).
+# tiers a settings-first restore carries across its restart; the folder
+# merge a rescan uses to keep every holder's FileData alive).
 #
 # proxycards-tests: the shipped es-app/src/ProxyCards.cpp itself, compiled
 # against the small doubles under fakes/ -- the window, the card, the cloud
@@ -29,6 +30,7 @@ find_package(Threads REQUIRED)
 add_executable(app-unit-tests
 	${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 	${CMAKE_CURRENT_SOURCE_DIR}/JourneyTiersTests.cpp
+	${CMAKE_CURRENT_SOURCE_DIR}/FolderMergeTests.cpp
 )
 target_include_directories(app-unit-tests PRIVATE
 	${ES_ROOT}/es-app/src
