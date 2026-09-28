@@ -187,39 +187,60 @@ bool SystemConf::saveSystemConf()
 	if (changedConf.empty())
 		return false;
 
-	// The shell's settings lock (wait_lock in profile.d/001-functions), taken
-	// around the read-modify-write below: set_setting deletes a key and
-	// re-adds it under the same lock, and a save that read the file between
-	// its two steps would write the key's absence back over its new value.
-	// Five seconds is the budget, on the interface thread; a live holder
-	// still on the lock past it is logged and the save goes ahead -- the
-	// player's change dropped on the floor is the worse outcome, and the
-	// shell side's writes are a few milliseconds long.
-	Utils::AtomicFile::PidLock lock("/tmp/.system.cfg.lock");
-	if (!lock.acquire(5000))
-		LOG(LogWarning) << "saveSystemConf: the settings lock was not free within 5s; saving without it";
+	// The shell's settings lock (wait_lock in profile.d/001-functions), held
+	// across the read-modify-write: set_setting reads the file, writes a
+	// temporary and renames it under the same lock, and a save that read or
+	// renamed beside it put one writer's snapshot over the other's. Five
+	// seconds is the budget, on the interface thread. A live holder still on
+	// the lock past it is logged and nothing is written (PL-024): this used to
+	// save anyway, and lost either the script's key or the player's. The
+	// changes stay in changedConf, and the next save -- any page closing,
+	// any set-and-save -- writes them over whatever the script left.
+	std::string out;
+	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, "/tmp/.system.cfg.lock", 5000,
+		[this](const std::string& current) { return applyChanges(current); }, &out);
 
-	bool opened = false;
-	const std::string current = Utils::AtomicFile::readText(mSystemConfFile, &opened);
-
-#ifndef WIN32
-	if (!opened)
+	switch (saved)
 	{
-		LOG(LogError) << "Unable to open for saving :  " << mSystemConfFile << "\n";
+	case Utils::AtomicFile::LockedSave::LockBusy:
+		LOG(LogWarning) << "saveSystemConf: the settings lock was not free within 5s; nothing written -- the changes are kept for the next save";
 		return false;
+	case Utils::AtomicFile::LockedSave::Unreadable:
+		LOG(LogError) << "Unable to open for saving :  " << mSystemConfFile << " -- the changes are kept for the next save";
+		return false;
+	case Utils::AtomicFile::LockedSave::WriteFailed:
+		// Written to a temporary of its own, synced, and renamed over the
+		// live file (D-CLOUD-079, PL-063); a failure leaves the file whole.
+		LOG(LogError) << "Unable to write " << mSystemConfFile << " -- the changes are kept for the next save";
+		return false;
+	case Utils::AtomicFile::LockedSave::Written:
+		break;
 	}
-#endif
 
+	changedConf.clear();
+
+	// What was just written is, by construction, the newest good state, so
+	// it becomes the record (D-CLOUD-078: a success becomes the last known
+	// good). Outside the lock: the shell never takes it for the record.
+	recordLastGood(out);
+
+	return true;
+}
+
+// This save's keys, applied to the file as it is on disk now (read under
+// the lock): a key already there is rewritten in place, or removed when it
+// went back to its default or to nothing; a new one goes at the end. Every
+// other line is left exactly as the file had it -- the shell's writes
+// included.
+std::string SystemConf::applyChanges(const std::string& current)
+{
 	/* Read all lines in a vector */
 	std::vector<std::string> fileLines;
 	std::string line;
 
-	if (opened)
-	{
-		std::istringstream filein(current);
-		while (std::getline(filein, line))
-			fileLines.push_back(line);
-	}
+	std::istringstream filein(current);
+	while (std::getline(filein, line))
+		fileLines.push_back(line);
 
 	static std::string removeID = "$^�(p$^mpv$�rpver$^vper$vper$^vper$vper$vper$^vperv^pervncvizn";
 
@@ -282,27 +303,7 @@ bool SystemConf::saveSystemConf()
 		if (fileLines[i] != removeID)
 			out += fileLines[i] + "\n";
 	}
-
-	// Written to system.cfg.tmp, synced, and renamed over the live file
-	// (D-CLOUD-079). This used to write the temporary and then copy it into
-	// the live file through a truncating stream, which bought nothing: a
-	// process killed during the copy left an empty system.cfg beside a
-	// complete .tmp that nothing read.
-	if (!Utils::AtomicFile::writeText(mSystemConfFile, out))
-	{
-		LOG(LogError) << "Unable to write " << mSystemConfFile << " -- the changes are kept for the next save";
-		return false;
-	}
-	lock.release();
-
-	changedConf.clear();
-
-	// What was just written is, by construction, the newest good state, so
-	// it becomes the record (D-CLOUD-078: a success becomes the last known
-	// good). Outside the lock: the shell never takes it for the record.
-	recordLastGood(out);
-
-	return true;
+	return out;
 }
 
 std::string SystemConf::get(const std::string &name) 

@@ -255,6 +255,36 @@ namespace Utils
 			return writeText(dst, text, modeOf(src, 0644));
 		}
 
+		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			const std::function<std::string(const std::string& current)>& merge, std::string* written)
+		{
+			// Not without the lock (PL-024). This used to log and go ahead once
+			// the budget ran out -- "the player's change dropped on the floor
+			// is the worse outcome" -- and the change was dropped anyway,
+			// under the other writer's rename, or it dropped theirs. Refused,
+			// the change is not lost: the caller keeps it and writes it at the
+			// next save, which reads the other writer's file first.
+			PidLock lock(lockPath);
+			if (!lock.acquire(timeoutMs))
+				return LockedSave::LockBusy;
+
+			bool opened = false;
+			const std::string current = readText(path, &opened);
+#if !defined(_WIN32)
+			if (!opened)
+				return LockedSave::Unreadable;
+#endif
+			// (On Windows a file not there yet is merged onto nothing and made,
+			// as SystemConf always did there.)
+
+			const std::string out = merge(current);
+			if (!writeText(path, out))
+				return LockedSave::WriteFailed;
+			if (written != nullptr)
+				*written = out;
+			return LockedSave::Written;
+		}
+
 		PidLock::PidLock(const std::string& path) : mPath(path), mHeld(false)
 		{
 		}

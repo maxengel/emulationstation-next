@@ -2,6 +2,7 @@
 #ifndef ES_CORE_UTILS_ATOMIC_FILE_UTIL_H
 #define ES_CORE_UTILS_ATOMIC_FILE_UTIL_H
 
+#include <functional>
 #include <string>
 
 // Whole-file writes that leave either the old file or the new one on disk,
@@ -47,6 +48,27 @@ namespace Utils
 		// all, with src's mode. False when src could not be read or dst could
 		// not be written.
 		bool copy(const std::string& src, const std::string& dst);
+
+		// What a read-modify-write under the settings lock came to.
+		enum class LockedSave
+		{
+			Written,       // read, merged, written whole, with the lock held throughout
+			LockBusy,      // the lock stayed with a live holder past the budget: nothing read, nothing written
+			Unreadable,    // the lock was held and the file could not be read whole: nothing written
+			WriteFailed    // read and merged, and the write did not land: the file is as it was
+		};
+
+		// system.cfg's save (SystemConf): take the lock at `lockPath` within
+		// `timeoutMs`, read `path`, hand its text to `merge`, write what comes
+		// back whole, release. `written`, when given, gets the text that went
+		// to disk on Written. Nothing is written without the lock (PL-024):
+		// the shell's set_setting reads, writes a temporary and renames it
+		// under that lock, and a save made beside it -- the interface's
+		// snapshot of the file renamed over the shell's new one, or the other
+		// way round -- lost one of the two writers' keys. The caller keeps its
+		// changes on any answer but Written and makes them at its next save.
+		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			const std::function<std::string(const std::string& current)>& merge, std::string* written = nullptr);
 
 		// The settings lock the shell takes around every get_setting and
 		// set_setting (wait_lock in profile.d/001-functions): a file holding

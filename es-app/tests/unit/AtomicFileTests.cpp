@@ -92,6 +92,24 @@ namespace
 		return pid;
 	}
 
+	// The line that starts with `key` replaced by `line`, the rest as it was:
+	// the merge a save makes of one changed key.
+	std::string withLine(const std::string& text, const std::string& key, const std::string& line)
+	{
+		std::string out;
+		size_t pos = 0;
+		while (pos < text.size())
+		{
+			size_t end = text.find('\n', pos);
+			const std::string current = text.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+			out += (current.rfind(key, 0) == 0 ? line : current) + "\n";
+			if (end == std::string::npos)
+				break;
+			pos = end + 1;
+		}
+		return out;
+	}
+
 	// Run fn in a child with a deadline; the child's exit code, or -1 when
 	// the deadline killed it (a loop that never returns).
 	template <typename F>
@@ -360,4 +378,66 @@ TEST_CASE("a lock path that can never be a lock ends the wait within its budget 
 	struct stat st;
 	REQUIRE(stat(lockPath.c_str(), &st) == 0);
 	CHECK(S_ISDIR(st.st_mode));
+}
+
+// ------------------------------------------------------------------ PL-024
+
+TEST_CASE("a save that cannot get the lock writes nothing, and both writers' keys survive (PL-024)")
+{
+	// The interface waited five seconds for the settings lock and then saved
+	// anyway. The shell's set_setting holds it across a read, a write of
+	// system.cfg.tmp and a rename -- so a save made beside it put one
+	// writer's snapshot over the other's: the interface's key, or the
+	// script's, was gone. The other writer here is that shape, stuck for
+	// longer than the interface waits; the interface's save must write
+	// nothing, keep its change, and make it once the lock is free.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	put(path, "a=1\nb=1\n");
+
+	int ready[2];
+	REQUIRE(pipe(ready) == 0);
+	pid_t other = fork();
+	if (other == 0)
+	{
+		::close(ready[0]);
+		// wait_lock's shape: noclobber create, then the pid.
+		int fd = ::open(lockPath.c_str(), O_WRONLY | O_CREAT | O_EXCL, 0644);
+		if (fd < 0)
+			_exit(2);
+		const std::string pid = std::to_string((long long) getpid()) + "\n";
+		if (::write(fd, pid.data(), pid.size()) != (ssize_t) pid.size())
+			_exit(2);
+		::close(fd);
+		// write_setting_line's: read, write the temporary, rename.
+		put(path + ".tmp", withLine(get(path), "b=", "b=2"));
+		if (::write(ready[1], "x", 1) != 1)
+			_exit(2);
+		usleep(800 * 1000);
+		if (::rename((path + ".tmp").c_str(), path.c_str()) != 0)
+			_exit(3);
+		::unlink(lockPath.c_str());
+		_exit(0);
+	}
+	::close(ready[1]);
+	char c;
+	REQUIRE(::read(ready[0], &c, 1) == 1);
+	::close(ready[0]);
+
+	auto setA = [](const std::string& current) { return withLine(current, "a=", "a=2"); };
+	const LockedSave first = saveUnderLock(path, lockPath, 200, setA);
+
+	int status = 0;
+	waitpid(other, &status, 0);
+	CHECK(WIFEXITED(status));
+	CHECK(WEXITSTATUS(status) == 0);   // the other writer's rename landed
+	CHECK(first == LockedSave::LockBusy);
+
+	// The interface still has its change, and saves it once the lock is free.
+	if (first != LockedSave::Written)
+		CHECK(saveUnderLock(path, lockPath, 1000, setA) == LockedSave::Written);
+	const std::string last = get(path);
+	CHECK(last.find("b=2\n") != std::string::npos);   // the other writer's key
+	CHECK(last.find("a=2\n") != std::string::npos);   // and the interface's
 }

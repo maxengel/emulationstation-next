@@ -41,6 +41,8 @@ private:
 	// text that has just been read whole and found well-formed, or that this
 	// process has just written -- never from whatever happens to be on disk.
 	void recordLastGood(const std::string& text);
+	// changedConf's keys applied to the file's text as read under the lock.
+	std::string applyChanges(const std::string& current);
 
 	std::map<std::string, std::string> confMap;
 	std::set<std::string> changedConf;
