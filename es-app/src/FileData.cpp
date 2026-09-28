@@ -1160,18 +1160,21 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 		}
 		window->postToUiThread([window, exitSync, generation, captureFailed]
 		{
+			// A capture that could not record says so once, as a toast, in
+			// the player's words (fork #293 item 3, D-UI-095): what did not
+			// happen and what is in place. Said before the sync card starts,
+			// so it shows after the card (D-UI-093 puts a toast's words back
+			// on the queue when a card takes the screen). And said whether or
+			// not another game has been launched since: a later game makes
+			// this exit's sync its own, not this capture's failure (#308
+			// 8a-es-app gpt F-ES-05; the check below returned before it).
+			if (captureFailed)
+				window->displayNotificationMessage(_U("\uF0C2  ") + _("COULDN'T RECORD THIS SESSION'S SAVES. THEY'RE STILL ON THIS DEVICE."));
 			if (generation != sExitGeneration.load() || mRunningGame != nullptr)
 			{
 				LOG(LogInfo) << "exit: another game was launched since; its exit syncs";
 				return;
 			}
-			// A capture that could not record says so once, as a toast, in
-			// the player's words (fork #293 item 3, D-UI-095): what did not
-			// happen and what is in place. Said before the sync card starts,
-			// so it shows after the card (D-UI-093 puts a toast's words back
-			// on the queue when a card takes the screen).
-			if (captureFailed)
-				window->displayNotificationMessage(_U("\uF0C2  ") + _("COULDN'T RECORD THIS SESSION'S SAVES. THEY'RE STILL ON THIS DEVICE."));
 			if (exitSync && !ThreadedCloudSync::isRunning())
 			{
 				ThreadedCloudSync::start(window, "/usr/bin/cloud_backup --yes --saves-only --recent --automatic",
