@@ -46,6 +46,20 @@ namespace CaptureRotationText
 	// until the game's next exit rewrites it. The line is the writer's claim
 	// about what it read, which is the one thing a migration could not know.
 	bool recordFromOwnLaunch(const std::string& text);
+
+	// Whether the launch log holds a launch at all: RetroArch's build banner.
+	bool logHasLaunch(const std::string& launchLog);
+
+	// Whether a session's reading is written as the game's record (#308
+	// 8-es claude F-ES-08, 8a gpt F-ES-08). `existingRecord` is "" when there
+	// is none; `turns` is what fold made of the log; `tableTurns` what the
+	// core's table would say without a record. Never from a log with no
+	// launch in it -- turnsFromLog's -1 there is "no evidence", which fold
+	// makes 0, and a record written from it said from=own-launch over a
+	// turn nobody read. A zero with no record is written only when the table
+	// would say otherwise: rotation turned off in RetroArch, a core that did
+	// not ask, and the table's 3 went on answering. Unchanged, never rewritten.
+	bool shouldRecord(const std::string& launchLog, const std::string& existingRecord, int turns, int tableTurns);
 }
 
 #endif // ES_APP_CAPTURE_ROTATION_TEXT_H

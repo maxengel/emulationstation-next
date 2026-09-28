@@ -41,6 +41,20 @@ namespace
 
 namespace CaptureRotationText
 {
+	bool logHasLaunch(const std::string& launchLog)
+	{
+		return launchLog.find("=== Build ") != std::string::npos;
+	}
+
+	bool shouldRecord(const std::string& launchLog, const std::string& existingRecord, int turns, int tableTurns)
+	{
+		if (!logHasLaunch(launchLog))
+			return false;
+		if (existingRecord.empty())
+			return turns != 0 || tableTurns != 0;
+		return !(recordFromOwnLaunch(existingRecord) && parseRecord(existingRecord) == turns);
+	}
+
 	int turnsFromLog(const std::string& launchLog)
 	{
 		// Only the last launch's lines count (fork #280): the file held

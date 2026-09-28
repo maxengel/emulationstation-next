@@ -114,3 +114,30 @@ TEST_CASE("the core's table gives a game its turn by ROM name, and nothing to th
 	// the last line needs no newline
 	CHECK(CaptureRotationText::turnsFromTable("galaga 3", "galaga") == 3);
 }
+
+TEST_CASE("a session's reading is written only from a launch's log, and a zero only where it corrects something (#308 8-es claude F-ES-08, 8a gpt F-ES-08)")
+{
+	using namespace CaptureRotationText;
+	const std::string launch = "[INFO] === Build =======================================\n[INFO] [Environ] SET_ROTATION: \"3\" (270 deg).\n";
+	const std::string noRotation = "[INFO] === Build =======================================\n[INFO] Content loading skipped.\n";
+	const std::string noLaunch = "RetroArch: core not found\n";
+	const std::string record3 = recordText(3);
+
+	// No banner: no launch in the log, nothing it says is this game's. The
+	// record a real session wrote stays -- it used to become turns=0 with
+	// from=own-launch, the line that makes it trusted over the table.
+	CHECK_FALSE(shouldRecord(noLaunch, record3, fold(turnsFromLog(noLaunch), ""), 0));
+	CHECK_FALSE(shouldRecord("", record3, fold(turnsFromLog(""), ""), 3));
+	// A launch whose core never asked is a real zero: it corrects a record.
+	CHECK(shouldRecord(noRotation, record3, fold(turnsFromLog(noRotation), ""), 0));
+	// No record, a real zero, and a table that says 3 (rotation off in
+	// RetroArch, say): the zero is written, or the table keeps answering 3.
+	CHECK(shouldRecord(noRotation, "", 0, 3));
+	// No record, a zero, and a table that says 0 too: nothing to write.
+	CHECK_FALSE(shouldRecord(noRotation, "", 0, 0));
+	// A turn, no record: written. The same turn again: not rewritten.
+	CHECK(shouldRecord(launch, "", 3, 0));
+	CHECK_FALSE(shouldRecord(launch, record3, 3, 0));
+	// A record from before the own-launch line: rewritten so it says so.
+	CHECK(shouldRecord(launch, "turns=3\n", 3, 0));
+}

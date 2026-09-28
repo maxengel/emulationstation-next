@@ -136,7 +136,7 @@ namespace CaptureRotation
 		sKnownAt.clear();
 	}
 
-	void recordAfterSession(FileData* game, const std::string& emulator)
+	void recordAfterSession(FileData* game, const std::string& emulator, time_t started)
 	{
 		if (emulator != "retroarch")
 			return;
@@ -145,25 +145,31 @@ namespace CaptureRotation
 			return;
 		if (!Utils::FileSystem::exists(LAUNCH_LOG, false))
 			return;
+		// A log older than the launch is not this session's: a launcher that
+		// did not truncate it left the previous game's section there (#308
+		// 8-es claude F-ES-08). Same clock, whole seconds: equal is this one.
+		const time_t logTime = recordMtime(LAUNCH_LOG);
+		if (logTime < started)
+		{
+			LOG(LogInfo) << "CaptureRotation: " << game->getName() << " -- the launch log predates this session; nothing recorded";
+			return;
+		}
 
-		const int coreTurns = CaptureRotationText::turnsFromLog(Utils::FileSystem::readAllText(LAUNCH_LOG));
+		const std::string log = Utils::FileSystem::readAllText(LAUNCH_LOG);
+		const int coreTurns = CaptureRotationText::turnsFromLog(log);
 		std::string config;
 		if (Utils::FileSystem::exists(RETROARCH_CONFIG, false))
 			config = Utils::FileSystem::readAllText(RETROARCH_CONFIG);
 		const int turns = CaptureRotationText::fold(coreTurns, config);
 
-		const bool had = Utils::FileSystem::exists(path, false);
-		if (!had && turns == 0)
+		// The decision is CaptureRotationText's (a test reaches it): nothing
+		// from a log with no launch in it, a zero only where a record or the
+		// table would otherwise say something else, and an unchanged record
+		// left alone -- a record from before fork #288 is rewritten even when
+		// its turn agrees, so that it says where the turn came from.
+		const std::string record = Utils::FileSystem::exists(path, false) ? Utils::FileSystem::readAllText(path) : std::string();
+		if (!CaptureRotationText::shouldRecord(log, record, turns, fromTable(game)))
 			return;
-		if (had)
-		{
-			// A record from before fork #288 is rewritten even when its turn
-			// agrees, so that it says where the turn came from and is
-			// trusted from then on.
-			const std::string record = Utils::FileSystem::readAllText(path);
-			if (CaptureRotationText::recordFromOwnLaunch(record) && CaptureRotationText::parseRecord(record) == turns)
-				return;
-		}
 
 		Utils::FileSystem::createDirectory(Utils::FileSystem::getParent(path));
 		Utils::FileSystem::writeAllText(path, CaptureRotationText::recordText(turns));

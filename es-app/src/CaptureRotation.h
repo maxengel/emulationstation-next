@@ -2,6 +2,7 @@
 #ifndef ES_APP_CAPTURE_ROTATION_H
 #define ES_APP_CAPTURE_ROTATION_H
 
+#include <ctime>
 #include <string>
 
 class FileData;
@@ -20,7 +21,9 @@ namespace CaptureRotation
 	// After a session: read the launch log and RetroArch's config, and
 	// write the record when it is new or has changed. Only RetroArch
 	// sessions write one; nothing else captures through the interface.
-	void recordAfterSession(FileData* game, const std::string& emulator);
+	// `started` is when the launch began: a launch log older than that is
+	// not this session's, and nothing is read from it (#308 F-ES-08).
+	void recordAfterSession(FileData* game, const std::string& emulator, time_t started);
 
 	// Where the record lives, "" when the game's system keeps no states.
 	std::string recordPath(FileData* game);

@@ -1101,10 +1101,10 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	// game's section or no banner at all -- recordAfterSession then wrote
 	// that game's turn, or 0, as this game's own, from=own-launch (#308
 	// 8-es claude F-ES-08). A crash after a real session keeps the record it
-	// had. The rest of that finding -- a missing banner folded into 0, the
-	// log's age -- is CaptureRotation's.
+	// had. CaptureRotation checks the rest: the log's age against the
+	// launch, and no record from a log with no launch in it.
 	if (exitCode == 0)
-		CaptureRotation::recordAfterSession(gameToUpdate, options.launchedEmulator);
+		CaptureRotation::recordAfterSession(gameToUpdate, options.launchedEmulator, tstart);
 	else
 		LOG(LogInfo) << "capture rotation: not recorded, the launch exited " << exitCode;
 
