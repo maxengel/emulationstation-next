@@ -232,10 +232,36 @@ std::vector<std::string> stampsToRestamp(const std::vector<StampText>& stamps, t
 	return names;
 }
 
+std::string offlinePartWayWhy(const std::vector<StampText>& stamps, const std::vector<StampText>& before)
+{
+	for (auto& s : stamps)
+	{
+		const LastRun r = parseLastRun(s.text);
+		if (!r.ran || r.code != CloudExit::NoNetwork || r.token != "gaps")
+			continue;
+		// Written since the run began, as stampsToRestamp tells one: the
+		// scripts write each stamp to a new file and rename it into place.
+		std::string was;
+		for (auto& b : before)
+			if (b.name == s.name)
+				was = b.version;
+		if (s.version.empty() || s.version == was)
+			continue;
+		// The scripts write the sentence with spaces after the token; one
+		// written with the underscores of their other whys reads the same.
+		const std::string why = Utils::String::toUpper(Utils::String::replace(r.why, "_", " "));
+		return why.empty() ? std::string("YOU WENT OFFLINE PART-WAY THROUGH") : why;
+	}
+	return "";
+}
+
 bool exitSyncOwed(const std::string& exitStamp, const std::string& startupStamp, const std::string& backupStamp)
 {
+	// Skipped for no network; or cut by the network part-way, the card's
+	// stamp carrying gaps with the 69 since the audit of the fix round
+	// (claude G2-A-03): the rest of the saves are owed all the same.
 	const LastRun e = parseLastRun(exitStamp);
-	if (!e.ran || e.token != "no-network")
+	if (!e.ran || !(e.token == "no-network" || (e.token == "gaps" && e.code == CloudExit::NoNetwork)))
 		return false;
 	const LastRun s = parseLastRun(startupStamp);
 	if (s.ran && s.when >= e.when && s.outcome == Outcome::Completed)

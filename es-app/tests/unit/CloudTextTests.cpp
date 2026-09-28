@@ -1632,3 +1632,47 @@ TEST_CASE("the page's item names: every label EmulationStation composes has its 
 	CHECK(unitLabel("snes") == "SNES");
 	CHECK_FALSE(isKnownUnitLabel("SNES"));
 }
+
+// The audit of the fix round, stream A's lead G2-A-03 (claude), handed to
+// stream E1: a run the network ended after files had moved keeps its 69 --
+// the retry at the link's return and the offline recovery line read it --
+// and its script's stamp says so with the gaps token. The rows and the
+// transfer page read that as COULDN'T FINISH; the automatic sync's card read
+// the 69 alone and said SKIPPED - YOU'RE NOT ONLINE, which says nothing moved.
+TEST_CASE("a 69 whose stamp carries gaps is a run the network cut part-way, not a skip (audit of the fix round, claude G2-A-03)")
+{
+	const std::vector<StampText> before = {
+		{ "last-backup", "1789000000 0", "11:1789000000.0" },
+		{ "last-settings-backup", "1788990000 0", "12:1788990000.0" },
+	};
+	// This run's saves part: files moved, then the link went.
+	std::vector<StampText> after = before;
+	after[0] = { "last-backup", "1789000100 69 gaps YOU WENT OFFLINE PART-WAY THROUGH\n", "13:1789000100.0" };
+	CHECK(offlinePartWayWhy(after, before) == "YOU WENT OFFLINE PART-WAY THROUGH");
+	// The same line read back from a stamp the scripts wrote with underscores.
+	after[0].text = "1789000100 69 gaps YOU_WENT_OFFLINE_PART-WAY_THROUGH";
+	CHECK(offlinePartWayWhy(after, before) == "YOU WENT OFFLINE PART-WAY THROUGH");
+	// A bare 69 -- nothing moved -- stays a skip.
+	after[0].text = "1789000100 69";
+	CHECK(offlinePartWayWhy(after, before).empty());
+	// A gaps stamp left by an earlier run, not written since: not this run's.
+	const std::vector<StampText> earlier = { { "last-backup", "1788000000 69 gaps YOU WENT OFFLINE PART-WAY THROUGH", "9:1788000000.0" } };
+	CHECK(offlinePartWayWhy(earlier, earlier).empty());
+	// Another code with the token is not the network's.
+	after[0].text = "1789000100 5 gaps YOUR CLOUD STOPPED ANSWERING";
+	CHECK(offlinePartWayWhy(after, before).empty());
+	// No why on the line: the sentence the scripts write for it.
+	after[0].text = "1789000100 69 gaps";
+	CHECK(offlinePartWayWhy(after, before) == "YOU WENT OFFLINE PART-WAY THROUGH");
+}
+
+TEST_CASE("an exit sync the network cut part-way is still owed (audit of the fix round, claude G2-A-03)")
+{
+	// The card's stamp for that run now carries gaps (the row reads it as the
+	// card does, COULDN'T FINISH), and the retry at the link's return must
+	// still run: only part of the saves went up.
+	CHECK(CloudText::exitSyncOwed("1790440038 69 gaps YOU WENT OFFLINE PART-WAY THROUGH", "", ""));
+	CHECK_FALSE(CloudText::exitSyncOwed("1790440038 69 gaps YOU WENT OFFLINE PART-WAY THROUGH", "", "1790440130 0"));
+	// A gaps stamp that is not the network's is not owed to the link.
+	CHECK_FALSE(CloudText::exitSyncOwed("1790440038 5 gaps YOUR CLOUD STOPPED ANSWERING", "", ""));
+}
