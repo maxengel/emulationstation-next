@@ -4,6 +4,7 @@
 #
 #   cmake -S tests/app-unit -B build-app-unit && cmake --build build-app-unit
 #   ./build-app-unit/app-unit-tests && ./build-app-unit/proxycards-tests
+#   ./build-app-unit/bookkeeper-tests
 #
 # app-unit-tests: header-only pure code the application calls (the journey
 # tiers a settings-first restore carries across its restart; the folder
@@ -56,3 +57,23 @@ target_include_directories(proxycards-tests PRIVATE
 	${ES_ROOT}/external
 )
 target_link_libraries(proxycards-tests Threads::Threads)
+
+# bookkeeper-tests: the shipped es-app/src/SaveStateBookkeeper.cpp with its
+# pure queue, against doubles for the script runner and the log, and the
+# cloud transfer lock at a path of the build's own (CLOUD_SYNC_LOCK_PATH),
+# so a real process can hold it (audit #307 PL-068).
+configure_file(${ES_ROOT}/es-app/src/SaveStateBookkeeper.cpp ${CMAKE_BINARY_DIR}/under-test/SaveStateBookkeeper.cpp COPYONLY)
+add_executable(bookkeeper-tests
+	${CMAKE_CURRENT_SOURCE_DIR}/BookkeeperTests.cpp
+	${CMAKE_BINARY_DIR}/under-test/SaveStateBookkeeper.cpp
+	${ES_ROOT}/es-app/src/SaveStateJobQueue.cpp
+	${ES_ROOT}/es-core/src/utils/StringUtil.cpp
+)
+target_compile_definitions(bookkeeper-tests PRIVATE CLOUD_SYNC_LOCK_PATH="${CMAKE_BINARY_DIR}/cloud_sync.lock")
+target_include_directories(bookkeeper-tests BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/fakes)
+target_include_directories(bookkeeper-tests PRIVATE
+	${ES_ROOT}/es-app/src
+	${ES_ROOT}/es-core/src
+	${ES_ROOT}/external
+)
+target_link_libraries(bookkeeper-tests Threads::Threads)

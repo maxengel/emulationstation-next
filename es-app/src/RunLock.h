@@ -21,6 +21,23 @@
 
 namespace RunLock
 {
+	// Whether a process holds an flock on `path` right now -- the cloud
+	// scripts' /var/run/cloud_sync.lock while a transfer runs (engineering-
+	// practices.md: the file stays behind after every run, so its existence
+	// means nothing). A shared lock taken for an instant fails while one is
+	// held, and is let go at once. No file is nobody's lock.
+	inline bool held(const std::string& lockPath)
+	{
+		const int fd = ::open(lockPath.c_str(), O_RDONLY | O_CLOEXEC);
+		if (fd < 0)
+			return false;
+		const bool free = ::flock(fd, LOCK_SH | LOCK_NB) == 0;
+		if (free)
+			::flock(fd, LOCK_UN);
+		::close(fd);
+		return !free;
+	}
+
 	// The pid holding `lockPath`, when its command line names `program`;
 	// 0 when nobody holds the lock, the file names no pid, or the pid is
 	// some other process.
