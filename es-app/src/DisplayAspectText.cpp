@@ -37,11 +37,21 @@ namespace DisplayAspectText
 		// after the last two dashes), and "<content>-cheevo-<id>" for the
 		// one it takes at an achievement unlock (fork #248: the
 		// maintainer's SCREENSHOTS folder was mostly the second kind).
-		// With or without the extension.
+		// With or without the extension -- an image's: the part after the
+		// last dot of an extensionless "Dr. Mario-260922-153012" is the
+		// content's, and taking it for an extension left "Dr" (#308 8a gpt
+		// F-ES-21).
 		std::string stem = fileName;
 		const size_t dot = stem.rfind('.');
 		if (dot != std::string::npos && dot > 0)
-			stem = stem.substr(0, dot);
+		{
+			std::string ext = stem.substr(dot + 1);
+			for (auto& c : ext)
+				c = (char) tolower((unsigned char) c);
+			static const std::set<std::string> images = { "png", "jpg", "jpeg", "bmp", "gif", "webp" };
+			if (images.count(ext))
+				stem = stem.substr(0, dot);
+		}
 		const size_t cheevo = stem.rfind("-cheevo-");
 		if (cheevo != std::string::npos && cheevo > 0 && cheevo + 8 < stem.size())
 		{

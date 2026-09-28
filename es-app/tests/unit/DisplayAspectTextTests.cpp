@@ -39,3 +39,16 @@ TEST_CASE("RetroArch's screenshot name gives the content back, and nothing else 
 	CHECK(DisplayAspectText::screenshotContent("-260922-153012.png") == "");
 	CHECK(DisplayAspectText::screenshotContent("") == "");
 }
+
+TEST_CASE("a dotted name without its extension keeps its dot (#308 8a gpt F-ES-21)")
+{
+	// The part after the last dot was taken for an extension whatever it
+	// was, so an extensionless name with a dot in the content lost all but
+	// the text before it.
+	CHECK(DisplayAspectText::screenshotContent("Dr. Mario-260922-153012") == "Dr. Mario");
+	CHECK(DisplayAspectText::screenshotContent("Dr. Mario (Japan, USA) (Rev A)-cheevo-8937") == "Dr. Mario (Japan, USA) (Rev A)");
+	CHECK(DisplayAspectText::screenshotContent("St. John's Quest v1.2-260922-153012") == "St. John's Quest v1.2");
+	// An image's own extension still goes, in either case.
+	CHECK(DisplayAspectText::screenshotContent("Dr. Mario-260922-153012.PNG") == "Dr. Mario");
+	CHECK(DisplayAspectText::screenshotContent("Dr. Mario-260922-153012.jpg") == "Dr. Mario");
+}
