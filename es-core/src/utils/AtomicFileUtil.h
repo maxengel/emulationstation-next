@@ -24,7 +24,18 @@ namespace Utils
 		// directory. True only once the rename has landed; on any failure the
 		// temporary is removed and `path` is untouched. Two calls at once, from
 		// two threads or two processes, each leave one whole file (PL-063).
-		bool writeText(const std::string& path, const std::string& text);
+		// With mode -1, a file being replaced keeps its mode, and its owner
+		// where this process may set it (#308 F-ES-08), and a new one is made
+		// 0644 before umask, as the shell makes files. A mode given is the
+		// file's mode whether it is new or replaced: a record written beside
+		// a private file passes that file's (modeOf), so the copy is never
+		// less private than what it copies.
+		bool writeText(const std::string& path, const std::string& text, int mode = -1);
+
+		// The permission bits of the regular file at `path`, or `fallback`
+		// when there is none: what a record written beside a file should be
+		// made with, so the copy is no less private than the original.
+		int modeOf(const std::string& path, int fallback);
 
 		// Read `path` whole. `ok` (when given) says whether it was: opened,
 		// read to the end without an error, and -- for a regular file -- no
@@ -33,7 +44,8 @@ namespace Utils
 		std::string readText(const std::string& path, bool* ok = nullptr);
 
 		// readText(src) then writeText(dst): dst is replaced whole or not at
-		// all. False when src could not be read or dst could not be written.
+		// all, with src's mode. False when src could not be read or dst could
+		// not be written.
 		bool copy(const std::string& src, const std::string& dst);
 
 		// The settings lock the shell takes around every get_setting and

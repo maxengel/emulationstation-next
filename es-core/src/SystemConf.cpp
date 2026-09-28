@@ -113,10 +113,14 @@ void SystemConf::parseSystemConf(const std::string& text)
 // every start and after every save, and most of those change nothing.
 void SystemConf::recordLastGood(const std::string& text)
 {
+	// No less private than the live file it copies (#308 F-ES-08): a record
+	// an earlier build made 0644 beside a 0600 file is rewritten for its mode
+	// even when its text is the same.
 	const std::string backup = mSystemConfFile + ".backup";
-	if (Utils::AtomicFile::readText(backup) == text)
+	const int mode = Utils::AtomicFile::modeOf(mSystemConfFile, 0644);
+	if (Utils::AtomicFile::readText(backup) == text && Utils::AtomicFile::modeOf(backup, mode) == mode)
 		return;
-	if (!Utils::AtomicFile::writeText(backup, text))
+	if (!Utils::AtomicFile::writeText(backup, text, mode))
 		LOG(LogWarning) << "Unable to write the last-known-good record " << backup;
 }
 

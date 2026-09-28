@@ -46,16 +46,14 @@ namespace Utils
 		// into place -- empty or half written -- and the second's rename found
 		// the name gone and reported a save that had not happened. The fd is
 		// returned open for writing, -1 on failure.
-		static int createTemporary(const std::string& path, std::string& tmp)
+		static int createTemporary(const std::string& path, std::string& tmp, int mode)
 		{
 			static std::atomic<unsigned long> counter(0);
 			const std::string stem = path + ".tmp." + std::to_string((long long) ::getpid()) + ".";
 			for (int attempt = 0; attempt < 100; attempt++)
 			{
 				tmp = stem + std::to_string(counter++);
-				// 0644 before umask, as the shell's redirections make it; the
-				// rename then carries the mode over to the live name.
-				int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+				int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, (mode_t) mode);
 				if (fd >= 0)
 					return fd;
 				if (errno != EEXIST)
@@ -65,7 +63,20 @@ namespace Utils
 		}
 #endif
 
-		bool writeText(const std::string& path, const std::string& text)
+		int modeOf(const std::string& path, int fallback)
+		{
+#if defined(_WIN32)
+			(void) path;
+			return fallback;
+#else
+			struct stat st;
+			if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+				return fallback;
+			return (int) (st.st_mode & 07777);
+#endif
+		}
+
+		bool writeText(const std::string& path, const std::string& text, int mode)
 		{
 #if defined(_WIN32)
 			const std::string tmp = path + ".tmp";
@@ -89,10 +100,50 @@ namespace Utils
 			}
 			return true;
 #else
+			// The rename puts the temporary's mode and owner on the live name,
+			// so a file being replaced gives the temporary its own first
+			// (#308 F-ES-08): system.cfg and es_settings.cfg carry the Wi-Fi
+			// key and the account passwords, and a file somebody had made 0600
+			// came back 0644 from the next save. A new file is made 0644,
+			// before umask, as the shell's redirections make one -- unless the
+			// caller names the mode, which a record of a private file does.
+			struct stat existing;
+			const bool replacing = ::stat(path.c_str(), &existing) == 0 && S_ISREG(existing.st_mode);
+
 			std::string tmp;
-			int fd = createTemporary(path, tmp);
+			int fd = createTemporary(path, tmp, mode >= 0 ? 0600 : replacing ? 0600 : 0644);
 			if (fd < 0)
 				return false;
+			if (mode >= 0)
+			{
+				if (::fchmod(fd, (mode_t) (mode & 07777)) != 0)
+				{
+					::close(fd);
+					::unlink(tmp.c_str());
+					return false;
+				}
+			}
+			else if (replacing)
+			{
+				// The owner only where it differs and only as root, which is
+				// how ROCKNIX runs the interface; best effort, since a caller
+				// that cannot give a file away still wrote what it meant to.
+				// The mode is not best effort: a file that would come out less
+				// private than it was is not written.
+				if ((existing.st_uid != ::geteuid() || existing.st_gid != ::getegid()) && ::geteuid() == 0)
+				{
+					if (::fchown(fd, existing.st_uid, existing.st_gid) != 0)
+					{
+						// kept as it is: root that cannot chown is a filesystem without owners
+					}
+				}
+				if (::fchmod(fd, existing.st_mode & 07777) != 0)
+				{
+					::close(fd);
+					::unlink(tmp.c_str());
+					return false;
+				}
+			}
 
 			const char* data = text.data();
 			size_t left = text.size();
@@ -200,7 +251,7 @@ namespace Utils
 			const std::string text = readText(src, &ok);
 			if (!ok)
 				return false;
-			return writeText(dst, text);
+			return writeText(dst, text, modeOf(src, 0644));
 		}
 
 		PidLock::PidLock(const std::string& path) : mPath(path), mHeld(false)

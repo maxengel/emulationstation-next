@@ -529,7 +529,8 @@ bool Settings::saveFile()
 		mWasChanged = true;
 		return false;
 	}
-	if (!Utils::AtomicFile::writeText(path + ".backup", writer.out))
+	// The record is made no less private than the live file (#308 F-ES-08).
+	if (!Utils::AtomicFile::writeText(path + ".backup", writer.out, Utils::AtomicFile::modeOf(path, 0644)))
 		LOG(LogWarning) << "Settings::saveFile() : could not write the last-known-good record " << path << ".backup";
 
 	Scripting::fireEvent("config-changed");
@@ -623,8 +624,11 @@ void Settings::loadFile()
 		// only when the record would change -- this runs at every start.
 		bool ok = false;
 		const std::string live = Utils::AtomicFile::readText(path, &ok);
-		if (ok && live != Utils::AtomicFile::readText(backup)
-			&& !Utils::AtomicFile::writeText(backup, live))
+		// No less private than the live file, and rewritten for its mode
+		// alone where an earlier build made it wider (#308 F-ES-08).
+		const int mode = Utils::AtomicFile::modeOf(path, 0644);
+		if (ok && (live != Utils::AtomicFile::readText(backup) || Utils::AtomicFile::modeOf(backup, mode) != mode)
+			&& !Utils::AtomicFile::writeText(backup, live, mode))
 			LOG(LogWarning) << "Could not write the last-known-good record " << backup;
 	}
 }

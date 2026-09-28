@@ -195,3 +195,46 @@ TEST_CASE("a read that fails after the file opened is not a read (PL-065)")
 	CHECK(readText(dir / "empty", &ok).empty());
 	CHECK(ok);   // empty and missing are different answers
 }
+
+// ------------------------------------------------------------ F-ES-08
+
+TEST_CASE("replacing a file keeps its mode (#308 8b gpt F-ES-08)")
+{
+	// The temporary was created 0644 and renamed over the file, so a
+	// system.cfg somebody had made 0600 -- it carries wifi.key and the
+	// RetroAchievements password -- came back 0644 from the next save.
+	ScratchDir dir;
+	const mode_t before = umask(022);
+	const std::string path = dir / "system.cfg";
+	put(path, "wifi.key=x\n");
+	REQUIRE(chmod(path.c_str(), 0600) == 0);
+
+	CHECK(writeText(path, "wifi.key=y\n"));
+	struct stat st;
+	REQUIRE(stat(path.c_str(), &st) == 0);
+	CHECK((st.st_mode & 0777) == 0600);
+	CHECK(get(path) == "wifi.key=y\n");
+
+	// A file that did not exist is made as it always was: 0644.
+	const std::string fresh = dir / "fresh.cfg";
+	CHECK(writeText(fresh, "a=1\n"));
+	REQUIRE(stat(fresh.c_str(), &st) == 0);
+	CHECK((st.st_mode & 0777) == 0644);
+
+	// And the last-known-good record beside a private file is as private
+	// as the file, the first time it is made and every time after -- one an
+	// earlier build left 0644 included.
+	const std::string record = dir / "system.cfg.backup";
+	CHECK(writeText(record, "wifi.key=y\n", modeOf(path, 0644)));
+	REQUIRE(stat(record.c_str(), &st) == 0);
+	CHECK((st.st_mode & 0777) == 0600);
+	REQUIRE(chmod(record.c_str(), 0644) == 0);
+	CHECK(writeText(record, "wifi.key=y\n", modeOf(path, 0644)));
+	REQUIRE(stat(record.c_str(), &st) == 0);
+	CHECK((st.st_mode & 0777) == 0600);
+	CHECK(copy(path, dir / "copied.cfg"));
+	REQUIRE(stat((dir / "copied.cfg").c_str(), &st) == 0);
+	CHECK((st.st_mode & 0777) == 0600);
+	CHECK(modeOf(dir / "missing", 0640) == 0640);
+	umask(before);
+}
