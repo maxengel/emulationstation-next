@@ -6286,3 +6286,6 @@ msgstr "ENVOI DE %s SUR %s"
 
 msgid "RECEIVING %s OF %s"
 msgstr "RÉCEPTION DE %s SUR %s"
+
+msgid "SOME GAMES COULDN'T BE SAVED"
+msgstr "CERTAINS JEUX N’ONT PAS PU ÊTRE ENREGISTRÉS"

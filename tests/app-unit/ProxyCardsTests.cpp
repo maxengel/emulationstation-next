@@ -316,3 +316,84 @@ TEST_CASE("top-up: two requests, one watcher at a time, and the second still run
 	for (auto& c : fake.cards)
 		CHECK(c->text.front().find("COULDN'T FINISH") == std::string::npos);
 }
+
+// #308 1-raoffline F-RA-09 (claude) / F-RA-17 (gpt): STOP IT AND PLAY sends
+// the ctl TERM, it exits 143 and writes no stamp. The card that follows the
+// game says what happened -- the sync card's launch-cancel words -- never a
+// failure, nor the last run's why.
+TEST_CASE("top-up: a run stopped for a game says SKIPPED - YOU STARTED A GAME")
+{
+	fake.reset();
+	{
+		std::lock_guard<std::mutex> g(fake.m);
+		fake.scan.ran = true;
+		fake.scan.when = time(nullptr) - 3600;   // the last run's stamp, an hour old
+		fake.scan.code = 1;
+		fake.scan.why = "SOME_GAMES_NOT_SAVED";
+	}
+	std::atomic<bool> stopped{ false };
+	fake.ctl = [&stopped](bool)
+	{
+		while (!fake.stopSent)
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		stopped = true;
+		return 143;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { return !cardsNow().empty(); }, 10));
+	fake.gameRunning = true;                     // the player launches over it
+	CHECK(ProxyCards::stopTopUp());
+	REQUIRE(waitFor([&stopped] { return stopped.load(); }, 10));
+	std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+	fake.gameRunning = false;                    // a short game ends
+	REQUIRE(waitFor([] { auto c = cardsNow(); return !c.empty() && c.back()->closed; }, 30));
+	auto* card = cardsNow().back();
+	INFO("text: " << join(card->text) << "  action: " << join(card->action));
+	CHECK(card->text.front() == "SKIPPED - YOU STARTED A GAME");
+}
+
+// A failed run's why is this run's stamp's, or none: an old stamp's token
+// describes another run.
+TEST_CASE("top-up: a failure reads its why only from this run's stamp")
+{
+	fake.reset();
+	{
+		std::lock_guard<std::mutex> g(fake.m);
+		fake.scan.ran = true;
+		fake.scan.when = time(nullptr) - 3600;
+		fake.scan.code = 1;
+		fake.scan.why = "RETROACHIEVEMENTS_STOPPED_ANSWERING";
+	}
+	fake.ctl = [](bool) { std::this_thread::sleep_for(std::chrono::milliseconds(1200)); return 1; };
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { auto c = cardsNow(); return !c.empty() && c.back()->closed; }, 30));
+	auto* card = cardsNow().back();
+	INFO("text: " << join(card->text) << "  action: " << join(card->action));
+	CHECK(card->text.front() == "COULDN'T FINISH - SOMETHING WENT WRONG");
+}
+
+// A top-up's own failure carries no instruction to run a scan: the card's
+// action line already says it will try again.
+TEST_CASE("top-up: SOME_GAMES_NOT_SAVED says so without sending the player to a scan")
+{
+	fake.reset();
+	fake.ctl = [](bool)
+	{
+		std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+		std::lock_guard<std::mutex> g(fake.m);
+		fake.scan.ran = true;
+		fake.scan.when = time(nullptr);
+		fake.scan.code = 1;
+		fake.scan.topup = true;
+		fake.scan.errors = 1;
+		fake.scan.why = "SOME_GAMES_NOT_SAVED";
+		return 1;
+	};
+	ProxyCards::topUp(&window, false);
+	REQUIRE(waitFor([] { auto c = cardsNow(); return !c.empty() && c.back()->closed; }, 30));
+	auto* card = cardsNow().back();
+	INFO("text: " << join(card->text) << "  action: " << join(card->action));
+	CHECK(card->text.front() == "COULDN'T FINISH - SOME GAMES COULDN'T BE SAVED");
+	REQUIRE(!card->action.empty());
+	CHECK(card->action.front() == "IT'LL TRY AGAIN NEXT TIME YOU'RE CONNECTED.");
+}

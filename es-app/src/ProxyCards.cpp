@@ -54,6 +54,10 @@ namespace
 	// ends: 1 the link's return, 2 the index's.
 	static std::atomic<bool> sTopUpRunning{ false };
 	static std::atomic<int> sTopUpWanted{ 0 };
+	// The launch's STOP IT AND PLAY stopped the run (stopTopUp): its 143 is
+	// the player's choice, said in the sync card's words for the same
+	// choice, not a failure (#308 1-raoffline F-RA-09 / F-RA-17).
+	static std::atomic<bool> sTopUpStoppedForGame{ false };
 	static std::atomic<bool> sBatchOwed{ false };
 	// A stamp the proxy writes after the queue has emptied is the send
 	// card's to take: it waits this long for it before saying the outcome.
@@ -157,6 +161,17 @@ namespace
 		sSendShowing = false;
 	}
 
+	// The top-up card's why: the scan's words, except where the scan's
+	// sentence sends the player to the scan page -- this card's action line
+	// already says it tries again by itself, and two instructions on one
+	// card is one too many (#308 1-raoffline F-RA-09).
+	std::string topUpWhy(const std::string& token)
+	{
+		if (token == "SOME_GAMES_NOT_SAVED")
+			return _("SOME GAMES COULDN'T BE SAVED");
+		return OfflineAchievements::scanWhy(token);
+	}
+
 	// One run of the top-up: the ctl on a thread of its own, this one
 	// attaching a card once the ctl's progress file says it has work and no
 	// other card holds the screen, and ending it with the ctl's stamp.
@@ -184,6 +199,7 @@ namespace
 
 	void runTopUp(Window* window, bool afterIndex)
 	{
+		sTopUpStoppedForGame = false;   // a stop that missed an earlier run is not this run's
 		std::atomic<bool> finished{ false };
 		int rc = -1;
 		const time_t startedAt = time(nullptr);
@@ -244,6 +260,19 @@ namespace
 				card->updateText(Utils::String::format(_("GETTING GAME %d OF %d READY...").c_str(), p.index, p.total));
 		}
 		ctl.join();
+		// 143 (TERM) or 130 (INT) is a run that was stopped. The launch's STOP
+		// IT AND PLAY is said below; any other stop -- the toggle turned off,
+		// whose disable stops the run -- is the player's own doing on another
+		// page, and there is nothing to report.
+		const bool stopped = rc == 143 || rc == 130;
+		const bool stoppedForGame = stopped && sTopUpStoppedForGame.exchange(false);
+		if (stopped && !stoppedForGame)
+		{
+			LOG(LogInfo) << "ProxyCards: the top-up was stopped (rc " << rc << ") and not for a game; no outcome is said";
+			if (card != nullptr)
+				card->close();
+			return;
+		}
 		// A game list updated offline (fork #299, D-UI-104): the index found
 		// games and the ctl could not reach RetroAchievements (69). It left
 		// its marker, and the link's return lists the library once for it,
@@ -257,7 +286,11 @@ namespace
 		// left its stamp: work was done when the stamp is this run's and
 		// counts a game added or a fetch failed.
 		const CloudText::ScanStamp s = OfflineAchievements::lastScan();
-		if (!sawWork && s.ran && s.when >= startedAt && (s.cached > 0 || s.errors > 0))
+		// The stamp speaks for this run only when this run wrote it: a run
+		// stopped by a signal, or cut off, writes none, and the one there is
+		// the last run's (F-RA-09: its why was said of this one).
+		const bool stamped = s.ran && s.when >= startedAt;
+		if (!sawWork && stamped && (s.cached > 0 || s.errors > 0))
 			sawWork = true;
 		if (!sawWork)
 			return;   // a run with no work: nothing to show
@@ -288,7 +321,6 @@ namespace
 			// A run with nothing new writes no stamp (the row's line keeps the
 			// last scan that said something), so its count is the ready file's;
 			// a stamp from before this run says nothing about it.
-			const bool stamped = s.ran && s.when >= startedAt;
 			const int added = stamped ? (s.added >= 0 ? s.added : s.cached) : 0;
 			const int ready = stamped ? s.ready : OfflineAchievements::readyCount();
 			// The title says RETROACHIEVEMENTS (OFFLINE); the line says only
@@ -304,17 +336,24 @@ namespace
 			else
 				action.push_back(_("EVERYTHING'S UP TO DATE."));
 		}
+		else if (stoppedForGame)
+		{
+			// The launch's question promised this line (FileData::launchGame).
+			outcome = _("SKIPPED - YOU STARTED A GAME");
+			action.push_back(_("IT'LL TRY AGAIN NEXT TIME YOU'RE CONNECTED."));
+		}
 		else
 		{
-			outcome = std::string(_("COULDN'T FINISH")) + " - " + OfflineAchievements::scanWhy(s.why);
+			outcome = std::string(_("COULDN'T FINISH")) + " - " + topUpWhy(stamped ? s.why : "");
 			action.push_back(_("IT'LL TRY AGAIN NEXT TIME YOU'RE CONNECTED."));
 		}
 		card->updateTitle(TROPHY + _("RETROACHIEVEMENTS (OFFLINE)"));
 		card->updateText(CloudText::outcomeCandidates(outcome), action);
 		card->updatePercent(ok ? 100 : -1);
 		LOG(LogInfo) << "ProxyCards: the top-up card ended rc " << rc << " cached " << s.cached << " added " << s.added << " ready " << s.ready
-			<< " says added " << (ok && s.ran && s.when >= startedAt ? (s.added >= 0 ? s.added : s.cached) : 0)
-			<< " ready " << (ok && s.ran && s.when >= startedAt ? s.ready : OfflineAchievements::readyCount());
+			<< " says added " << (ok && stamped ? (s.added >= 0 ? s.added : s.cached) : 0)
+			<< " ready " << (ok && stamped ? s.ready : OfflineAchievements::readyCount())
+			<< (stoppedForGame ? " (stopped for a game)" : "");
 		std::this_thread::sleep_for(std::chrono::milliseconds(5000));
 		card->close();
 	}
@@ -470,7 +509,12 @@ namespace ProxyCards
 
 	bool stopTopUp()
 	{
-		return OfflineAchievements::stopRun();
+		// Before the signal: the watcher reads it the moment the ctl exits.
+		sTopUpStoppedForGame = true;
+		if (OfflineAchievements::stopRun())
+			return true;
+		sTopUpStoppedForGame = false;
+		return false;
 	}
 
 	void indexRanOffline(Window* window, int games)
