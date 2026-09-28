@@ -77,3 +77,25 @@ set_target_properties(es-unit-tests PROPERTIES
 	CXX_STANDARD_REQUIRED ON
 	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+# The settings files' writer, reader and lock (audit #307: PL-024, PL-041,
+# PL-063, PL-064, PL-065; #308 F-ES-07, F-ES-08), against real files: a
+# binary of its own, so es-unit-tests stays the one that touches nothing.
+# es-file-tests makes a scratch directory under $TMPDIR (or /tmp), forks
+# the processes that play the other writer or the other waiter, and removes
+# the directory again. POSIX only, like AtomicFileUtil's own guarantees.
+add_executable(es-file-tests
+	${CMAKE_CURRENT_SOURCE_DIR}/AtomicFileTests.cpp
+	${ES_ROOT}/es-core/src/utils/AtomicFileUtil.cpp
+)
+target_include_directories(es-file-tests PRIVATE
+	${ES_ROOT}/es-core/src
+	${ES_ROOT}/external
+)
+find_package(Threads REQUIRED)
+target_link_libraries(es-file-tests PRIVATE Threads::Threads)
+set_target_properties(es-file-tests PROPERTIES
+	CXX_STANDARD 17
+	CXX_STANDARD_REQUIRED ON
+	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)

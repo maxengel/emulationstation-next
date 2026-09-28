@@ -18,9 +18,12 @@ namespace Utils
 {
 	namespace AtomicFile
 	{
-		// Write `text` to `path` through `path`.tmp: write, fsync, rename over
-		// `path`, fsync the directory. True only once the rename has landed;
-		// on any failure the temporary is removed and `path` is untouched.
+		// Write `text` to `path` through a temporary of this call's own beside
+		// it (`path`.tmp.<pid>.<n>, never the shared `path`.tmp the shell's
+		// set_setting writes): write, fsync, rename over `path`, fsync the
+		// directory. True only once the rename has landed; on any failure the
+		// temporary is removed and `path` is untouched. Two calls at once, from
+		// two threads or two processes, each leave one whole file (PL-063).
 		bool writeText(const std::string& path, const std::string& text);
 
 		// Read `path` whole. `ok` (when given) says whether it could be

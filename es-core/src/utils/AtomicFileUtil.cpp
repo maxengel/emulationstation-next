@@ -1,5 +1,6 @@
 #include "utils/AtomicFileUtil.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -34,12 +35,40 @@ namespace Utils
 			::fsync(fd);
 			::close(fd);
 		}
+
+		// A name beside `path` that no other call -- in this process or any
+		// other -- is using: `path`.tmp.<pid>.<n>, created O_EXCL so a name
+		// left behind by a process that died and whose pid came round again
+		// is stepped over rather than truncated. Every writer used to share
+		// `path`.tmp under O_TRUNC (PL-063), and so did the shell: set_setting
+		// writes system.cfg.tmp with awk and renames it. Two saves at once
+		// truncated each other's temporary; the first renamed the shared file
+		// into place -- empty or half written -- and the second's rename found
+		// the name gone and reported a save that had not happened. The fd is
+		// returned open for writing, -1 on failure.
+		static int createTemporary(const std::string& path, std::string& tmp)
+		{
+			static std::atomic<unsigned long> counter(0);
+			const std::string stem = path + ".tmp." + std::to_string((long long) ::getpid()) + ".";
+			for (int attempt = 0; attempt < 100; attempt++)
+			{
+				tmp = stem + std::to_string(counter++);
+				// 0644 before umask, as the shell's redirections make it; the
+				// rename then carries the mode over to the live name.
+				int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+				if (fd >= 0)
+					return fd;
+				if (errno != EEXIST)
+					return -1;
+			}
+			return -1;
+		}
 #endif
 
 		bool writeText(const std::string& path, const std::string& text)
 		{
-			const std::string tmp = path + ".tmp";
 #if defined(_WIN32)
+			const std::string tmp = path + ".tmp";
 			{
 				std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
 				if (!out)
@@ -60,9 +89,8 @@ namespace Utils
 			}
 			return true;
 #else
-			// 0644 before umask, as the shell's redirections make it; the
-			// rename then carries the mode over to the live name.
-			int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+			std::string tmp;
+			int fd = createTemporary(path, tmp);
 			if (fd < 0)
 				return false;
 

@@ -35,3 +35,12 @@ setting, which lines also reach stderr), tested with doctest
 **Does not:** anything touching `Window`, `Settings`, `SystemConf`, a font, a
 file or a script. Extract the pure core, leave the shell where it is, and test
 the rest on the VM (`tools/vm-qa`).
+
+**The one exception has a binary of its own:** `es-file-tests`
+(`AtomicFileTests.cpp`, audit #307) checks `es-core/src/utils/AtomicFileUtil.cpp`
+-- the whole-file writer, the reader and the settings lock `SystemConf` and
+`Settings` go through -- against real files in a scratch directory it makes
+under `$TMPDIR` (or `/tmp`) and removes, forking the processes that play the
+other writer or the other waiter. Built by the same `cmake --build build-tests`
+and run as `./build-tests/es-file-tests`; POSIX only, like the guarantees it
+checks. `es-unit-tests` stays the binary that touches nothing.
