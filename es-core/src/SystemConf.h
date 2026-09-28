@@ -42,6 +42,16 @@ private:
 	static SystemConf* sInstance;
 	static bool sRecovered;
 
+	// The shell's settings lock (wait_lock in profile.d/001-functions) and
+	// how long the interface waits for it. Members rather than literals so
+	// the unit tests can point them at a scratch directory and a short
+	// budget; nothing else sets them.
+	static std::string sLockPath;
+	static int sLockBudgetMs;
+	// es-app/tests/unit/SystemConfTests.cpp: a fresh instance per case,
+	// against real files in a scratch directory (the audit of the fix round).
+	friend struct SystemConfTestAccess;
+
 	// Parse key=value lines into confMap. Comments and blank lines skipped,
 	// as the file has always been read.
 	void parseSystemConf(const std::string& text);

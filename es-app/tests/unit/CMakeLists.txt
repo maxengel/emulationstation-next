@@ -109,6 +109,29 @@ set_target_properties(es-file-tests PROPERTIES
 	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 
+# SystemConf itself, against real files (the audit of the fix round): the
+# shipped SystemConf.cpp and AtomicFileUtil.cpp, with the log, Settings,
+# Paths and SDL's clock as doubles -- the first three defined in
+# SystemConfTests.cpp, SDL_timer.h under fakes/, which the angle-bracket
+# include finds before any system copy. A binary of its own for the same
+# reason es-file-tests is one: it touches files.
+add_executable(es-conf-tests
+	${CMAKE_CURRENT_SOURCE_DIR}/SystemConfTests.cpp
+	${ES_ROOT}/es-core/src/SystemConf.cpp
+	${ES_ROOT}/es-core/src/utils/AtomicFileUtil.cpp
+)
+target_include_directories(es-conf-tests PRIVATE
+	${CMAKE_CURRENT_SOURCE_DIR}/fakes
+	${ES_ROOT}/es-core/src
+	${ES_ROOT}/external
+)
+target_link_libraries(es-conf-tests PRIVATE Threads::Threads)
+set_target_properties(es-conf-tests PROPERTIES
+	CXX_STANDARD 17
+	CXX_STANDARD_REQUIRED ON
+	RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+
 # AtomicFileUtil's _WIN32 branches, compiled on this host with _WIN32
 # defined for that one object (audit of the fixes of #307, claude
 # G-E1-06): the header's contract for them is checked where it can run.

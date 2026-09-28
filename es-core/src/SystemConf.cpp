@@ -26,6 +26,8 @@ static std::string mapSettingsName(const std::string& name)
 
 SystemConf *SystemConf::sInstance = NULL;
 bool SystemConf::sRecovered = false;
+std::string SystemConf::sLockPath = "/tmp/.system.cfg.lock";
+int SystemConf::sLockBudgetMs = 5000;
 
 static std::set<std::string> dontRemoveValue
 {
@@ -243,7 +245,7 @@ bool SystemConf::saveSystemConf()
 	// any set-and-save -- writes them over whatever the script left.
 	std::string out;
 	bool baseWhole = true;
-	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, "/tmp/.system.cfg.lock", 5000,
+	const Utils::AtomicFile::LockedSave saved = Utils::AtomicFile::saveUnderLock(mSystemConfFile, sLockPath, sLockBudgetMs,
 		[this](const std::string& current) { return applyChanges(current); }, &out, &baseWhole);
 
 	switch (saved)
