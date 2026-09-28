@@ -425,17 +425,19 @@ UserSummary RetroAchievements::getUserSummaryFromDevice()
 		return ret;
 	}
 
+	// No console name here: this runs on GuiLoading's worker, and the name
+	// is found through the game lists' FileData, which a folder rescan on
+	// the interface thread may be replacing at that moment (#308 1-raoffline
+	// claude F-RA-18; es-code-traps.md, a rescan that deletes FileData). The
+	// page's constructor, on the interface thread, looks each game up anyway
+	// for its hash, and fills the name from the same lookup.
 	std::vector<std::pair<std::string, RecentGame>> games;
 	for (const auto& game : stored)
 	{
-		FileData* file = GuiRetroAchievements::getFileData(std::to_string(game.id));
-
 		RecentGame recent;
 		recent.GameID = std::to_string(game.id);
 		recent.Title = game.title;
 		recent.ImageIcon = game.icon;
-		if (file != nullptr && file->getSourceFileData() != nullptr && file->getSourceFileData()->getSystem() != nullptr)
-			recent.ConsoleName = file->getSourceFileData()->getSystem()->getFullName();
 
 		Award award;
 		award.NumPossibleAchievements = game.achievements;
