@@ -24,7 +24,7 @@
 
 #define ICONINDEX _U("\uF0C2 ")
 
-ThreadedCloudSync* ThreadedCloudSync::mInstance = nullptr;
+std::atomic<ThreadedCloudSync*> ThreadedCloudSync::mInstance(nullptr);
 std::mutex ThreadedCloudSync::sInstanceLock;
 
 ThreadedCloudSync::ThreadedCloudSync(Window* window, const std::string& command,
@@ -58,7 +58,9 @@ ThreadedCloudSync::~ThreadedCloudSync()
 
 	// Only if it is still us. run() clears this as soon as the work ends so
 	// another sync can start during the few seconds the card holds its
-	// result -- and if one has, the static belongs to that one now.
+	// result -- and if one has, the static belongs to that one now. Under
+	// the lock, like every other change to it (#308 F-CS-25).
+	std::lock_guard<std::mutex> lock(sInstanceLock);
 	if (ThreadedCloudSync::mInstance == this)
 		ThreadedCloudSync::mInstance = nullptr;
 }
@@ -553,6 +555,7 @@ void ThreadedCloudSync::run()
 	// appeared where one thing happened. Say it in the card that has been
 	// reporting all along, hold it long enough to read, and let that same
 	// card fade.
+	bool lingerShort = false;   // a completed run with nothing to act on: a shorter linger, below
 	if (mWndNotification != nullptr)
 	{
 		mWndNotification->updateTitle(ICONINDEX + mTitle);
@@ -647,18 +650,24 @@ void ThreadedCloudSync::run()
 		// bar left standing under COULDN'T FINISH reads as a measure of how
 		// much of the failure has completed.
 		mWndNotification->updatePercent(completed ? 100 : -1);
+		lingerShort = completed && action.empty();
+	}
 
-		// Nothing is running any more, so stop claiming otherwise: somebody
-		// who wants to start another sync while the card is still up should
-		// not be told one is already going. Under the lock, so a
-		// cancelForLaunch that has just taken the pointer finishes
-		// with it before it goes -- and the delete below is a linger later.
-		{
-			std::lock_guard<std::mutex> lock(sInstanceLock);
-			if (ThreadedCloudSync::mInstance == this)
-				ThreadedCloudSync::mInstance = nullptr;
-		}
+	// Nothing is running any more, so stop claiming otherwise: somebody who
+	// wants to start another sync while the card is still up should not be
+	// told one is already going. Under the lock, so a cancelForLaunch that
+	// has just taken the pointer finishes with it before it goes -- and the
+	// delete below is a linger later. Whether or not there was a card: this
+	// used to happen only inside the card's branch, leaving a run with no
+	// card to the destructor's unlocked clear (#308 F-CS-25).
+	{
+		std::lock_guard<std::mutex> lock(sInstanceLock);
+		if (ThreadedCloudSync::mInstance == this)
+			ThreadedCloudSync::mInstance = nullptr;
+	}
 
+	if (mWndNotification != nullptr)
+	{
 		// Hold the outcome long enough to read, then let the card fade.
 		// Success is one word and a full bar, and somebody who just exited
 		// a game is standing there watching it, so a second and a half (two
@@ -666,7 +675,7 @@ void ThreadedCloudSync::run()
 		// act on, so five. Five for everything dated from when a sync took
 		// 18 seconds -- once the exit sync came down to about five, the card
 		// spent as long saying it was done as it had spent working.
-		std::this_thread::sleep_for(std::chrono::milliseconds(completed && action.empty() ? 1500 : 5000));
+		std::this_thread::sleep_for(std::chrono::milliseconds(lingerShort ? 1500 : 5000));
 	}
 
 	// A question the run asked us to put to the player, once its card has
@@ -704,14 +713,19 @@ void ThreadedCloudSync::start(Window* window, const std::string& command,
 	// this run with CloudExit::LockHeld and the card would say these same
 	// words after starting; said here, before, in the words the flock's
 	// code reads as.
-	if (ThreadedCloudSync::mInstance != nullptr || CloudTransferJob::running())
+	//
+	// The check and the install are one hold of the lock (#308 F-CS-25): the
+	// check used to be made before the lock was taken, so two starts at once
+	// could both find nothing running and both install a sync.
 	{
-		window->pushGui(new GuiMsgBox(window, _("A SYNC IS ALREADY RUNNING.")));
-		return;
+		std::lock_guard<std::mutex> lock(sInstanceLock);
+		if (ThreadedCloudSync::mInstance == nullptr && !CloudTransferJob::running())
+		{
+			ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
+			return;
+		}
 	}
-
-	std::lock_guard<std::mutex> lock(sInstanceLock);
-	ThreadedCloudSync::mInstance = new ThreadedCloudSync(window, command, title, running, origin);
+	window->pushGui(new GuiMsgBox(window, _("A SYNC IS ALREADY RUNNING.")));
 }
 
 bool ThreadedCloudSync::cancelForLaunch(CancelRefusal* refusal, bool evenIfPlayerStarted)

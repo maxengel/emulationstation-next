@@ -39,7 +39,10 @@ public:
 	static void start(Window* window, const std::string& command,
 	                  const std::string& title, const std::string& running = "",
 	                  Origin origin = Origin::None);
-	static bool isRunning() { return mInstance != nullptr; }
+	// Read from any thread without the lock -- the launch gate, the save
+	// state manager, the proxy's cards -- so the pointer is atomic; only the
+	// answer is read here, never the object (#308 F-CS-25).
+	static bool isRunning() { return mInstance.load() != nullptr; }
 
 	// A game launch during a sync EmulationStation started on its own -- the
 	// startup sync, the after-a-game backup -- cancels the sync in whatever
@@ -168,10 +171,12 @@ private:
 	Window*						mWindow;
 	AsyncNotificationComponent* mWndNotification;
 
-	static ThreadedCloudSync*	mInstance;
-	// Holds mInstance steady while cancelForLaunch dereferences it: run()
-	// clears the pointer from the worker thread, and deletes the object
-	// after the card's linger, so a caller that took the pointer under this
-	// lock has an object that outlives the call.
+	static std::atomic<ThreadedCloudSync*> mInstance;
+	// Every change to mInstance, and every use of the object it names, is
+	// made under this lock: start() checks and installs in one hold, run()
+	// clears it before the card's linger, the destructor clears it if it is
+	// still this one, and cancelForLaunch dereferences it -- so a caller
+	// that took the pointer under the lock has an object that outlives the
+	// call, and two starts cannot both see "none" (#308 F-CS-25).
 	static std::mutex			sInstanceLock;
 };
