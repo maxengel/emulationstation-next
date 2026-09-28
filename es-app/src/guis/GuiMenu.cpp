@@ -5361,9 +5361,14 @@ void GuiMenu::openCloud(Window* window)
 	{
 		// One line under the label on both panels (D-UI-023; the budget is
 		// noted at openRestoreRelink's DEVICE PASSWORD row).
+		// FINISH from here finishes the restore, as it does from NETWORK
+		// SETTINGS: the row exists only while the marker does, and passing
+		// false -- from when the row was always there -- left the marker, so
+		// the page came back at the next start after FINISH (#308 8a gpt
+		// F-ES-06).
 		s->addWithDescription(_("FINISH RESTORE PROCESS"),
 			_("RE-ENTER THE PASSWORDS BACKUPS LEAVE OUT (WI-FI, ACCOUNTS, DEVICE)."), nullptr,
-			[window] { GuiMenu::openRestoreRelink(window, false); }, "", false, true);
+			[window] { GuiMenu::openRestoreRelink(window, true); }, "", false, true);
 	}
 
 	window->pushGui(s);
@@ -7526,6 +7531,9 @@ void GuiMenu::openCloudSetup(Window* window)
 // the sanitized system.cfg drops `wifi.key`, so a settings restore
 // disconnects Wi-Fi, and the cloud-journey continuation that follows
 // this page needs the network back.
+static void networkApplyWifi(Window* window, const std::string& title,
+	const std::function<bool()>& apply, const std::function<void(bool)>& onDone);
+
 void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 {
 	const std::string restoreMarker = "/storage/.config/.restore-finish-pending";
@@ -7563,17 +7571,37 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	{
 		auto wifi = new GuiSettings(window, _("WI-FI PASSWORD"));
 		wifi->addInputTextConfigRow(_("WI-FI PASSWORD"), "wifi.key", true);
-		wifi->addSaveFunc([]
+		// The association behind the spinner every other Wi-Fi apply in this
+		// file uses (networkApplyWifi): it ran from a save function on the
+		// interface thread, and wifictl connect can take the better part of
+		// two minutes -- a frozen screen after a restore, with no word (#308
+		// 8-es claude F-ES-02, 8a gpt F-ES-07). The page comes back when it
+		// ends, and a failure is said over it.
+		// The key row writes SystemConf in memory only, and the page has no
+		// save function to write the file (GuiSettings::save returns early
+		// without one): written here, before the association reads it.
+		wifi->onFinalize([window, s, reopen]
 		{
-			std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
-			std::string key = SystemConf::getInstance()->get("wifi.key");
-			if (SystemConf::getInstance()->getBool("wifi.enabled") && !ssid.empty() && !key.empty())
+			SystemConf::getInstance()->saveSystemConf();
+			s->close();
+			const std::string ssid = SystemConf::getInstance()->get("wifi.ssid");
+			const std::string key = SystemConf::getInstance()->get("wifi.key");
+			const std::string country = SystemConf::getInstance()->get("wifi.country");
+			if (!SystemConf::getInstance()->getBool("wifi.enabled") || ssid.empty() || key.empty())
 			{
-				LOG(LogInfo) << "restore relink: reconnecting wifi to " << ssid;
-				ApiSystem::getInstance()->enableWifi(ssid, key, SystemConf::getInstance()->get("wifi.country"));
+				reopen();
+				return;
 			}
+			LOG(LogInfo) << "restore relink: reconnecting wifi to " << ssid;
+			networkApplyWifi(window, _("CONNECTING TO WI-FI"),
+				[ssid, key, country] { return ApiSystem::getInstance()->enableWifi(ssid, key, country); },
+				[window, reopen](bool ok)
+				{
+					reopen();
+					if (!ok)
+						window->pushGui(new GuiMsgBox(window, _("WI-FI CONFIGURATION ERROR")));
+				});
 		});
-		wifi->onFinalize([s, reopen] { s->close(); reopen(); });
 		window->pushGui(wifi);
 	});
 
@@ -7708,10 +7736,15 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	// LATER keeps the marker, so this page returns on the next boot -- but
 	// nothing said so, leaving the player unable to tell defer from discard.
 	// One line under the label, as above: the page name is the long part,
-	// so the sentence around it is a fragment.
-	s->addWithDescription(_("LATER KEEPS THIS LIST"),
-		_("BACK AT STARTUP, OR IN NETWORK SETTINGS > FINISH RESTORE PROCESS."),
-		nullptr, nullptr, "", false, true);
+	// so the sentence around it is a fragment. Only when there is a marker
+	// to keep: the RetroAchievements prompt at startup opens this page with
+	// none (main.cpp), and then nothing brings it back -- both rows that
+	// would are shown only while the marker is there (#308 8-es claude
+	// F-ES-12). Read uncached, like those rows.
+	if (Utils::FileSystem::exists(restoreMarker, false))
+		s->addWithDescription(_("LATER KEEPS THIS LIST"),
+			_("BACK AT STARTUP, OR IN NETWORK SETTINGS > FINISH RESTORE PROCESS."),
+			nullptr, nullptr, "", false, true);
 
 	// FINISH consumes the marker; LATER leaves it so the next boot
 	// offers this page again. Consuming on completion rather than on
