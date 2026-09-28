@@ -1,4 +1,5 @@
 #include "OfflineScanJob.h"
+#include "CloudText.h"
 
 #include "Window.h"
 #include "Log.h"
@@ -250,21 +251,12 @@ void OfflineScanJob::handleLine(const std::string& line)
 	changed();
 }
 
-// Drop C0 controls and DEL, keep every UTF-8 byte (a game's name may carry
-// one), then trim.
+// One line of a script's output: ANSI escapes, C0 controls and DEL dropped,
+// every UTF-8 byte kept, then trimmed -- CloudText::cleanLine, the rule the
+// sync card reads by since #308 F-CS-19. This page carried a copy of its
+// own; the two gave the same line for every input, and one copy is one
+// rule to change.
 std::string OfflineScanJob::cleanLine(const std::string& raw)
 {
-	std::string clean;
-	for (size_t i = 0; i < raw.size(); ++i)
-	{
-		if (raw[i] == 0x1B)
-		{
-			while (i < raw.size() && !isalpha((unsigned char) raw[i]))
-				i++;
-			continue;
-		}
-		if (((unsigned char) raw[i] >= 32 && (unsigned char) raw[i] < 127) || (unsigned char) raw[i] >= 0x80)
-			clean += raw[i];
-	}
-	return Utils::String::trim(clean);
+	return CloudText::cleanLine(raw);
 }

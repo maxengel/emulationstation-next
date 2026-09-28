@@ -770,7 +770,11 @@ void GuiCloudTransfer::update(int deltaTime)
 				std::string names;
 				for (size_t i = 0; i < g.second.size(); i++)
 					names += (i ? ", " : "") + g.second[i];
-				detail += (detail.empty() ? "" : "  ·  ") + names + (names.empty() ? "" : " - ") + g.first;
+				// In the interface's language: a script says its why in
+				// English (">>> why"), the code's phrase is translated
+				// already, and localizedWhy passes one it does not list as it
+				// came (#308 F-CS-31).
+				detail += (detail.empty() ? "" : "  ·  ") + names + (names.empty() ? "" : " - ") + CloudText::localizedWhy(g.first);
 			}
 			mDetail->setText(fitOneLine(mSmallFont, detail, mLineWidth));
 		}

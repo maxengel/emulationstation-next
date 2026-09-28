@@ -4401,7 +4401,10 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 	// which of the four outcomes it names -- is parsed in CloudText, where
 	// a test can reach it without a device or a locale (es-app/tests/unit).
 	// What stays here is the read, the fallback why for a stamp that gave
-	// none, and the outcome said in the player's language.
+	// none, and the outcome said in the player's language -- the why too:
+	// the stamp keeps the script's English sentence for its readers, and
+	// CloudText::localizedWhy turns it into the interface's language, as the
+	// card does (#308 F-CS-31; one it does not list comes back as it was).
 	const CloudText::LastRun p = CloudText::parseLastRun(Utils::FileSystem::readAllText(path));
 	if (!p.ran)
 		return r;
@@ -4422,7 +4425,7 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 		// can tell it from a total failure; the row says what every other
 		// failure says (D-UI-030).
 		r.outcome = _("COULDN'T FINISH");
-		r.why = p.why.empty() ? ThreadedCloudSync::whyForToken(p.token) : p.why;
+		r.why = p.why.empty() ? ThreadedCloudSync::whyForToken(p.token) : CloudText::localizedWhy(p.why);
 		break;
 	case CloudText::Outcome::SkippedLockHeld:
 		r.outcome = _("SKIPPED, ANOTHER SYNC WAS RUNNING");
@@ -4439,7 +4442,7 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 	case CloudText::Outcome::Failed:
 	{
 		// The token's phrase for one of ours, the code's for anything else.
-		std::string why = p.why;
+		std::string why = CloudText::localizedWhy(p.why);
 		if (why.empty() && p.knownToken)
 			why = ThreadedCloudSync::whyForToken(p.token);
 		if (why.empty())

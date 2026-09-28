@@ -675,25 +675,12 @@ void CloudTransferJob::restampStoppedParts(const char* token)
 	}
 }
 
-// Drop ANSI escapes and anything unprintable, then trim. A terminal-attached
-// rclone moves the cursor to redraw in place; those sequences are instructions
-// to a terminal that is not here.
+// One line of a script's output: ANSI escapes, C0 controls and DEL dropped,
+// every UTF-8 byte kept, then trimmed -- CloudText::cleanLine, the rule the
+// sync card reads by since #308 F-CS-19. This page carried a copy of its
+// own; the two gave the same line for every input, and one copy is one
+// rule to change.
 std::string CloudTransferJob::cleanLine(const std::string& raw)
 {
-	std::string clean;
-	for (size_t i = 0; i < raw.size(); ++i)
-	{
-		if (raw[i] == 0x1B)
-		{
-			while (i < raw.size() && !isalpha((unsigned char) raw[i]))
-				i++;
-			continue;
-		}
-		// Printable ASCII and every UTF-8 byte: rclone shortens a long name
-		// with U+2026, and dropping it as "unprintable" turned "Ikari n...ge"
-		// into "Ikari nge" on the page. Only C0 controls and DEL are noise.
-		if (((unsigned char) raw[i] >= 32 && (unsigned char) raw[i] < 127) || (unsigned char) raw[i] >= 0x80)
-			clean += raw[i];
-	}
-	return Utils::String::trim(clean);
+	return CloudText::cleanLine(raw);
 }
