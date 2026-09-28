@@ -21,6 +21,7 @@
 #include "ThreadedHasher.h"
 #include "scrapers/ThreadedScraper.h"
 #include "FolderMerge.h"
+#include "DisplayAspect.h"
 #include "views/gamelist/IGameListView.h"
 #include <unordered_set>
 #include <algorithm>
@@ -492,6 +493,14 @@ void SystemData::rescanIfFolderChanged()
 	mFilterIndex = index;
 
 	LOG(LogInfo) << "SystemData::rescanIfFolderChanged: " << getName() << " " << tree.vanishedCount << " gone, " << tree.arrivedCount << " new";
+
+	// Which game a screenshot belongs to is cached by content name, misses
+	// included, and built from the library once (DisplayAspect): a library
+	// that changed makes both wrong -- a screenshot looked at before its ROM
+	// arrived kept its file's proportions (#308 8-es claude F-ES-15, 8a gpt
+	// F-ES-09).
+	if (tree.vanishedCount > 0 || tree.arrivedCount > 0)
+		DisplayAspect::forgetScreenshots();
 
 	if (ViewController::get() != nullptr)
 	{

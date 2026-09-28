@@ -1,4 +1,5 @@
 #include "views/ViewController.h"
+#include "DisplayAspect.h"
 
 #include "animations/Animation.h"
 #include "animations/LambdaAnimation.h"
@@ -1450,6 +1451,9 @@ void ViewController::reloadAllGames(Window* window, bool deleteCurrentGui, bool 
 
 	CollectionSystemManager::init(window);		
 	SystemData::loadConfig(window);
+	// The screenshot -> game cache was built from the library just replaced
+	// (DisplayAspect; #308 8-es claude F-ES-15, 8a gpt F-ES-09).
+	DisplayAspect::forgetScreenshots();
 	
 	ViewController::get()->goToSystemView(systemName, true, viewMode);	
 	ViewController::get()->reloadAll(nullptr, false); // Avoid reloading themes a second time
