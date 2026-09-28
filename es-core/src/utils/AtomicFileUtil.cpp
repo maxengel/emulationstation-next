@@ -395,6 +395,42 @@ namespace Utils
 			return out;
 		}
 
+		// A choice that is to be written back as the live file.
+		static bool isRecovery(const LoadedConfig& chosen)
+		{
+			return chosen.source == LoadedConfig::Source::Temporary || chosen.source == LoadedConfig::Source::Backup;
+		}
+
+		LoadedConfig loadUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			RecoveryWrite* wrote)
+		{
+			if (wrote != nullptr)
+				*wrote = RecoveryWrite::None;
+
+			LoadedConfig chosen = chooseConfig(path);
+			if (!isRecovery(chosen))
+				return chosen;
+
+			PidLock lock(lockPath);
+			if (!lock.acquire(timeoutMs))
+			{
+				if (wrote != nullptr)
+					*wrote = RecoveryWrite::LockBusy;
+				return chosen;
+			}
+
+			// Again, with the lock: a writer that held it while this waited may
+			// have put a whole file in place, and that file is the one to read.
+			chosen = chooseConfig(path);
+			if (!isRecovery(chosen))
+				return chosen;
+
+			const bool written = writeText(path, chosen.text, chosen.mode);
+			if (wrote != nullptr)
+				*wrote = written ? RecoveryWrite::Written : RecoveryWrite::WriteFailed;
+			return chosen;
+		}
+
 		bool isFlockHeld(const std::string& path)
 		{
 #if defined(_WIN32)
@@ -489,7 +525,7 @@ namespace Utils
 			if (!whole || !isUsableKeyValues(current))
 			{
 				const LoadedConfig chosen = chooseConfig(path);
-				if (chosen.source == LoadedConfig::Source::Temporary || chosen.source == LoadedConfig::Source::Backup)
+				if (isRecovery(chosen))
 				{
 					base = chosen.text;
 					whole = true;

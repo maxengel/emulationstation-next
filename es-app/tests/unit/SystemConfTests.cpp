@@ -27,6 +27,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <sys/stat.h>
@@ -328,4 +329,62 @@ TEST_CASE("a save onto an emptied system.cfg keeps the record's keys (audit of t
 	const std::string saved = "system.hostname=A\nwifi.ssid=Home\naudio.volume=40\n";
 	CHECK(get(path) == saved);
 	CHECK(get(path + ".backup") == saved);
+}
+
+// ------------------------------------------------------------ G2-E-core-02
+
+TEST_CASE("a recovery is written back under the settings lock, and only while it is still the recovery (audit of the fix round, gpt G2-E-core-02, claude G2-E-core-07)")
+{
+	// The load chose the record (or the temporary) and wrote it over the
+	// live file without the lock every other writer of system.cfg takes --
+	// the save, the shell's set_setting. A write the shell landed between
+	// the choice and the write-back was lost under it.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	const std::string damaged = "# nothing usable here\n";
+	const std::string record = "system.hostname=A\nwifi.ssid=Home\naudio.volume=70\n";
+	put(path, damaged);
+	put(path + ".backup", record);
+
+	SUBCASE("a holder keeps the lock past the budget: nothing is written, and the next save writes the recovery")
+	{
+		SystemConf* conf = nullptr;
+		{
+			PidLock other(lockPath);
+			REQUIRE(other.acquire(1000));
+			conf = SystemConfTestAccess::fresh(path, lockPath, 300);
+			CHECK(get(path) == damaged);   // not written while somebody else held the lock
+		}
+		CHECK(conf->get("wifi.ssid") == "Home");   // read, all the same
+		CHECK(SystemConfTestAccess::recovered());
+
+		CHECK(conf->set("audio.volume", "40"));
+		CHECK(conf->saveSystemConf());
+		CHECK(get(path) == "system.hostname=A\nwifi.ssid=Home\naudio.volume=40\n");
+	}
+	SUBCASE("the shell writes a whole file while the load waits: that file is the one read, and it stands")
+	{
+		const std::string theirs = "system.hostname=A\nwifi.ssid=Library\naudio.volume=70\n";
+		PidLock other(lockPath);
+		REQUIRE(other.acquire(1000));
+		std::thread shell([&]()
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+			put(path + ".sh", theirs);
+			std::rename((path + ".sh").c_str(), path.c_str());
+			other.release();
+		});
+		SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 3000);
+		shell.join();
+		CHECK(get(path) == theirs);
+		CHECK(conf->get("wifi.ssid") == "Library");
+	}
+	SUBCASE("a free lock: the recovery is written back, as before")
+	{
+		SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 300);
+		CHECK(get(path) == record);
+		CHECK(conf->get("wifi.ssid") == "Home");
+		CHECK(SystemConfTestAccess::recovered());
+	}
 }

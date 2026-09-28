@@ -195,9 +195,23 @@ bool SystemConf::loadFromDisk()
 	// script runs.
 	std::remove((mSystemConfFile + ".backup.tmp").c_str());
 
-	const Utils::AtomicFile::LoadedConfig chosen = Utils::AtomicFile::chooseConfig(mSystemConfFile);
+	// The choice, and a recovery's write-back under the settings lock the
+	// save and the shell's set_setting take (audit of the fix round, gpt
+	// G2-E-core-02, claude G2-E-core-07): the write-back used to run without
+	// it, and a script's write that landed between the choice and the write
+	// was lost under it.
+	Utils::AtomicFile::RecoveryWrite wrote = Utils::AtomicFile::RecoveryWrite::None;
+	const Utils::AtomicFile::LoadedConfig chosen = Utils::AtomicFile::loadUnderLock(mSystemConfFile, sLockPath, sLockBudgetMs, &wrote);
 	// No less private than any copy it came from (G-E1-05).
 	const int mode = chosen.mode;
+	const auto reportWriteBack = [this, wrote](const char* from)
+	{
+		if (wrote == Utils::AtomicFile::RecoveryWrite::WriteFailed)
+			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from " << from;
+		else if (wrote == Utils::AtomicFile::RecoveryWrite::LockBusy)
+			LOG(LogWarning) << "loadFromDisk: the settings lock was not free within " << sLockBudgetMs << " ms; "
+				<< mSystemConfFile << " is read from " << from << " and not written back -- the next save writes it";
+	};
 
 	switch (chosen.source)
 	{
@@ -216,8 +230,7 @@ bool SystemConf::loadFromDisk()
 		LOG(LogWarning) << mSystemConfFile << " is cut short or unreadable beside a whole " << mSystemConfFile
 			<< ".tmp that an interrupted save left -- loading that and writing it back";
 		parseSystemConf(chosen.text);
-		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
-			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from " << mSystemConfFile << ".tmp";
+		reportWriteBack("its .tmp");
 		recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;
@@ -226,12 +239,11 @@ bool SystemConf::loadFromDisk()
 		LOG(LogWarning) << mSystemConfFile << " is missing, empty, unreadable, damaged or cut short of the record -- loading the last-known-good record "
 			<< mSystemConfFile << ".backup and writing it back";
 		parseSystemConf(chosen.text);
-		if (!Utils::AtomicFile::writeText(mSystemConfFile, chosen.text, mode))
-			LOG(LogError) << "Unable to write " << mSystemConfFile << " back from its last-known-good record";
-		// The same text: only the record's mode can change, to the one the
-		// live file was just written with (claude G2-E-core-04 b: a record an
-		// earlier build made 0644 stayed so beside the 0600 file until the
-		// next save).
+		reportWriteBack("its last-known-good record");
+		// The same text: only the record's mode can change, to the one every
+		// copy shares, which the live file is written with (claude
+		// G2-E-core-04 b: a record an earlier build made 0644 stayed so beside
+		// the 0600 file until the next save).
 		recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;

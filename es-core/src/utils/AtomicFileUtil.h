@@ -86,6 +86,29 @@ namespace Utils
 		// The choice, from what is on disk now. Reads; writes nothing.
 		LoadedConfig chooseConfig(const std::string& path);
 
+		// What the load's write-back of a recovery came to.
+		enum class RecoveryWrite
+		{
+			None,          // nothing to write back: the live file was taken, or nothing could be read
+			Written,       // written back as the live file, with the settings lock held
+			WriteFailed,   // the lock was held and the write did not land: the file is as it was
+			LockBusy       // the lock stayed with a live holder past the budget: nothing written
+		};
+
+		// SystemConf's load: chooseConfig, and where it names a recovery --
+		// the whole temporary or the whole record, to be written back as the
+		// live file -- the choice made again with the settings lock at
+		// `lockPath` held, and written back under it with the mode every copy
+		// shares (audit of the fix round G2-E-core-02). The write-back used to
+		// run without the lock every other writer of the file takes, so a
+		// set_setting that landed between the choice and the write was lost
+		// under it. The answer is the choice the text was read from. With the
+		// lock busy past `timeoutMs` it is the first choice and nothing is
+		// written: the next save, under the lock, merges onto the same
+		// recovery (saveUnderLock).
+		LoadedConfig loadUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
+			RecoveryWrite* wrote = nullptr);
+
 		// Whether another process holds an flock on `path` now: the cloud
 		// scripts' transfer lock, /var/run/cloud_sync.lock, which every
 		// cloud_backup, cloud_restore and content run takes for its whole
