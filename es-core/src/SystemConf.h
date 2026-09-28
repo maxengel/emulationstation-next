@@ -5,6 +5,7 @@
 #include <string>
 #include <map>
 #include <set>
+#include <utility>
 
 class SystemConf 
 {
@@ -14,7 +15,14 @@ public:
 	static bool getIncrementalSaveStates();
 	static bool getIncrementalSaveStatesUseCurrentSlot();
 
-    bool loadSystemConf();
+	// Read system.cfg (again). keepPending keeps the changes a save has not
+	// made yet -- one the lock refused (PL-024) -- except where the file now
+	// holds a key differently than when it was changed (audit of the fixes
+	// G-E1-03, Utils::AtomicFile::pendingAfterReload): the Wi-Fi picker's
+	// reload after wifictl join wrote the network. Without it every change
+	// is dropped and the file's values stand, which is what a reload after
+	// a settings restore or a factory reset is for.
+    bool loadSystemConf(bool keepPending = false);
     bool saveSystemConf();
 
 	// True when this start found system.cfg missing, empty or damaged and
@@ -44,8 +52,18 @@ private:
 	// changedConf's keys applied to the file's text as read under the lock.
 	std::string applyChanges(const std::string& current);
 
+	// The file as read, and the load itself (loadSystemConf wraps it).
+	bool loadFromDisk();
+
 	std::map<std::string, std::string> confMap;
 	std::set<std::string> changedConf;
+	// For each key in changedConf: what it held when it was first changed
+	// since the last save (false: nothing), for a reload to tell the player's
+	// change from somebody else's newer write (G-E1-03).
+	std::map<std::string, std::pair<bool, std::string>> mPendingBase;
+	// The values of the text the last load parsed, alone -- confMap also
+	// carries keys the file no longer has.
+	std::map<std::string, std::string> mOnDisk;
 
 
 	std::string mSystemConfFile;

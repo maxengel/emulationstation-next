@@ -3,6 +3,7 @@
 #define ES_CORE_UTILS_ATOMIC_FILE_UTIL_H
 
 #include <functional>
+#include <map>
 #include <string>
 
 // Whole-file writes that leave either the old file or the new one on disk,
@@ -92,6 +93,30 @@ namespace Utils
 		// a file that cannot be opened or asked is taken as held, since the
 		// callers refuse on held.
 		bool isFlockHeld(const std::string& path);
+
+		// A key=value text as SystemConf reads it: comment lines (# or ;)
+		// and lines without a key or a value skipped, the last of a repeated
+		// key kept.
+		std::map<std::string, std::string> parseKeyValues(const std::string& text);
+
+		// A change the interface made and has not saved yet (a save refused
+		// for the lock keeps it, PL-024): its value, and what the key held
+		// when the change was made -- hadBase false when it held nothing.
+		struct PendingChange
+		{
+			std::string value;
+			bool hadBase = false;
+			std::string base;
+		};
+
+		// Which pending changes a reload of the file keeps (audit of the fixes
+		// G-E1-03): each whose key the file still holds as it was when the
+		// change was made, which is then made again at the next save. A key
+		// the file now holds differently was written by somebody else since --
+		// wifictl join's wifi.ssid, a script's set_setting -- and that newer
+		// write wins. The answer is the changes to keep, key to value.
+		std::map<std::string, std::string> pendingAfterReload(const std::map<std::string, PendingChange>& pending,
+			const std::map<std::string, std::string>& reloaded);
 
 		// What a read-modify-write under the settings lock came to.
 		enum class LockedSave

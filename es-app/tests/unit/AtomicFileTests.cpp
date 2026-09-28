@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -727,5 +728,51 @@ TEST_CASE("a thread that ends unjoined keeps its stack; a detached one gives it 
 	CHECK(leaked > 20 * 4096);      // a stack each, at least 4 MiB of address space apiece
 	CHECK(detached < 4 * 8192);     // a stack or two, reused from glibc's cache
 	CHECK(tasksAfterLeak == tasksBefore);   // why `ls /proc/<pid>/task` cannot see it
+}
+
+// ------------------------------------------------------ G-E1-03
+
+TEST_CASE("a reload keeps the changes still waiting to be saved, unless the file moved under them (G-E1-03)")
+{
+	// A save refused for the lock keeps its changes for the next save
+	// (PL-024) -- and the Wi-Fi picker's reload after a join cleared them, so
+	// the next save had nothing to make. A change survives a reload when
+	// the file still holds the key as it was when the change was made; a
+	// key the file now holds differently was written by somebody since
+	// (wifictl join wrote wifi.ssid), and theirs is the newer write.
+	std::map<std::string, PendingChange> pending;
+	pending["audio.volume"] = { "40", true, "70" };              // the player's; the file still says 70
+	pending["wifi.ssid"] = { "Old Cafe", true, "Home" };         // the join rewrote it: Library
+	pending["global.retroachievements"] = { "1", false, "" };    // new key; the file still has none
+	pending["system.language"] = { "fr_FR", false, "" };         // new key; a script added one since
+
+	const std::map<std::string, std::string> reloaded = {
+		{ "audio.volume", "70" },
+		{ "wifi.ssid", "Library" },
+		{ "system.language", "de_DE" },
+		{ "system.hostname", "RG35XXSP" },
+	};
+
+	const auto kept = pendingAfterReload(pending, reloaded);
+	CHECK(kept.size() == 2);
+	REQUIRE(kept.count("audio.volume") == 1);
+	CHECK(kept.at("audio.volume") == "40");
+	REQUIRE(kept.count("global.retroachievements") == 1);
+	CHECK(kept.at("global.retroachievements") == "1");
+	CHECK(kept.count("wifi.ssid") == 0);
+	CHECK(kept.count("system.language") == 0);
+
+	// Nothing pending, nothing kept.
+	CHECK(pendingAfterReload({}, reloaded).empty());
+}
+
+TEST_CASE("parseKeyValues reads a system.cfg as SystemConf always has")
+{
+	const auto v = parseKeyValues("# comment\n;also\nsystem.hostname=RG\nempty=\n=novalue\nwifi.key=a=b\naudio.volume=70\naudio.volume=40\n");
+	CHECK(v.size() == 3);
+	CHECK(v.at("system.hostname") == "RG");
+	CHECK(v.at("wifi.key") == "a=b");      // the value is everything after the first =
+	CHECK(v.at("audio.volume") == "40");   // the last of a repeated key
+	CHECK(v.count("empty") == 0);
 }
 

@@ -361,6 +361,41 @@ namespace Utils
 #endif
 		}
 
+		std::map<std::string, std::string> parseKeyValues(const std::string& text)
+		{
+			std::map<std::string, std::string> values;
+			std::istringstream in(text);
+			std::string line;
+			while (std::getline(in, line))
+			{
+				const size_t idx = line.find('=');
+				if (idx == std::string::npos || line.find('#') == 0 || line.find(';') == 0)
+					continue;
+				const std::string key = line.substr(0, idx);
+				const std::string value = line.substr(idx + 1);
+				if (!key.empty() && !value.empty())
+					values[key] = value;
+			}
+			return values;
+		}
+
+		std::map<std::string, std::string> pendingAfterReload(const std::map<std::string, PendingChange>& pending,
+			const std::map<std::string, std::string>& reloaded)
+		{
+			std::map<std::string, std::string> kept;
+			for (const auto& change : pending)
+			{
+				const auto now = reloaded.find(change.first);
+				const bool hasNow = now != reloaded.cend();
+				if (hasNow != change.second.hadBase)
+					continue;   // added or removed by somebody since
+				if (hasNow && now->second != change.second.base)
+					continue;   // rewritten by somebody since
+				kept[change.first] = change.second.value;
+			}
+			return kept;
+		}
+
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
 			const std::function<std::string(const std::string& current)>& merge, std::string* written)
 		{
