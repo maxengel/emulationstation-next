@@ -306,3 +306,26 @@ TEST_CASE("a recovery's record is no less private than the copy it came from (au
 	}
 	umask(before);
 }
+
+// ------------------------------------------------------------ G2-E-core-03
+
+TEST_CASE("a save onto an emptied system.cfg keeps the record's keys (audit of the fix round, gpt G2-E-core-03)")
+{
+	// The whole record held every key; the live file was emptied after the
+	// load; the player changed one setting. The save wrote that one key
+	// alone, called the empty base whole, and recorded it: every other key
+	// gone from the file and from the record.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string whole = "system.hostname=A\nwifi.ssid=Home\naudio.volume=70\n";
+	put(path, whole);
+	SystemConf* conf = SystemConfTestAccess::fresh(path, dir / ".system.cfg.lock", 300);
+	REQUIRE(get(path + ".backup") == whole);
+
+	put(path, "");
+	CHECK(conf->set("audio.volume", "40"));
+	CHECK(conf->saveSystemConf());
+	const std::string saved = "system.hostname=A\nwifi.ssid=Home\naudio.volume=40\n";
+	CHECK(get(path) == saved);
+	CHECK(get(path + ".backup") == saved);
+}

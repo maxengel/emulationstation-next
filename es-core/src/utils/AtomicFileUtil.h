@@ -139,10 +139,14 @@ namespace Utils
 		// snapshot of the file renamed over the shell's new one, or the other
 		// way round -- lost one of the two writers' keys. The caller keeps its
 		// changes on any answer but Written and makes them at its next save.
-		// `baseComplete`, when given, says whether the text read under the lock
-		// was whole (empty, or ending in a line end): a save merged onto a cut
-		// file is written, and must not become the last-known-good record
-		// (audit of the fixes G-E1-04).
+		// A live file that is empty, cut part way through a line or unusable
+		// is not merged onto where chooseConfig names a recovery beside it --
+		// the whole temporary it is the start of, the whole record: the save
+		// merges onto that, with the mode every copy shares (audit of the fix
+		// round G2-E-core-03). `baseComplete`, when given, says whether the
+		// text merged onto was whole (not empty, ending in a line end): a save
+		// merged onto a cut file is written, and must not become the
+		// last-known-good record (audit of the fixes G-E1-04).
 		LockedSave saveUnderLock(const std::string& path, const std::string& lockPath, int timeoutMs,
 			const std::function<std::string(const std::string& current)>& merge, std::string* written = nullptr,
 			bool* baseComplete = nullptr);

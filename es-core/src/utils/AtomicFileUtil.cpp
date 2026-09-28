@@ -473,13 +473,37 @@ namespace Utils
 			// (On Windows a file not there yet is merged onto nothing and made,
 			// as SystemConf always did there.)
 
+			// Never onto a file the load would not have taken as the file (audit
+			// of the fix round, gpt G2-E-core-03). A live file that is empty,
+			// cut part way through a line or unusable is asked about as the
+			// load asks, and where chooseConfig names the recovery -- the whole
+			// temporary it is the start of, the whole record -- the save merges
+			// onto that, written with the mode every copy shares. An empty file
+			// used to count as whole: a save onto one wrote the changed keys
+			// alone, and they became the record over a whole one. A missing
+			// file is still refused above, so a factory reset's empty
+			// /storage is not refilled from memory.
+			std::string base = current;
+			bool whole = isComplete(current);
+			int mode = -1;
+			if (!whole || !isUsableKeyValues(current))
+			{
+				const LoadedConfig chosen = chooseConfig(path);
+				if (chosen.source == LoadedConfig::Source::Temporary || chosen.source == LoadedConfig::Source::Backup)
+				{
+					base = chosen.text;
+					whole = true;
+					mode = chosen.mode;
+				}
+			}
+
 			// A save merged onto a cut file lands (the change is the player's)
 			// but is not a record (G-E1-04).
 			if (baseComplete != nullptr)
-				*baseComplete = current.empty() || current.back() == '\n';
+				*baseComplete = whole;
 
-			const std::string out = merge(current);
-			if (!writeText(path, out))
+			const std::string out = merge(base);
+			if (!writeText(path, out, mode))
 				return LockedSave::WriteFailed;
 			if (written != nullptr)
 				*written = out;
