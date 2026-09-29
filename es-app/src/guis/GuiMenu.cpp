@@ -4064,10 +4064,18 @@ static std::string cloudSetSystemsCommand(const std::vector<std::string>& names)
 // The selection file's names, one a line. An ifstream, not readAllText:
 // that reads a file under three bytes as empty (es-code-traps.md), and a
 // one-letter name makes a two-byte file.
-static std::vector<std::string> cloudSelectionRead(const std::string& path)
+// The names in the selection file, and whether the file was read whole:
+// a path that is not a regular file (a directory opens, then getline
+// fails) or a read that ends in an error is not an empty selection (the
+// audit of the fixes, gpt G3-E-03).
+static bool cloudSelectionRead(const std::string& path, std::vector<std::string>& names)
 {
-	std::vector<std::string> names;
+	names.clear();
+	if (!Utils::FileSystem::isRegularFile(path))
+		return false;
 	std::ifstream in(path);
+	if (!in.is_open())
+		return false;
 	std::string line;
 	while (std::getline(in, line))
 	{
@@ -4076,7 +4084,7 @@ static std::vector<std::string> cloudSelectionRead(const std::string& path)
 		if (!line.empty())
 			names.push_back(line);
 	}
-	return names;
+	return in.eof() && !in.bad();
 }
 
 // The picker's selection, saved and then read back before anything moves on
@@ -4095,9 +4103,8 @@ static bool cloudSaveSelection(const std::vector<std::string>& names)
 		LOG(LogError) << "cloud content: --set-systems exited " << rc << "; the selection was not saved";
 		return false;
 	}
-	std::ifstream there(CLOUD_CONTENT_SELECTION);
-	const auto saved = cloudSelectionRead(CLOUD_CONTENT_SELECTION);
-	if (!there.is_open() || std::set<std::string>(saved.begin(), saved.end()) != std::set<std::string>(names.begin(), names.end()))
+	std::vector<std::string> saved;
+	if (!cloudSelectionRead(CLOUD_CONTENT_SELECTION, saved) || std::set<std::string>(saved.begin(), saved.end()) != std::set<std::string>(names.begin(), names.end()))
 	{
 		LOG(LogError) << "cloud content: --set-systems exited 0, but " << CLOUD_CONTENT_SELECTION << " does not name what was ticked";
 		return false;
@@ -4966,7 +4973,11 @@ static void cloudOpenTransfer(Window* window, bool backup)
 		int itemsAfterContent = 0;
 		if (wantContent || wantMedia)
 		{
-			items += (int) cloudSelectionRead(CLOUD_CONTENT_SELECTION).size();
+			{
+				std::vector<std::string> picked;
+				cloudSelectionRead(CLOUD_CONTENT_SELECTION, picked);
+				items += (int) picked.size();
+			}
 			itemsAfterContent = backup && wantSettings ? 1 : 0;
 		}
 
