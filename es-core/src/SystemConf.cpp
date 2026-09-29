@@ -137,6 +137,7 @@ bool SystemConf::loadSystemConf(bool keepPending)
 	changedConf.clear();
 	mPendingBase.clear();
 	mOnDisk.clear();
+	mLoadDamaged = false;
 	const bool loaded = loadFromDisk();
 
 	// Nothing read is no evidence about any key (audit of the fix round,
@@ -145,13 +146,15 @@ bool SystemConf::loadSystemConf(bool keepPending)
 	// pending set and from memory before the false came back. The changes
 	// stay, with their bases and the last reading of the file, for the
 	// next save or the next reload that reads something.
-	if (!loaded && keepPending)
+	// A damaged reading is no evidence either (claude G3-E-06): its parse has
+	// no usable line, and the comparison below would drop every change.
+	if ((!loaded || mLoadDamaged) && keepPending)
 	{
 		changedConf = unsaved;
 		mPendingBase = bases;
 		mOnDisk = onDiskBefore;
 		if (!unsaved.empty())
-			LOG(LogWarning) << "loadSystemConf: " << mSystemConfFile << " could not be read -- the " << unsaved.size()
+			LOG(LogWarning) << "loadSystemConf: " << mSystemConfFile << (mLoadDamaged ? " was read with no usable line" : " could not be read") << " -- the " << unsaved.size()
 				<< " change(s) not saved yet are kept for the next save";
 		return false;
 	}
@@ -255,6 +258,7 @@ bool SystemConf::loadFromDisk()
 		// good copy to record.
 		LOG(LogError) << mSystemConfFile << " has no usable key=value line and no whole last-known-good record; reading it as it is";
 		parseSystemConf(chosen.text);
+		mLoadDamaged = true;
 		return true;
 
 	case Utils::AtomicFile::LoadedConfig::Source::Missing:

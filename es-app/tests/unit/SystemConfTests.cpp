@@ -308,6 +308,28 @@ TEST_CASE("a recovery's record is no less private than the copy it came from (au
 	umask(before);
 }
 
+// ------------------------------------------------------------ G3-E-06
+
+TEST_CASE("a reload onto a damaged file keeps the pending change (the audit of the fixes, claude G3-E-06)")
+{
+	// A change pending; the live file then overwritten with junk, the record
+	// unusable too and no whole temporary: the reload parsed the junk, came
+	// back true, and the comparison dropped the change as removed by somebody.
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	put(path, "system.hostname=A\naudio.volume=70\n");
+	SystemConf* conf = SystemConfTestAccess::fresh(path, dir / ".system.cfg.lock", 300);
+	REQUIRE(conf->get("audio.volume") == "70");
+	CHECK(conf->set("audio.volume", "40"));
+	put(path + ".backup", "# nothing usable\n");
+	put(path, "# nothing usable here\n");
+	CHECK_FALSE(conf->loadSystemConf(true));
+	CHECK(conf->get("audio.volume") == "40");
+	put(path, "system.hostname=A\naudio.volume=70\n");
+	CHECK(conf->saveSystemConf());
+	CHECK(get(path) == "system.hostname=A\naudio.volume=40\n");
+}
+
 // ------------------------------------------------------------ G2-E-core-03
 
 TEST_CASE("a save onto an emptied system.cfg keeps the record's keys (audit of the fix round, gpt G2-E-core-03)")

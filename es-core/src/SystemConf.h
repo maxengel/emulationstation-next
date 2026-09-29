@@ -68,6 +68,12 @@ private:
 
 	// The file as read, and the load itself (loadSystemConf wraps it).
 	bool loadFromDisk();
+	// The last loadFromDisk read a live file the check found unusable, with
+	// no whole record and no whole temporary (Source::Damaged): it parsed
+	// what it could and returned true, so a reload that keeps its pending
+	// changes treats it as nothing read (the audit of the fixes, claude
+	// G3-E-06 -- every change looked removed by somebody).
+	bool mLoadDamaged = false;
 
 	std::map<std::string, std::string> confMap;
 	std::set<std::string> changedConf;
