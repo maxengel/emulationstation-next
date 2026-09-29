@@ -1255,6 +1255,16 @@ TEST_CASE("parseScanStamp reads raofflineproxy-ctl's last-scan line")
 	CHECK(s.limit);
 	CHECK(s.ready == 100);
 
+	// A scan that found no game to look at completed, with the ctl's note (fork #329): rc 0, no why, the note as a token.
+	s = parseScanStamp("1790716370 0 scan cached=0 skipped=0 ready=0 limit=0 indexed=0 errors=0 added=0 note=NO_GAMES");
+	CHECK(s.ran);
+	CHECK(s.code == 0);
+	CHECK(s.why.empty());
+	CHECK(s.note == "NO_GAMES");
+	// A note that is not a token says nothing.
+	s = parseScanStamp("1790716370 0 scan ready=0 note=no games");
+	CHECK(s.note.empty());
+
 	// Fields in another order, and a field a newer ctl might add.
 	s = parseScanStamp("1789400300 0 scan ready=7 limit=0 skipped=2 cached=5 took=90");
 	CHECK(s.ran);

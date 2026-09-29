@@ -41,6 +41,7 @@ public:
 		int errors = 0;           // ">>> errors n": games a fetch failed for (audit #186 PL-24)
 		bool limit = false, nothingNew = false;
 		bool truncated = false;   // ">>> note TRUNCATED": the walk stopped at the client's cap of files
+		bool noGames = false;     // ">>> note NO_GAMES": nothing under the ROM folders to look at (fork #329)
 		std::string why;          // the ctl's token
 		bool cancelled = false;   // cancel(): the player's word for the outcome, whatever the exit
 		bool finished = false;

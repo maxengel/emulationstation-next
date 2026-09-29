@@ -297,10 +297,17 @@ void GuiOfflineScan::update(int deltaTime)
 		// The ctl's done line carries the count; a run that ended before it
 		// said one reads the client's export directly.
 		const int ready = s.ready >= 0 ? s.ready : OfflineAchievements::readyCount();
-		mActivity->setText(fitOneLine(mTextFont, readyPhrase(ready), mLineWidth));
+		// A scan with no game to look at completed (fork #329): line 3 says
+		// so while the store is empty too, and line 4 says what to do next;
+		// with games still ready from before, line 3 keeps its count and
+		// line 4 carries both sentences.
+		mActivity->setText(fitOneLine(mTextFont, s.noGames && ready <= 0 ? _("NO GAMES TO SCAN YET") : readyPhrase(ready), mLineWidth));
 
 		std::string detail;
-		if (!o.completed && !o.skipped && !s.why.empty())
+		if (o.completed && s.noGames)
+			detail = ready <= 0 ? _("ADD GAMES, THEN SCAN AGAIN.")
+				: _("NO GAMES TO SCAN YET") + std::string(". ") + _("ADD GAMES, THEN SCAN AGAIN.");
+		else if (!o.completed && !o.skipped && !s.why.empty())
 		{
 			// The why whole, else its first sentence: a trailing instruction
 			// is the part that can go (D-UI-035), never a word cut short.

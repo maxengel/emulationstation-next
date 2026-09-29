@@ -175,7 +175,7 @@ void OfflineScanJob::run()
 //   ">>> total <n>"            how many ROMs will be looked at
 //   ">>> game <i>|<n>|<name>"  the one it is on now
 //   ">>> cached <c>|<s>"       added so far, and passed over so far
-//   ">>> note <TOKEN>"         LIMIT_REACHED, NOTHING_NEW, TRUNCATED
+//   ">>> note <TOKEN>"         LIMIT_REACHED, NOTHING_NEW, TRUNCATED, NO_GAMES
 //   ">>> errors <n>"           games a fetch failed for (audit #186 PL-24; the
 //                              ctl says it as the run ends, before why)
 //   ">>> why <TOKEN>"          why it stopped, in the ctl's token (CANCELLED
@@ -243,6 +243,7 @@ void OfflineScanJob::handleLine(const std::string& line)
 			if (rest == "LIMIT_REACHED") mState.limit = true;
 			else if (rest == "NOTHING_NEW") mState.nothingNew = true;
 			else if (rest == "TRUNCATED") mState.truncated = true;
+			else if (rest == "NO_GAMES") mState.noGames = true;
 		}
 		else if (word == "errors")
 			mState.errors = num(rest);

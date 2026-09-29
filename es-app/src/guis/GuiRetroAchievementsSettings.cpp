@@ -58,7 +58,9 @@ static std::shared_ptr<TextComponent> addInfoRow(GuiSettings* s, Window* window,
 		? (float) Renderer::getScreenWidth()
 		: (float) Math::min((int) Renderer::getScreenHeight(), (int) (Renderer::getScreenWidth() * 0.90f));
 
-	auto tc = std::make_shared<TextComponent>(window, longestText, theme->Text.font, theme->Text.color, ALIGN_LEFT,
+	// The description size (es-ui-style-guide.md, Size by weight): prose
+	// that explains the rows above it, not a row (fork #327).
+	auto tc = std::make_shared<TextComponent>(window, longestText, theme->TextSmall.font, theme->TextSmall.color, ALIGN_LEFT,
 		Vector3f::Zero(), Vector2f(width - 2 * inset, 0));
 	const float height = tc->getSize().y();
 	tc->setPadding(Vector4f(inset, 0, inset, 0));
@@ -74,29 +76,43 @@ static std::shared_ptr<TextComponent> addInfoRow(GuiSettings* s, Window* window,
 	return tc;
 }
 
-// The page's block of text (D-RA-003), with or without its last sentence.
-// The last sentence is D-RA-013's: the cache follows the interface's own
-// game index, so a game added later is cached by the top-up that runs when
-// the device is next connected (raofflineproxy-ctl topup) -- once the index
-// knows it, which is INDEX NEW GAMES AT STARTUP's job. So the sentence is
-// shown only while that setting is on (audit #186 PL-06, D-UI-055: a
-// sentence must be true of what happens); turning the switch on turns the
-// setting on, below, so on a device set up through this page it is.
-static std::string offlineInfoText(bool indexAtStartup)
+// The page's two paragraphs (D-RA-003). One block of six upper-case lines
+// in the row font until fork #327 -- maintainer, on the RG SP: "just looks
+// odd in all caps, the rows aren't separated, and the general readability
+// isn't great" -- now two paragraphs in sentence case at the description
+// size, as the descriptions on the page above already are: what turning it
+// on does, then what the scan does and what the player will see.
+//
+// The second paragraph's middle sentence is D-RA-013's: the cache follows
+// the interface's own game index, so a game added later is cached by the
+// top-up that runs when the device is next connected (raofflineproxy-ctl
+// topup) -- once the index knows it, which is INDEX NEW GAMES AT STARTUP's
+// job. So the sentence is shown only while that setting is on (audit #186
+// PL-06, D-UI-055: a sentence must be true of what happens); turning the
+// switch on turns the setting on, below, so on a device set up through this
+// page it is. RetroArch's disconnected badge is quoted so it reads as a
+// thing on screen and not as a typo (D-RA-003).
+static std::string offlineInfoFirst()
 {
-	std::string text = _("EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET.");
+	return _("Earn casual achievements without a connection. They're sent to your account the next time you're online, and hardcore mode turns off while this is on.");
+}
+
+static std::string offlineInfoSecond(bool indexAtStartup)
+{
+	std::string text = _("Scan your games once while online so their achievements work offline.");
 	if (indexAtStartup)
-		text += " " + _("NEW GAMES ARE ADDED THE NEXT TIME YOU'RE CONNECTED.");
+		text += " " + _("Games you add later are picked up the next time you're connected.");
+	text += " " + _("'!RA!' in a game's corner means an achievement hasn't reached RetroAchievements yet.");
 	return text;
 }
 
 // A little air between the options and the text under them: an empty,
 // non-selectable row half a text line tall (RC-5 round, D-UI-054).
-static void addSpacerRow(GuiSettings* s, Window* window)
+static void addSpacerRow(GuiSettings* s, Window* window, float lines = 0.5f)
 {
 	auto theme = ThemeData::getMenuTheme();
 	auto gap = std::make_shared<GuiComponent>(window);
-	gap->setSize(0, theme->Text.font->getHeight() * 0.5f);
+	gap->setSize(0, theme->Text.font->getHeight() * lines);
 	ComponentListRow row;
 	row.selectable = false;
 	row.addElement(gap, true);
@@ -135,6 +151,19 @@ static bool offlineScanOnline()
 	return !Utils::Platform::queryIPAddress().empty();
 }
 
+// The ctl's own test (raofflineproxy-ctl have_account): a user name, and
+// either the token the sign-in wrote or the password it will sign in with.
+// The scan refuses without one, and the first scan on the Retroid Pocket
+// Nova was pressed from the offer four seconds after the switch went on,
+// before any sign-in, and read COULDN'T FINISH (fork #329). So the page
+// asks first, in the row's words, everywhere the scan can be started.
+static bool offlineScanSignedIn()
+{
+	SystemConf* conf = SystemConf::getInstance();
+	return !conf->get("global.retroachievements.username").empty()
+		&& (!conf->get("global.retroachievements.token").empty() || !conf->get("global.retroachievements.password").empty());
+}
+
 // Whether the row is showing a run the ctl runs on its own (fork #189),
 // which keeps the row undimmed whatever the gates say now. A scan from this
 // page has its page over it for its whole length (D-UI-078), so the row
@@ -151,7 +180,8 @@ static bool offlineScanShowsRun()
 // says so in place of the date (D-UI-032).
 static std::string offlineScanDetail(bool on, bool online)
 {
-	const std::string ready = GuiOfflineScan::readyPhrase(OfflineAchievements::readyCount());
+	const int readyNow = OfflineAchievements::readyCount();
+	const std::string ready = GuiOfflineScan::readyPhrase(readyNow);
 	std::vector<std::string> candidates;
 	if (const CloudText::RunningProgress run = OfflineAchievements::runningProgress(); run.running)
 	{
@@ -180,6 +210,8 @@ static std::string offlineScanDetail(bool on, bool online)
 	}
 	else if (!on)
 		return _("TURN ON OFFLINE ACHIEVEMENTS FIRST.");
+	else if (!offlineScanSignedIn())
+		return _("SIGN IN TO RETROACHIEVEMENTS FIRST.");
 	else if (!online)
 		return _("YOU'RE NOT ONLINE.");
 	else if (const CloudText::ScanStamp last = OfflineAchievements::lastScan(); !last.ran)
@@ -200,7 +232,11 @@ static std::string offlineScanDetail(bool on, bool online)
 				+ (Settings::ClockMode12() ? " %I:%M %p" : " %H:%M");
 			head = _("LAST") + std::string(" ") + Utils::Time::timeToString(last.when, fmt);
 		}
-		candidates = { head + "  -  " + outcome + "  ·  " + ready, outcome + "  ·  " + ready, ready };
+		// A scan that found no game to look at completed (fork #329): while
+		// the store is empty too, the row says that in place of the count --
+		// the same fact, from the side the player can act on.
+		const std::string tail = (last.code == 0 && last.note == "NO_GAMES" && readyNow <= 0) ? _("NO GAMES TO SCAN YET") : ready;
+		candidates = { head + "  -  " + outcome + "  ·  " + tail, outcome + "  ·  " + tail, tail };
 	}
 
 	// The description is drawn in the menu's small font, in a row that
@@ -223,7 +259,7 @@ static void offlineScanRefresh(const std::weak_ptr<MultiLineMenuEntry>& weak)
 	const bool on = offlineScanOn();
 	const bool online = offlineScanOnline();
 	// A run in flight keeps the row lit whatever the gates say now.
-	entry->setDimmed((!on || !online) && !offlineScanShowsRun());
+	entry->setDimmed((!on || !offlineScanSignedIn() || !online) && !offlineScanShowsRun());
 	// Only when the words change: the refresher below asks once a second,
 	// and a line set to itself would still lay the row out again.
 	const std::string text = offlineScanDetail(on, online);
@@ -278,6 +314,11 @@ private:
 // row's line is right the moment the page is gone.
 static void offlineScanStart(Window* window, std::weak_ptr<MultiLineMenuEntry> weak)
 {
+	// The ctl reads the account from system.cfg, and a name typed on the
+	// page below is in memory until that page closes (GuiSettings saves at
+	// close): written now, so a sign-in followed by a scan is not refused
+	// for the account the player can see on the screen (fork #329).
+	SystemConf::getInstance()->saveSystemConf();
 	window->pushGui(new GuiOfflineScan(window, "/usr/bin/raofflineproxy-ctl scan",
 		[weak] { offlineScanRefresh(weak); }));
 }
@@ -287,6 +328,11 @@ static void offlineScanPressed(Window* window, std::weak_ptr<MultiLineMenuEntry>
 	if (!offlineScanOn())
 	{
 		window->pushGui(new GuiMsgBox(window, _("TURN ON OFFLINE ACHIEVEMENTS FIRST."), _("OK")));
+		return;
+	}
+	if (!offlineScanSignedIn())
+	{
+		window->pushGui(new GuiMsgBox(window, _("SIGN IN TO RETROACHIEVEMENTS FIRST."), _("OK")));
 		return;
 	}
 	if (!offlineScanOnline())
@@ -326,7 +372,7 @@ static std::shared_ptr<MultiLineMenuEntry> addOfflineScanRow(GuiSettings* s, Win
 	const bool online = offlineScanOnline();
 	auto entry = std::make_shared<MultiLineMenuEntry>(window, _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS"),
 		offlineScanDetail(on, online), false);
-	entry->setDimmed((!on || !online) && !offlineScanShowsRun());
+	entry->setDimmed((!on || !offlineScanSignedIn() || !online) && !offlineScanShowsRun());
 	std::weak_ptr<MultiLineMenuEntry> weak = entry;
 
 	ComponentListRow row;
@@ -381,9 +427,13 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 	// The row follows a top-up the ctl runs while the page is open (fork
 	// #189); the page owns the component and deletes it with itself.
 	s->addChild(new OfflineRowRefresher(window, scanRow));
-	addSpacerRow(s, window);
+	// A row's height of air under the SCAN row, then the two paragraphs with
+	// half a line between them (fork #327); only the second one changes.
+	addSpacerRow(s, window, 1.0f);
+	addInfoRow(s, window, offlineInfoFirst(), offlineInfoFirst());
+	addSpacerRow(s, window, 0.5f);
 	std::weak_ptr<TextComponent> infoRow = addInfoRow(s, window,
-		offlineInfoText(Settings::CheevosCheckIndexesAtStart()), offlineInfoText(true));
+		offlineInfoSecond(Settings::CheevosCheckIndexesAtStart()), offlineInfoSecond(true));
 
 	// Weak on purpose: the callback lives inside the switch it names, so a
 	// shared_ptr here would be a cycle that keeps the page alive forever --
@@ -469,7 +519,7 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 					if (auto row = indexRow->lock())
 						row->setState(true);
 					if (auto info = infoRow.lock())
-						info->setText(offlineInfoText(true));
+						info->setText(offlineInfoSecond(true));
 				}
 
 				// Turning it on offers the scan at once (D-RA-012): without it a
@@ -477,7 +527,15 @@ static void openOfflineAchievements(Window* window, std::weak_ptr<SwitchComponen
 				// Offline, one line says when to come back to it.
 				if (on)
 				{
-					if (offlineScanOnline())
+					if (!offlineScanSignedIn())
+					{
+						// No account yet: the scan would be refused (fork #329),
+						// so say the order of things instead of offering it.
+						window->pushGui(new GuiMsgBox(window,
+							_("SIGN IN TO RETROACHIEVEMENTS FIRST.") + std::string(" ") + _("THEN SCAN GAMES FOR OFFLINE ACHIEVEMENTS, SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE."),
+							_("OK")));
+					}
+					else if (offlineScanOnline())
 					{
 						std::string text = _("SCAN GAMES FOR OFFLINE ACHIEVEMENTS NOW?") + std::string("\n\n")
 							+ _("THIS LOOKS AT EVERY GAME ON THIS CONSOLE AND SAVES ITS ACHIEVEMENT DATA SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE. THIS CAN TAKE A WHILE FOR A LARGE LIBRARY.");

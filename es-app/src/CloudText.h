@@ -487,6 +487,7 @@ namespace CloudText
 		int errors = 0;       // games a fetch failed for: what makes rc 1 with why=SOME_GAMES_NOT_SAVED
 		bool truncated = false; // the walk stopped at the client's cap of files; a second run reaches the rest
 		std::string why;
+		std::string note;       // the ctl's token for a run that completed with nothing to do: NO_GAMES (fork #329)
 		// added=unknown (audit of the fix round PL-031): the ctl could not
 		// read the store before or after a run that cached games, so how
 		// many were new was never counted. Not -1: that is an older ctl's

@@ -4246,6 +4246,18 @@ msgstr "IGNORÉ"
 msgid "OFFLINE ACHIEVEMENTS"
 msgstr "SUCCÈS HORS LIGNE"
 
+msgid "Earn casual achievements without a connection. They're sent to your account the next time you're online, and hardcore mode turns off while this is on."
+msgstr "Obtenez des succès en mode facile sans connexion. Ils sont envoyés à votre compte à votre prochaine connexion, et le mode difficile est désactivé tant que cette option est active."
+
+msgid "Scan your games once while online so their achievements work offline."
+msgstr "Analysez vos jeux une fois en ligne pour que leurs succès fonctionnent hors ligne."
+
+msgid "Games you add later are picked up the next time you're connected."
+msgstr "Les jeux ajoutés plus tard sont pris en compte à votre prochaine connexion."
+
+msgid "'!RA!' in a game's corner means an achievement hasn't reached RetroAchievements yet."
+msgstr "'!RA!' dans le coin d’un jeu signifie qu’un succès n’a pas encore atteint RetroAchievements."
+
 msgid "EARN CASUAL ACHIEVEMENTS WITHOUT A CONNECTION. THEY ARE SENT WHEN YOU'RE BACK ONLINE. CASUAL ACHIEVEMENTS ONLY, SO TURNING IT ON TURNS HARDCORE MODE OFF. '!RA!' IN A GAME'S CORNER MEANS AN ACHIEVEMENT HASN'T REACHED RETROACHIEVEMENTS YET."
 msgstr "OBTENEZ DES SUCCÈS EN MODE FACILE SANS CONNEXION. ILS SONT ENVOYÉS QUAND VOUS ÊTES DE NOUVEAU EN LIGNE. SUCCÈS EN MODE FACILE SEULEMENT, DONC L’ACTIVER DÉSACTIVE LE MODE DIFFICILE. '!RA!' DANS LE COIN D’UN JEU : UN SUCCÈS N’A PAS ENCORE ATTEINT RETROACHIEVEMENTS."
 
@@ -4369,6 +4381,9 @@ msgstr "ACTIVEZ D’ABORD LES SUCCÈS HORS LIGNE."
 msgid "SIGN IN TO RETROACHIEVEMENTS FIRST."
 msgstr "CONNECTEZ-VOUS D’ABORD À RETROACHIEVEMENTS."
 
+msgid "THEN SCAN GAMES FOR OFFLINE ACHIEVEMENTS, SO ACHIEVEMENTS CAN BE EARNED WHILE OFFLINE."
+msgstr "ANALYSEZ ENSUITE LES JEUX POUR LES SUCCÈS HORS LIGNE, POUR QUE LES SUCCÈS PUISSENT ÊTRE OBTENUS HORS LIGNE."
+
 msgid "YOU'RE NOT ONLINE."
 msgstr "VOUS N’ÊTES PAS EN LIGNE."
 
@@ -4425,6 +4440,12 @@ msgstr "RETROACHIEVEMENTS N’A PAS ACCEPTÉ VOTRE CONNEXION"
 
 msgid "NO GAMES WERE FOUND ON THIS CONSOLE"
 msgstr "AUCUN JEU TROUVÉ SUR CETTE CONSOLE"
+
+msgid "NO GAMES TO SCAN YET"
+msgstr "AUCUN JEU À ANALYSER POUR L’INSTANT"
+
+msgid "ADD GAMES, THEN SCAN AGAIN."
+msgstr "AJOUTEZ DES JEUX, PUIS RELANCEZ L’ANALYSE."
 
 msgid "YOUR GAMES COULDN'T BE READ"
 msgstr "VOS JEUX N’ONT PAS PU ÊTRE LUS"

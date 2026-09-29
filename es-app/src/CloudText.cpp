@@ -1156,6 +1156,18 @@ CloudText::ScanStamp CloudText::parseScanStamp(const std::string& text)
 				stamp.why = value;
 			continue;
 		}
+		if (key == "note")
+		{
+			// The ctl's token for a run that completed with nothing to do
+			// (NO_GAMES, fork #329): a token, as why= is, or nothing.
+			bool token = !value.empty();
+			for (char c : value)
+				if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'))
+					token = false;
+			if (token)
+				stamp.note = value;
+			continue;
+		}
 		// The ctl's word for a count it could not measure (PL-031): an
 		// answer of its own, where any other non-number says nothing.
 		if (key == "added" && value == "unknown")
