@@ -13,8 +13,10 @@
 // maintainer's paradigm of 2026-09-15: the row is the network the device is
 // on, this list is what is in range). One row per network in range -- the
 // one joined now first and marked CONNECTED, the ones NetworkManager holds a
-// profile for marked SAVED. A press on a saved row joins it with the key
-// NetworkManager has; a press on any other asks for the key and connects,
+// profile for marked SAVED. A press on a saved row offers CONNECT (with
+// the key NetworkManager has), FORGET (the manage page's confirmation and
+// reader) or CANCEL (#318, D-UI-118); a press on the connected row joins it
+// again at once; a press on any other asks for the key and connects,
 // which saves it for next time; INPUT MANUALLY takes a hidden network's
 // name the same way. Once the device is on a network the page that opened
 // the picker is told, so it rebuilds and reads the connection back.

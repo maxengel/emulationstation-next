@@ -9508,7 +9508,6 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 
 	// window, title, settingstring,
 	const std::string baseSSID = SystemConf::getInstance()->get("wifi.ssid");
-	const std::string baseKEY = SystemConf::getInstance()->get("wifi.key");
 #if !WIN32
 	const std::string baseCountry = SystemConf::getInstance()->get("wifi.country");
 #endif
@@ -9557,7 +9556,12 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 			});
 			s->addRow(ssidRow);
 			networkSettingsFillInSsid(window, s, ssidValue);
-			s->addInputTextConfigRow(_("WI-FI KEY"), "wifi.key", true);
+			// No WI-FI KEY row (#318, D-UI-118, as ROCKNIX's own saved-Wi-Fi
+			// work has it): a key field with no network beside it asked
+			// "which network's key?", and the key it held was the last one
+			// typed, for whatever network that was. A key is typed where the
+			// network is named -- the picker's WI-FI KEY page, per network,
+			// and the restore wizard's WI-FI PASSWORD page.
 
 #if !WIN32
 		        // Batocera-specific WI-FI COUNTRY option
@@ -9605,7 +9609,7 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 	}
 
 
-	s->addSaveFunc([baseWifiEnabled, baseSSID, baseKEY,
+	s->addSaveFunc([baseWifiEnabled, baseSSID,
 #if !WIN32
 	baseCountry,
 #endif
@@ -9622,11 +9626,11 @@ void GuiMenu::openNetworkSettings(bool selectWifiEnable, bool selectAdhocEnable)
 #if !WIN32
 			std::string newCountry = SystemConf::getInstance()->get("wifi.country");
 
-			if (baseSSID != newSSID || baseKEY != newKey || baseCountry != newCountry || !baseWifiEnabled)
+			if (baseSSID != newSSID || baseCountry != newCountry || !baseWifiEnabled)
 			{
 				auto apply = [newSSID, newKey, newCountry] { return ApiSystem::getInstance()->enableWifi(newSSID, newKey, newCountry); };
 #else
-			if (baseSSID != newSSID || baseKEY != newKey || !baseWifiEnabled)
+			if (baseSSID != newSSID || !baseWifiEnabled)
 			{
 				auto apply = [newSSID, newKey] { return ApiSystem::getInstance()->enableWifi(newSSID, newKey); };
 #endif
@@ -9947,19 +9951,21 @@ private:
 // A press on a network: the question names it and says what changes -- the
 // device stops joining it on its own, and, for the one in use, drops it now.
 // YES first, NO last so B answers NO (es-ui-style-guide). The delete is one
-// nmcli call, bounded in ApiSystem, behind the spinner; the page is then
-// rebuilt from NetworkManager so every row reads the list as it is now, and
-// the toast over it says what happened, disconnection included.
-static void manageNetworksForget(Window* window, GuiSettings* page, const std::string& name, bool inUse)
+// nmcli call, bounded in ApiSystem, behind the spinner; onForgotten then
+// rebuilds the caller's page from NetworkManager so every row reads the
+// list as it is now (the manage page reopens itself, the Wi-Fi picker
+// refreshes, #318), and the toast over it says what happened, disconnection
+// included.
+void GuiMenu::forgetWifiNetworkWithConfirmation(Window* window, const std::string& name, bool inUse, const std::function<void()>& onForgotten)
 {
 	std::string text = Utils::String::format(_("FORGET %s?").c_str(), name.c_str()) + "\n\n";
 	if (inUse)
 		text += _("YOU'RE CONNECTED TO IT NOW, SO YOU'LL BE DISCONNECTED.") + " ";
 	text += _("THIS DEVICE WON'T JOIN IT AGAIN ON ITS OWN.");
 
-	window->pushGui(new GuiMsgBox(window, text, _("YES"), [window, page, name]
+	window->pushGui(new GuiMsgBox(window, text, _("YES"), [window, name, onForgotten]
 	{
-		LOG(LogInfo) << "manage networks: forgetting " << name;
+		LOG(LogInfo) << "forget network: forgetting " << name;
 		window->pushGui(new GuiLoading<std::pair<bool, bool>>(window, _("PLEASE WAIT"),
 			[name](IGuiLoadingHandler*)
 			{
@@ -9967,17 +9973,17 @@ static void manageNetworksForget(Window* window, GuiSettings* page, const std::s
 				const bool forgotten = ApiSystem::getInstance()->forgetWifiNetwork(name, disconnected);
 				return std::make_pair(forgotten, disconnected);
 			},
-			[window, page, name](std::pair<bool, bool> result)
+			[window, name, onForgotten](std::pair<bool, bool> result)
 			{
 				if (!result.first)
 				{
-					LOG(LogWarning) << "manage networks: could not forget " << name;
+					LOG(LogWarning) << "forget network: could not forget " << name;
 					window->pushGui(new GuiMsgBox(window, _("COULDN'T FORGET") + " " + name + ". " + _("TRY AGAIN."), _("OK")));
 					return;
 				}
-				LOG(LogInfo) << "manage networks: forgot " << name << (result.second ? ", disconnected" : "");
-				delete page;
-				GuiMenu::openManageNetworks(window);
+				LOG(LogInfo) << "forget network: forgot " << name << (result.second ? ", disconnected" : "");
+				if (onForgotten)
+					onForgotten();
 				window->displayNotificationMessage(_U("\uF058  ") + name + " : "
 					+ (result.second ? _("FORGOTTEN, AND YOU'RE DISCONNECTED") : _("FORGOTTEN")));
 			}));
@@ -10012,7 +10018,14 @@ static void manageNetworksAddRow(Window* window, GuiSettings* page, const WifiTe
 
 	const std::string networkName = network.name;
 	const bool inUse = network.inUse;
-	row.makeAcceptInputHandler([window, page, networkName, inUse] { manageNetworksForget(window, page, networkName, inUse); });
+	row.makeAcceptInputHandler([window, page, networkName, inUse]
+	{
+		GuiMenu::forgetWifiNetworkWithConfirmation(window, networkName, inUse, [window, page]
+		{
+			delete page;
+			GuiMenu::openManageNetworks(window);
+		});
+	});
 	page->addRow(row);
 }
 

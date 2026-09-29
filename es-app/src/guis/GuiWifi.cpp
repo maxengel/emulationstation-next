@@ -1,4 +1,5 @@
 #include "guis/GuiWifi.h"
+#include "guis/GuiMenu.h"
 #include "guis/GuiMsgBox.h"
 #include "guis/GuiTextEditPopup.h"
 #include "guis/GuiTextEditPopupKeyboard.h"
@@ -89,12 +90,12 @@ void GuiWifi::addRow(const WifiText::PickerRow& network)
 	mMenu.addRow(row);
 }
 
-// A press: the network the device is on, and a saved one, join with the
-// key NetworkManager holds -- the one it is on answers at once, or comes
-// back if it had dropped (#308 F-WF-05: this used to close on the list's
-// snapshot); any other is asked for its key; one whose profile could not be
-// asked about is asked about again first (F-WF-03/06). WifiText::pressAction
-// decides.
+// A press: the network the device is on joins again with the key
+// NetworkManager holds -- it answers at once, or comes back if it had
+// dropped (#308 F-WF-05: this used to close on the list's snapshot); a
+// saved one is offered CONNECT / FORGET / CANCEL (#318, D-UI-118); any
+// other is asked for its key; one whose profile could not be asked about
+// is asked about again first (F-WF-03/06). WifiText::pressAction decides.
 void GuiWifi::onSelect(const WifiText::PickerRow& row)
 {
 	if (mWaitingLoad)
@@ -115,6 +116,25 @@ void GuiWifi::act(WifiText::PressAction action, const std::string& name, const s
 	case WifiText::PressAction::Join:
 		join(name, joinAs);
 		break;
+	case WifiText::PressAction::ChooseSaved:
+	{
+		// A saved network the device is not on: CONNECT with the key
+		// NetworkManager holds, or FORGET it -- the second choice is the one
+		// ROCKNIX's own saved-Wi-Fi work offers, behind the manage page's
+		// confirmation and reader (GuiMenu::forgetWifiNetworkWithConfirmation),
+		// which rebuilds this list once the profile is gone. CONNECT first;
+		// CANCEL last, so B lands on it (es-ui-style-guide: back never lands
+		// on the destructive choice). The profile is forgotten by the name
+		// NetworkManager has for it (joinAs), which is the name the manage
+		// page shows.
+		const std::string text = Utils::String::format(_("%s IS SAVED.").c_str(), name.c_str())
+			+ "\n\n" + _("CONNECT WITH ITS SAVED KEY, OR FORGET IT?");
+		mWindow->pushGui(new GuiMsgBox(mWindow, text,
+			_("CONNECT"), [this, name, joinAs] { join(name, joinAs); },
+			_("FORGET"), [this, joinAs] { GuiMenu::forgetWifiNetworkWithConfirmation(mWindow, joinAs, false, [this] { onRefresh(false); }); },
+			_("CANCEL"), nullptr));
+		break;
+	}
 	case WifiText::PressAction::AskKey:
 		askKeyAndConnect(name);
 		break;
@@ -153,9 +173,9 @@ void GuiWifi::onManualInput()
 // the spinner -- wifictl join waits up to 90 s for the association, as
 // connect does, and the screen would otherwise freeze for it. The script
 // also moves the settings wifi.ssid and wifi.key onto the joined network,
-// so the paths that connect from the settings (the WI-FI KEY row, the
-// restore wizard, the ENABLE WI-FI switch) still name the network the
-// player is on; SystemConf is re-read so the interface sees the same file.
+// so the paths that connect from the settings (the restore wizard, the
+// ENABLE WI-FI switch) still name the network the player is on; SystemConf
+// is re-read so the interface sees the same file.
 void GuiWifi::join(const std::string& name, const std::string& profile)
 {
 	Window* window = mWindow;

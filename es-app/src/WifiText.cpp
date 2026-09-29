@@ -172,8 +172,10 @@ WifiText::ForgetOutcome WifiText::parseForget(const std::vector<std::string>& li
 
 WifiText::PressAction WifiText::pressAction(const PickerRow& row)
 {
-	if (row.connected || row.saved)
+	if (row.connected)
 		return PressAction::Join;
+	if (row.saved)
+		return PressAction::ChooseSaved;
 	if (!row.savedKnown)
 		return PressAction::CheckAgain;
 	return PressAction::AskKey;

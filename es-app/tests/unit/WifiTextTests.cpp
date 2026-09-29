@@ -187,8 +187,12 @@ TEST_CASE("a press: the connected row is checked by a join, a saved one joins, a
 	// back one that has dropped, so a press on it goes that way.
 	PickerRow connected{ "Home Wi-Fi", true, true };
 	CHECK(pressAction(connected) == PressAction::Join);
+	// A saved network the device is not on is offered CONNECT / FORGET /
+	// CANCEL (#318, D-UI-118); the connected one, saved or not, joins at once.
 	PickerRow saved{ "Cafe: Guest", true, false };
-	CHECK(pressAction(saved) == PressAction::Join);
+	CHECK(pressAction(saved) == PressAction::ChooseSaved);
+	PickerRow savedConnected{ "Home Wi-Fi", true, true };
+	CHECK(pressAction(savedConnected) == PressAction::Join);
 	PickerRow other{ "Library", false, false };
 	CHECK(pressAction(other) == PressAction::AskKey);
 	PickerRow unknown{ "Library", false, false, false };

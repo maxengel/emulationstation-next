@@ -51,6 +51,11 @@ public:
         // use marked, A to forget one (fork #191). Fetches the list behind a
         // spinner, then pushes the page.
         static void openManageNetworks(Window* window);
+	// The question (FORGET name?, what changes), the spinner over one nmcli
+	// call, then onForgotten and the toast; on a failure a dialog and nothing
+	// else. The manage page's row and the Wi-Fi picker's FORGET (#318,
+	// D-UI-118) share it, so a network is forgotten the same way from both.
+	static void forgetWifiNetworkWithConfirmation(Window* window, const std::string& name, bool inUse, const std::function<void()>& onForgotten);
         // consumeMarker: clear .restore-finish-pending on FINISH (the
         // post-restore boot); false when opened from the menu later.
         static void openRestoreRelink(Window* window, bool consumeMarker = false);

@@ -89,9 +89,16 @@ namespace WifiText
 	// asked about again, never taken for one with no profile: the key path
 	// (wifictl connect) deletes and rebuilds a profile of that name (#308
 	// F-WF-03/06).
+	//
+	// A saved network the device is not on is a choice, not a join (#318,
+	// D-UI-118, taken from ROCKNIX's own saved-Wi-Fi work): CONNECT with the
+	// key NetworkManager holds, or FORGET it. The connected row still joins
+	// at once -- the press confirms or repairs -- and a typed name that is
+	// saved still joins, since typing it is asking to join it.
 	enum class PressAction
 	{
 		Join,         // join by the profile NetworkManager holds (wifictl join)
+		ChooseSaved,  // a saved network not in use: CONNECT / FORGET / CANCEL
 		AskKey,       // a network with no profile: its key, then connect
 		CheckAgain    // whether it has a profile could not be asked: never assume it has none
 	};
