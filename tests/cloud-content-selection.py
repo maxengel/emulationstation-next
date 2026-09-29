@@ -125,7 +125,7 @@ try:
     pieces = [definition(s) for s in (
         'static std::string cloudShellQuote(',
         'static std::string cloudSetSystemsCommand(',
-        'static std::vector<std::string> cloudSelectionRead(',
+        'static bool cloudSelectionRead(',
         'static bool cloudSaveSelection(',
     )]
 except ValueError as e:
@@ -141,9 +141,20 @@ if pieces is not None:
 #include <iostream>
 #include <set>
 #include <string>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <utility>
 #include <vector>
+
+// The one file-system call the reader makes (gpt G3-E-03: a directory at
+// the path is a failed read, never an empty selection), as the device's does.
+namespace Utils { namespace FileSystem {
+    static bool isRegularFile(const std::string& path)
+    {
+        struct stat st;
+        return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    }
+} }
 
 enum { LogError, LogWarning, LogInfo };
 #define LOG(level) std::cerr
@@ -215,11 +226,24 @@ int main(int argc, char** argv)
             for stub in (writes, refuses, stale):
                 stub.chmod(0o755)
             missing = tmp / "not-installed"
+            DIRECTORY = object()
 
             def run(stub, names, before, want, label):
+                if selection.is_dir():
+                    for child in selection.iterdir():
+                        child.unlink()
+                    selection.rmdir()
                 if before is None:
                     if selection.exists():
                         selection.unlink()
+                elif before is DIRECTORY:
+                    # a directory where the file should be: the writer's rename
+                    # lands inside it and says OK, and the read-back opens a
+                    # directory -- a failed read, never an empty selection
+                    # (the audit of the fixes, gpt G3-E-03)
+                    if selection.exists():
+                        selection.unlink()
+                    selection.mkdir()
                 else:
                     selection.write_text(before)
                 got = subprocess.run([str(exe), str(selection)] + names, capture_output=True, text=True,
@@ -238,6 +262,10 @@ int main(int argc, char** argv)
             run(writes, [], "snes\n", "continue", "nothing ticked, saved as nothing")
             run(stale, [], None, "refuse", "nothing ticked, and no file was written")
             run(writes, ["my games"], None, "refuse", "a folder name the script splits in two")
+            # nothing ticked, so the set comparison alone would say "continue"
+            # (nothing read equals nothing asked): only a reader that reports
+            # its own failure refuses here
+            run(writes, [], DIRECTORY, "refuse", "a directory where the selection file should be, nothing ticked: a failed read refuses (gpt G3-E-03)")
             run(writes, ["x"], "snes\n", "continue", "a one-letter name (a two-byte file)")
 
 print(f"cloud-content-selection: {passed} of {passed + len(failures)} passed")
