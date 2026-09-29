@@ -167,6 +167,11 @@ TEST_CASE("a value is the whole shell word, however it is quoted (#308 8b gpt F-
 	// until unquoted whitespace (or & ; |), across every quoted and bare
 	// piece and every backslash-escaped character in it.
 	CHECK(maskSecrets("tool --password 'front'back") == "tool --password <redacted>");
+	// The shell's other way of writing a quote inside single quotes, '"'"',
+	// read as the string's end before the fix, and "front back" was logged
+	// (the audit of the fixes, gpt G3-E-01).
+	CHECK(maskSecrets("sh -c 'tool --password '\"'\"'front back'\"'\"''") == "sh -c 'tool --password <redacted>'");
+	CHECK(maskSecrets("sh -c 'tool --password '\"'\"'front back'\"'\"' --after x'") == "sh -c 'tool --password <redacted> --after x'");
 	CHECK(maskSecrets("tool --password front'back' more") == "tool --password <redacted> more");
 	CHECK(maskSecrets("tool --password front\\ back more") == "tool --password <redacted> more");
 	CHECK(maskSecrets("tool --password \"front\"'mid'back; next") == "tool --password <redacted>; next");

@@ -566,7 +566,19 @@ namespace Utils
 		{
 			c = s[i];
 			if (c == enclosing)
-				return enclosing == '\'' && s.compare(i, 4, "'\\''") == 0 ? 4 : 0;
+			{
+				// The two ways a shell writes a single quote inside a
+				// single-quoted string: '\'' and '"'"' (the audit of the
+				// fixes, gpt G3-E-01: the second read as the string's end,
+				// and the password after it was logged).
+				if (enclosing != '\'')
+					return 0;
+				if (s.compare(i, 4, "'\\''") == 0)
+					return 4;
+				if (s.compare(i, 5, "'\"'\"'") == 0)
+					return 5;
+				return 0;
+			}
 			if (enclosing == '"' && c == '\\' && i + 1 < s.size())
 			{
 				const char next = s[i + 1];
