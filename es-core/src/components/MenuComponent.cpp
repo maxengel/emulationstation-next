@@ -1,4 +1,5 @@
 #include "components/MenuComponent.h"
+#include "Log.h"
 #include "components/ButtonComponent.h"
 #include "components/MultiLineMenuEntry.h"
 #include "TextToSpeech.h"
@@ -89,6 +90,7 @@ MenuComponent::MenuComponent(Window* window,
 			return true;
 		}
 		if (config->isMappedLike("up", input)) {
+			LOG(LogWarning) << "diag325 menu: up past the top, to the buttons " << (mButtonGrid ? "yes" : "no") << " value " << input.value;
 			// past the top: down to the bottom stop, with the last row ready
 			// for the next press up from the buttons
 			mList->setCursorIndex(mList->size() - 1);

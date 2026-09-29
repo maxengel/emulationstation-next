@@ -1,4 +1,6 @@
 #include "components/ComponentGrid.h"
+#include "Log.h"
+#include <typeinfo>
 
 #include "Settings.h"
 #include "LocaleES.h"
@@ -282,7 +284,10 @@ bool ComponentGrid::input(InputConfig* config, Input input)
 {
 	const GridEntry* cursorEntry = getCellAt(mCursor);
 	if(cursorEntry && cursorEntry->component->input(config, input))
+	{
+		LOG(LogWarning) << "diag325 grid " << this << " input value " << input.value << " handled by cell " << mCursor.x() << "," << mCursor.y() << " " << typeid(*cursorEntry->component).name();
 		return true;
+	}
 
 	if(!input.value)
 		return false;
@@ -298,6 +303,7 @@ bool ComponentGrid::input(InputConfig* config, Input input)
 	if (config->isMappedLike("right", input))
 		result = moveCursor(Vector2i(1, 0));
 
+	LOG(LogWarning) << "diag325 grid " << this << " input " << (config->isMappedLike("up", input) ? "up" : config->isMappedLike("down", input) ? "down" : "other") << " value " << input.value << " moved " << result << " cursor " << mCursor.x() << "," << mCursor.y() << " callback " << (mUnhandledInputCallback ? "yes" : "no");
 	if (!result && mUnhandledInputCallback)
 		return mUnhandledInputCallback(config, input);	
 
@@ -487,6 +493,7 @@ void ComponentGrid::onCursorMoved(Vector2i from, Vector2i to)
 		cell->component->onFocusLost();
 
 	cell = getCellAt(to);
+	LOG(LogWarning) << "diag325 grid " << this << " (" << mGridSize.x() << "x" << mGridSize.y() << ") cursor " << from.x() << "," << from.y() << " -> " << to.x() << "," << to.y() << " cell " << (cell ? typeid(*cell->component).name() : "none") << (cell && cell->canFocus ? " focusable" : "");
 	if(cell)
 		cell->component->onFocusGained();
 

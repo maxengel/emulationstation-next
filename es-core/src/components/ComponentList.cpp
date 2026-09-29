@@ -1,4 +1,5 @@
 #include "components/ComponentList.h"
+#include "Log.h"
 #include "LocaleES.h"
 #include "TextToSpeech.h"
 
@@ -170,7 +171,10 @@ bool ComponentList::input(InputConfig* config, Input input)
 	// input handler didn't consume the input - try to scroll
 	if(config->isMappedLike("up", input))
 	{
-		return listInput(input.value != 0 ? -1 : 0);
+		int before = mCursor;
+		bool r = listInput(input.value != 0 ? -1 : 0);
+		LOG(LogWarning) << "diag325 list " << this << " up value " << input.value << " cursor " << before << " -> " << mCursor << " handled " << r << " size " << size() << " focused " << mFocused;
+		return r;
 	}else if(config->isMappedLike("down", input))
 	{
 		return listInput(input.value != 0 ? 1 : 0);
