@@ -107,8 +107,12 @@ MenuComponent::MenuComponent(Window* window,
 	// The strip is a focus stop of its own (#65): up from the first row lands
 	// on it, left/right there switch tabs, down returns to the rows. Rows keep
 	// left/right for themselves, which is how an option row cycles in place.
+	// It becomes a stop only once it has a tab (addTab): every menu is built
+	// with the strip (tabbedUI defaults to true), and an empty strip took the
+	// cursor with nothing to show for it, so up from the MAIN MENU's first row
+	// landed on nothing before BACK (fork #325).
 	if (mTabs != nullptr)
-		mGrid.setEntry(mTabs, Vector2i(0, 1), true, true, Vector2i(1, 1), GridFlags::BORDER_BOTTOM);
+		mGrid.setEntry(mTabs, Vector2i(0, 1), false, true, Vector2i(1, 1), GridFlags::BORDER_BOTTOM);
 
 	mGrid.setEntry(mList, Vector2i(0, 2), true);
 
@@ -129,8 +133,16 @@ bool MenuComponent::input(InputConfig* config, Input input)
 
 void MenuComponent::addTab(const std::string label, const std::string value, bool setCursorHere)
 {
-	if (mTabs != nullptr)
-		mTabs->addTab(label, value, setCursorHere);
+	if (mTabs == nullptr)
+		return;
+	mTabs->addTab(label, value, setCursorHere);
+	// The first tab makes the strip a focus stop (fork #325): the cell is
+	// re-entered as focusable, in the same place, with the same border.
+	if (mTabs->size() == 1)
+	{
+		mGrid.removeEntry(mTabs);
+		mGrid.setEntry(mTabs, Vector2i(0, 1), true, true, Vector2i(1, 1), GridFlags::BORDER_BOTTOM);
+	}
 }
 
 void MenuComponent::addMenuIcon(Window* window, ComponentListRow& row, const std::string& iconName)
