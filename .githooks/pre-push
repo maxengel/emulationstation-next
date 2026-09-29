@@ -132,8 +132,9 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   #    (F-PB-12). And a list of commits that cannot be made is a refusal,
   #    not an empty scan: git log's failure used to vanish into /dev/null.
   added="$(mktemp)"; lines="$(mktemp)"; msgs="$(mktemp)"
+  trap 'rm -f "${added:-}" "${lines:-}" "${msgs:-}"' EXIT   # an interrupted push leaves nothing behind (the audit of the fixes, claude G3-E-07)
   scan_ok=1
-  git log --format='commit %h' -p --no-color --diff-merges=first-parent --diff-filter=ACMRT "${revs[@]}" -- > "${added}" 2>/dev/null || scan_ok=0
+  git log --format='commit %h' -p --no-color --src-prefix=a/ --dst-prefix=b/ --diff-merges=first-parent --diff-filter=ACMRT "${revs[@]}" -- > "${added}" 2>/dev/null || scan_ok=0
   guard_added_lines < "${added}" > "${lines}" || scan_ok=0
   git log --format='commit %h%n%B' "${revs[@]}" 2>/dev/null \
     | awk -v t="${guard_tab}" '/^commit [0-9a-f]+$/ { c = $2; n = 0; next } { n++; print c ":message:" n t $0 }' > "${msgs}" || scan_ok=0

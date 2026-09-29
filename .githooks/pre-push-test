@@ -114,6 +114,11 @@ git reset -q --hard "${base}"
 g commit -q --allow-empty -m "clean on top"
 top="$(git rev-parse HEAD)"
 expect allowed "a clean commit over a tip this clone has" "refs/heads/clean ${top} refs/heads/clean ${base}"
+# A file git prints in quotes, from a clone with diff.noprefix: two shapes the
+# audit of the fixes found the scan skipping (claude G3-E-01, gpt G3-E-06).
+g checkout -q -b quoted "${base}"; g config diff.noprefix true; echo "${FAKE}" > 'odd"name.txt'; g add 'odd"name.txt'; g commit -q -m quoted; quoted="$(git rev-parse HEAD)"; g config --unset diff.noprefix
+expect refused "a secret in a file git prints in quotes, from a clone with diff.noprefix" "refs/heads/quoted ${quoted} refs/heads/quoted ${base}"
+g checkout -q clean
 
 # 5. What was always right stays right: a pr/* push carrying a personal path,
 #    compared with ROCKNIX's master (a remote whose URL is ROCKNIX's).
