@@ -5532,6 +5532,8 @@ static void cloudPreviewTidyFolders(Window* window)
 			{
 				if (Utils::String::startsWith(Utils::String::trim(line), "REFUSING"))
 					refusing = true;
+				if (Utils::String::startsWith(Utils::String::trim(line), ">>>"))
+					continue;   // the plan line, read by the row (parseTidyPlan), not shown
 				detail += line + "\n";
 			}
 
@@ -5568,21 +5570,55 @@ static void cloudPreviewTidyFolders(Window* window)
 // the row is withheld, never guessed at, since a press on it runs the same
 // check against the same network. The page's token says whether there is
 // still a page to add the row to when the answer comes back.
+// The row's line, from what the check would move: one whole sentence per
+// shape, each with its French, the tiers in the vocabulary's words. The
+// line used to name /ROCKNIX, the folder of an earlier build, on a build
+// whose folder is /Rasteratops, and SAVES AND SETTINGS BACKUPS when the
+// check planned the content folder alone (2026-10-01, fork #353).
+static std::string cloudTidyLine(const CloudText::TidyPlan& plan)
+{
+	std::string sentence;
+	if (plan.saves && plan.backups && plan.content)
+		sentence = _("MOVE SAVES, SETTINGS BACKUPS, ROMS, BIOS, AND GAME CONTENT INTO %s. NOTHING IS DELETED.");
+	else if (plan.saves && plan.backups)
+		sentence = _("MOVE SAVES AND SETTINGS BACKUPS INTO %s. NOTHING IS DELETED.");
+	else if (plan.saves && plan.content)
+		sentence = _("MOVE SAVES, ROMS, BIOS, AND GAME CONTENT INTO %s. NOTHING IS DELETED.");
+	else if (plan.backups && plan.content)
+		sentence = _("MOVE SETTINGS BACKUPS, ROMS, BIOS, AND GAME CONTENT INTO %s. NOTHING IS DELETED.");
+	else if (plan.saves)
+		sentence = _("MOVE SAVES INTO %s. NOTHING IS DELETED.");
+	else if (plan.backups)
+		sentence = _("MOVE SETTINGS BACKUPS INTO %s. NOTHING IS DELETED.");
+	else
+		sentence = _("MOVE ROMS, BIOS, AND GAME CONTENT INTO %s. NOTHING IS DELETED.");
+	return Utils::String::format(sentence.c_str(), plan.root.c_str());
+}
+
 static void cloudOfferTidyFolders(Window* window, GuiSettings* s)
 {
 	std::weak_ptr<void> alive = s->lifeToken();
 	std::thread([window, s, alive]
 	{
+		std::vector<std::string> lines;
 		const int rc = ApiSystem::executeScriptLegacy("timeout 30 /usr/bin/cloud_migrate_layout --check",
-			[](const std::string&) {}).second;
+			[&lines](const std::string& line) { lines.push_back(line); }).second;
 		if (rc != 0)
 			return;
-		AppWindow::post(window, [window, s, alive]
+		// The check's own plan line says what the row offers. A check that
+		// plans no move (only a setting would change) adds no row: there is
+		// nothing a press on it could show moving.
+		const CloudText::TidyPlan plan = CloudText::parseTidyPlan(lines);
+		if (!plan.ok || !(plan.saves || plan.backups || plan.content))
+		{
+			LOG(LogInfo) << "cloud tidy: the check ended 0 with " << (plan.ok ? "a plan of none" : "no plan line") << "; no row";
+			return;
+		}
+		AppWindow::post(window, [window, s, alive, plan]
 		{
 			if (alive.expired())
 				return;
-			s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"),
-				_("MOVE SAVES AND SETTINGS BACKUPS INTO /ROCKNIX. NOTHING IS DELETED."),
+			s->addWithDescription(_("TIDY UP YOUR CLOUD FOLDERS"), cloudTidyLine(plan),
 				nullptr, [window] { cloudPreviewTidyFolders(window); }, "", false, true);
 		});
 	}).detach();

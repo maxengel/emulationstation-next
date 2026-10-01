@@ -1153,6 +1153,33 @@ CloudText::SettingsArchive CloudText::parseSettingsArchive(const std::string& na
 	return a;
 }
 
+CloudText::TidyPlan CloudText::parseTidyPlan(const std::vector<std::string>& lines)
+{
+	TidyPlan plan;
+	for (auto& raw : lines)
+	{
+		const std::string line = Utils::String::trim(raw);
+		if (!Utils::String::startsWith(line, ">>> plan "))
+			continue;
+		const auto parts = Utils::String::split(line.substr(9), ' ', true);
+		if (parts.size() < 2)
+			continue;
+		plan = TidyPlan();
+		plan.ok = true;
+		plan.root = parts[1];
+		for (auto& tier : Utils::String::split(parts[0], ',', true))
+		{
+			if (tier == "saves" || tier == "discarded")
+				plan.saves = true;
+			else if (tier == "backups")
+				plan.backups = true;
+			else if (tier == "content")
+				plan.content = true;
+		}
+	}
+	return plan;
+}
+
 std::string CloudText::deviceNameFromLabel(const std::string& label)
 {
 	return Utils::String::toUpper(Utils::String::replace(label, "-", " "));

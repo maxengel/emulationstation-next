@@ -544,6 +544,14 @@ namespace CloudText
 	// reads RETROID POCKET NOVA (the approved line is "<DEVICE>, <DATE>").
 	std::string deviceNameFromLabel(const std::string& label);
 
+	// What cloud_migrate_layout --check would move, from its ">>> plan
+	// <tiers> <root>" line: tiers is a comma list of backups, saves,
+	// discarded, content (none when only a setting would change) and root
+	// the folder they move into. ok is false without the line; the
+	// discarded-saves shelf counts as saves, since that is what it holds.
+	struct TidyPlan { bool ok = false; bool saves = false; bool backups = false; bool content = false; std::string root; };
+	TidyPlan parseTidyPlan(const std::vector<std::string>& lines);
+
 	// "route=<scan|topup> at=<epoch> index=<i> total=<n> name=<game>" from
 	// raofflineproxy-ctl's running file (fork #189): the one line the ctl
 	// keeps beside its stamp while a scan or top-up runs its jobs, rewritten

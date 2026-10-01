@@ -1745,3 +1745,34 @@ TEST_CASE("parseSettingsArchive reads the device label and the time out of an ar
 	CHECK(deviceNameFromLabel("Anbernic-RG35XX-SP") == "ANBERNIC RG35XX SP");
 	CHECK(deviceNameFromLabel("") == "");
 }
+
+TEST_CASE("parseTidyPlan reads what cloud_migrate_layout --check would move, for the TIDY UP row's line")
+{
+	const auto p = parseTidyPlan({ "This device stores:", "  saves    qa:/GAMES", ">>> plan backups,saves,content /Rasteratops", "", "Nothing has been changed. Run with --apply to do it." });
+	CHECK(p.ok);
+	CHECK(p.saves);
+	CHECK(p.backups);
+	CHECK(p.content);
+	CHECK(p.root == "/Rasteratops");
+	// The content folder alone: a device whose saves and backups are current.
+	const auto c = parseTidyPlan({ ">>> plan content /Rasteratops" });
+	CHECK(c.ok);
+	CHECK_FALSE(c.saves);
+	CHECK_FALSE(c.backups);
+	CHECK(c.content);
+	// The discarded-saves shelf is saves to the row; a plan of none moves nothing.
+	const auto d = parseTidyPlan({ ">>> plan discarded /Rasteratops" });
+	CHECK(d.ok);
+	CHECK(d.saves);
+	CHECK_FALSE(d.content);
+	const auto n = parseTidyPlan({ ">>> plan none /Rasteratops" });
+	CHECK(n.ok);
+	CHECK_FALSE(n.saves);
+	CHECK_FALSE(n.backups);
+	CHECK_FALSE(n.content);
+	// No line, a check that said something else, a line cut short.
+	CHECK_FALSE(parseTidyPlan({}).ok);
+	CHECK_FALSE(parseTidyPlan({ "Already on the current layout (/Rasteratops/Saves, /Rasteratops/Backups)." }).ok);
+	CHECK_FALSE(parseTidyPlan({ ">>> plan" }).ok);
+	CHECK_FALSE(parseTidyPlan({ ">>> plan saves" }).ok);
+}
