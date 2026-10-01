@@ -59,6 +59,12 @@ public:
         // consumeMarker: clear .restore-finish-pending on FINISH (the
         // post-restore boot); false when opened from the menu later.
         static void openRestoreRelink(Window* window, bool consumeMarker = false);
+	// The cloud folder step (D-CLOUD-170, fork #363), armed at boot and by
+	// FINISH on FINISH RESTORE PROCESS: asks off the interface thread
+	// whether this device is on a folder an earlier version made its
+	// default and has not settled it, and if so puts the step up once the
+	// startup sync has ended and nothing else is open. Once per boot.
+	static void armCloudFolderStep(Window* window);
         // Whole-device snapshot to and from the cloud, plus the credential
         // re-entry that follows a restore.
 

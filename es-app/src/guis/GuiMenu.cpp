@@ -90,6 +90,8 @@
 #include <sstream>
 #include <cstdio>
 #include <thread>
+#include <atomic>
+#include <chrono>
 #endif
 
 #if WIN32
@@ -5283,25 +5285,41 @@ static void cloudScanContent(Window* window, bool backup, bool content, bool med
 // - superseded-with-files: the cloud holds the fork's earlier folder
 //   (/ROCKNIX) or upstream's (/GAMES) with saves in it and no current one.
 //   One question, MOVE first (D-CLOUD-160): MOVE runs the move on its own
-//   page -- copy, verify, then remove, safe to interrupt -- and scans again
+//   page -- copy, verify, then remove, safe to interrupt -- and goes on
 //   when it is dismissed; KEEP USING records the folder as kept, so the
 //   question is not asked again for it; NOT NOW asks again next time.
 // - superseded-empty, or the current folder absent on a restore: the
-//   offer the cloud setup step makes (D-CLOUD-161), CREATE IT / CHOOSE A
-//   FOLDER / NOT NOW. CREATE IT re-points a carried setting at the current
-//   layout and seeds the three folders, then scans again; CHOOSE A FOLDER
-//   is the CLOUD FOLDER keyboard, then the scan again.
+//   offer CREATE IT / CHOOSE A FOLDER / NOT NOW (D-CLOUD-161). CREATE IT
+//   re-points a carried setting at the current layout and seeds the three
+//   folders, then goes on; CHOOSE A FOLDER is the CLOUD FOLDER keyboard,
+//   then the same.
 // - anything else (current, kept, the player's own): straight on.
 //
-// A backup into an absent current folder asks nothing: the backup makes it.
-static void cloudOpenTransfer(Window* window, bool backup);
-static void cloudOfferFolder(Window* window, bool backup, const std::function<void()>& then)
+// Where they are raised decides what is asked and what follows each
+// answer (CloudFolderAsk): the transfer pages, where a backup asks nothing
+// about an absent current folder since the backup makes it; the cloud
+// folder step at the end of cloud setup, where the seeding settles an
+// empty folder by itself (D-CLOUD-169) and only the move is asked; and the
+// same step at boot (D-CLOUD-170, fork #363).
+struct CloudFolderAsk
 {
+	bool createEmpty = true;        // superseded-empty: CREATE IT / CHOOSE A FOLDER / NOT NOW
+	bool createCurrent = false;     // the current folder absent: the same offer (a restore's)
+	std::function<void()> then;     // nothing to settle, KEEP USING, NOT NOW
+	std::function<void()> rescan;   // after a move, a creation or a folder chosen
+	std::function<void()> abandon;  // a page it opened was closed without completing; empty: back where it was
+};
+
+static void cloudOpenTransfer(Window* window, bool backup);
+static void cloudOfferFolder(Window* window, const CloudFolderAsk& ask)
+{
+	const std::function<void()> then = ask.then ? ask.then : [] {};
+	const std::function<void()> rescan = ask.rescan ? ask.rescan : then;
+	const std::function<void()> abandon = ask.abandon;
 	const auto st = cloudScanFacts("state");
 	const std::string state = cloudScanFact(st, "STATE");
 	const std::string current = cloudScanFact(st, "CURRENT").empty() ? "/Rasteratops/Saves" : cloudScanFact(st, "CURRENT");
 	const std::string newRoot = cloudRootOf(current);
-	const auto rescan = [window, backup] { cloudOpenTransfer(window, backup); };
 	if (state == "superseded-with-files")
 	{
 		const std::string source = cloudScanFact(st, "SOURCE") == "-" || cloudScanFact(st, "SOURCE").empty()
@@ -5311,7 +5329,7 @@ static void cloudOfferFolder(Window* window, bool backup, const std::function<vo
 		window->pushGui(new GuiMsgBox(window,
 			Utils::String::format(_("YOUR CLOUD HAS A %s FOLDER FROM AN EARLIER VERSION.\n\nMOVE IT TO %s? YOUR OTHER DEVICES WILL FOLLOW.").c_str(),
 				oldRoot.c_str(), newRoot.c_str()),
-			_("MOVE"), [window, oldRoot, newRoot, rescan]
+			_("MOVE"), [window, oldRoot, newRoot, rescan, abandon]
 			{
 				LOG(LogInfo) << "cloud folder: moving " << oldRoot << " to " << newRoot;
 				auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_migrate_layout --apply", _("MOVING YOUR CLOUD FOLDER"));
@@ -5320,6 +5338,8 @@ static void cloudOfferFolder(Window* window, bool backup, const std::function<vo
 				// was cut at 640 px (guest d, 2026-10-01).
 				page->setCompletedAction(rescan, _("CONTINUE"), _("PRESS ANY BUTTON TO CONTINUE"),
 					Utils::String::format(_("YOUR CLOUD FOLDER IS NOW %s.").c_str(), newRoot.c_str()), true);
+				if (abandon)
+					page->setDismissedAction(abandon);
 				window->pushGui(page);
 			},
 			Utils::String::format(_("KEEP USING %s").c_str(), oldRoot.c_str()), [window, oldRoot, then]
@@ -5342,8 +5362,8 @@ static void cloudOfferFolder(Window* window, bool backup, const std::function<vo
 			_("NOT NOW"), then));
 		return;
 	}
-	const bool absent = state == "superseded-empty"
-		|| (state == "current" && cloudScanFact(st, "CURRENT_EXISTS") == "0" && !backup);
+	const bool absent = (state == "superseded-empty" && ask.createEmpty)
+		|| (state == "current" && cloudScanFact(st, "CURRENT_EXISTS") == "0" && ask.createCurrent);
 	if (!absent)
 	{
 		then();
@@ -5353,7 +5373,7 @@ static void cloudOfferFolder(Window* window, bool backup, const std::function<vo
 	LOG(LogInfo) << "cloud folder: no " << newRoot << " in the cloud (state " << state << "); offering to create it";
 	window->pushGui(new GuiMsgBox(window,
 		Utils::String::format(_("YOUR CLOUD HAS NO %s FOLDER YET.\n\nCREATE IT, WITH FOLDERS FOR SAVES, SETTINGS BACKUPS, AND GAME CONTENT?").c_str(), newRoot.c_str()),
-		_("CREATE IT"), [window, newRoot, rescan]
+		_("CREATE IT"), [window, newRoot, rescan, abandon]
 		{
 			// The re-point first (a carried /GAMES reads as no folder at all,
 			// D-CLOUD-161; 3 is "already on the current layout"), then the
@@ -5363,6 +5383,8 @@ static void cloudOfferFolder(Window* window, bool backup, const std::function<vo
 				"echo '>>> unit CLOUD FOLDER||'; /usr/bin/cloud_migrate_layout --apply; r=$?; [ \"$r\" = 0 ] || [ \"$r\" = 3 ] || exit \"$r\"; /usr/bin/cloud_setup --seed-folders",
 				_("CREATING YOUR CLOUD FOLDER"), 1);
 			page->setAutoContinue(rescan);
+			if (abandon)
+				page->setDismissedAction(abandon);
 			window->pushGui(page);
 		},
 		_("CHOOSE A FOLDER"), [window, saves, rescan]
@@ -5398,9 +5420,186 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_scan", _("CHECKING YOUR CLOUD"), 3);
 	page->setAutoContinue([window, backup]
 	{
-		cloudOfferFolder(window, backup, [window, backup] { cloudOpenTransferOptions(window, backup); });
+		CloudFolderAsk ask;
+		ask.createCurrent = !backup;
+		ask.then = [window, backup] { cloudOpenTransferOptions(window, backup); };
+		ask.rescan = [window, backup] { cloudOpenTransfer(window, backup); };
+		cloudOfferFolder(window, ask);
 	});
 	window->pushGui(page);
+}
+
+// The cloud folder step (D-CLOUD-170, fork #363). The folder is settled
+// where the player first meets the cloud, not before every sync: at the
+// end of cloud setup, right after a remote is linked, and at the first
+// boot of this build on a device linked to a folder an earlier version
+// made its default (/ROCKNIX, /GAMES), at every boot until it is settled
+// -- moved, kept, followed or created. The maintainer, 2026-10-01: "my
+// point with the dialog on the Nova wasn't that it was on startup that
+// was the problem. It was that it wasn't in the logical place following
+// the linking of the new rclone backend". The check that ran before every
+// backup and restore cost a sync on the current folder 147 ms and one in
+// transition 419 ms (guest d, median of five); it is gone.
+//
+// Online, the step is the scan of the folder alone (cloud_scan --folder:
+// the join, the state, the quiet follow) and then the transfer pages'
+// dialogs. Offline, at boot, FINISH CLOUD SETUP says so and offers the
+// Wi-Fi picker, whose join runs the step again, or NOT NOW; at the end of
+// setup it cannot be offline -- the wizard has just reached the cloud --
+// and a scan that fails there says why and goes on to the setup's last
+// page, leaving the folder to the next boot.
+enum class CloudFolderPlace { Setup, Boot };
+
+static void cloudFolderStepAgain(Window* window);
+
+static void cloudFolderStep(Window* window, CloudFolderPlace place, const std::function<void()>& done)
+{
+	const std::function<void()> finish = done ? done : [] {};
+	if (!Utils::FileSystem::exists("/usr/bin/cloud_scan"))
+	{
+		finish();
+		return;
+	}
+	CloudFolderAsk ask;
+	ask.then = finish;
+	if (place == CloudFolderPlace::Setup)
+	{
+		// The seeding that follows makes the folders on a cloud that has
+		// none, and points a carried, empty /GAMES at them (D-CLOUD-169):
+		// only the move is asked here, and every way out goes on to it.
+		ask.createEmpty = false;
+		ask.rescan = finish;
+		ask.abandon = finish;
+	}
+	else
+		ask.rescan = [window] { cloudFolderStepAgain(window); };
+	LOG(LogInfo) << "cloud folder step: checking the folder (" << (place == CloudFolderPlace::Setup ? "end of cloud setup" : "boot") << ")";
+	auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_scan --folder", _("CHECKING YOUR CLOUD"), 1);
+	page->setAutoContinue([window, ask] { cloudOfferFolder(window, ask); });
+	if (ask.abandon)
+		page->setDismissedAction(ask.abandon);
+	window->pushGui(page);
+}
+
+// Whether this device has a folder to settle: an earlier version's
+// default, not kept, with a remote set up. No network (--needs-step reads
+// the conf), so it may be asked on the interface thread after a press.
+static bool cloudFolderStepNeeded()
+{
+	if (!Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout")
+		|| !Utils::FileSystem::exists("/usr/bin/cloud_scan")
+		|| !Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false))
+		return false;
+	return ApiSystem::executeScriptLegacy("timeout 10 /usr/bin/cloud_migrate_layout --needs-step",
+		[](const std::string&) {}).second == 0;
+}
+
+// Online as the scan means it: a default route (cloud_scan's own first
+// test, and cloud_net_ready's), so the step and its scan never disagree
+// about whether this device is offline. A few milliseconds.
+static bool cloudLinkUp()
+{
+	return ApiSystem::executeScriptLegacy("ip route show default 2>/dev/null | grep -q .",
+		[](const std::string&) {}).second == 0;
+}
+
+// The boot place's step, once nothing else is open: the scan when there
+// is a link, else the question that offers one.
+static void cloudFolderStepAtBoot(Window* window)
+{
+	if (cloudLinkUp())
+	{
+		cloudFolderStep(window, CloudFolderPlace::Boot, nullptr);
+		return;
+	}
+	LOG(LogInfo) << "cloud folder step: a folder to settle and no network; asking to connect";
+	window->pushGui(new GuiMsgBox(window,
+		_("FINISH CLOUD SETUP") + "\n\n" + _("YOU'RE NOT ONLINE. CONNECT TO FINISH SETTING UP YOUR CLOUD FOLDER."),
+		_("CONNECT TO WI-FI"), [window]
+		{
+			window->pushGui(new GuiWifi(window, _("WI-FI NETWORKS"), [window] { cloudFolderStepAgain(window); }));
+		},
+		_("NOT NOW"), [] { LOG(LogInfo) << "cloud folder step: NOT NOW; asked again at the next boot"; }));
+}
+
+// After a move, a creation, a folder chosen or a network joined: settled,
+// or the step once more.
+static void cloudFolderStepAgain(Window* window)
+{
+	if (!cloudFolderStepNeeded())
+	{
+		LOG(LogInfo) << "cloud folder step: settled";
+		return;
+	}
+	cloudFolderStepAtBoot(window);
+}
+
+// Once per boot, whichever way it is armed: at boot, or by FINISH on
+// FINISH RESTORE PROCESS. Set on the interface thread; a waiter reads it
+// to stop early.
+static std::atomic<bool> sCloudFolderStepOffered(false);
+
+// Up only over the carousel or a game list with nothing on it: not over a
+// menu the player opened while the startup sync ran, not while a game
+// runs, and not beside a sync or a transfer.
+static bool cloudFolderStepIfQuiet(Window* window)
+{
+	if (sCloudFolderStepOffered)
+		return true;
+	if (window->peekGui() != ViewController::get() || FileData::GetRunningGame() != nullptr
+		|| ThreadedCloudSync::isRunning() || CloudTransferJob::running())
+		return false;
+	sCloudFolderStepOffered = true;
+	cloudFolderStepAtBoot(window);
+	return true;
+}
+
+void GuiMenu::armCloudFolderStep(Window* window)
+{
+	if (sCloudFolderStepOffered || !UIModeController::getInstance()->isUIModeFull()
+		|| !Utils::FileSystem::exists("/usr/bin/cloud_migrate_layout")
+		|| !Utils::FileSystem::exists("/usr/bin/cloud_scan")
+		|| !Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false))
+		return;
+	std::thread([window]
+	{
+		// The question first, off the interface thread: a bash and two awks,
+		// tens of milliseconds on an A53, kept off the boot. Almost every
+		// device answers no here, and nothing else runs.
+		const int rc = ApiSystem::executeScriptLegacy("timeout 10 /usr/bin/cloud_migrate_layout --needs-step",
+			[](const std::string&) {}).second;
+		if (rc != 0)
+		{
+			LOG(LogInfo) << "cloud folder step: nothing to settle (--needs-step " << rc << ")";
+			return;
+		}
+		// The startup sync first: its card is the screen's until it ends,
+		// and a move takes the lock it holds -- a move asked for beside it
+		// was refused as A SYNC IS ALREADY RUNNING.
+		while (ThreadedCloudSync::isRunning() && !sCloudFolderStepOffered)
+			std::this_thread::sleep_for(std::chrono::milliseconds(500));
+		// A link still coming up is given its time (bounded; no route and
+		// nothing coming up answers at once), so a device whose Wi-Fi joins
+		// a few seconds after the interface is not told it is offline.
+		ApiSystem::executeScriptLegacy("[ -x /usr/bin/cloud_net_ready ] && timeout 40 /usr/bin/cloud_net_ready --wait 30",
+			[](const std::string&) {});
+		// Then once a second until the screen is free, one post at a time;
+		// the window going away (AppWindow::closing) ends it.
+		auto state = std::make_shared<std::atomic<int>>(0);   // 0 waiting, 1 asked, 2 shown
+		for (;;)
+		{
+			const int now = state->load();
+			if (now == 2)
+				return;
+			if (now == 0)
+			{
+				state->store(1);
+				if (!AppWindow::post(window, [window, state] { state->store(cloudFolderStepIfQuiet(window) ? 2 : 0); }))
+					return;
+			}
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+		}
+	}).detach();
 }
 
 // Step three: make this device match the cloud.
@@ -6470,7 +6669,7 @@ enum class CloudSetupMode { FirstRemote, AddRemote, RepairRemote };
 static void cloudSetupShowSshStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev);
 static void cloudSetupShowConnectStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev);
 static void cloudSetupShowConfigureStep(Window* window, CloudSetupMode mode, const std::string& remote, const std::string& preexisting, GuiSettings* prev);
-static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev);
+static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev, bool folderStep = true);
 
 static std::string cloudSetupTitle(CloudSetupMode mode)
 {
@@ -7172,7 +7371,8 @@ static void cloudSetupBuildDoneStep(Window* window, const std::string& remote, G
 	{
 		cloudSetupOpenSyncPathEditor(window, syncpath, [window, s, remote]
 		{
-			cloudSetupShowDoneStep(window, remote, s);
+			// No folder step: the player has just chosen the folder.
+			cloudSetupShowDoneStep(window, remote, s, false);
 		});
 	});
 	s->addEntry(_("BACK UP SETTINGS AND SAVES NOW"), true, [window, s]
@@ -7200,17 +7400,31 @@ static void cloudSetupBuildDoneStep(Window* window, const std::string& remote, G
 // was done (fork #103). Ninety seconds is the box; a run that outlives it
 // reports the folders it did manage to create. prev stays under the
 // spinner untouched, so the page built afterwards can still replace it.
-static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev)
+//
+// The cloud folder step comes first (D-CLOUD-170, fork #363): right after
+// a remote is linked is where the player first meets this cloud, so a
+// folder an earlier version made -- /ROCKNIX, /GAMES -- is asked about
+// here, before the page that says where the folders are, and the seeding
+// then makes them where the answer put them. Not when the page is rebuilt
+// after CLOUD FOLDER: the player has just chosen the folder.
+static void cloudSetupShowDoneStep(Window* window, const std::string& remote, GuiSettings* prev, bool folderStep)
 {
-	window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("SETTING UP YOUR CLOUD FOLDERS"),
-		[](IGuiLoadingHandler*)
-		{
-			return ApiSystem::executeScriptLegacy("timeout 90 /usr/bin/cloud_setup --seed-folders");
-		},
-		[window, remote, prev](std::vector<std::string> seeded)
-		{
-			cloudSetupBuildDoneStep(window, remote, prev, seeded);
-		}));
+	auto seed = [window, remote, prev]
+	{
+		window->pushGui(new GuiLoading<std::vector<std::string>>(window, _("SETTING UP YOUR CLOUD FOLDERS"),
+			[](IGuiLoadingHandler*)
+			{
+				return ApiSystem::executeScriptLegacy("timeout 90 /usr/bin/cloud_setup --seed-folders");
+			},
+			[window, remote, prev](std::vector<std::string> seeded)
+			{
+				cloudSetupBuildDoneStep(window, remote, prev, seeded);
+			}));
+	};
+	if (folderStep)
+		cloudFolderStep(window, CloudFolderPlace::Setup, seed);
+	else
+		seed();
 }
 
 // Wizard entry point: network is a hard precondition; then branch on the
@@ -8449,14 +8663,26 @@ void GuiMenu::openRestoreRelink(Window* window, bool consumeMarker)
 	// lose the flow.
 	s->getMenu().clearButtons();
 	s->getMenu().addButton(_("LATER"), _("later"), [s] { s->close(); });
-	s->getMenu().addButton(_("FINISH"), _("finish"), [s, restoreMarker, consumeMarker]
+	s->getMenu().addButton(_("FINISH"), _("finish"), [window, s, restoreMarker, consumeMarker]
 	{
+		// Copied out first: the close deletes this button and the closure
+		// with it.
+		Window* const w = window;
+		const bool restoreFlow = consumeMarker;
 		if (consumeMarker)
 		{
 			LOG(LogInfo) << "restore relink: complete, clearing marker";
 			std::remove(restoreMarker.c_str());
 		}
 		s->close();
+		// One setup page at a time (D-CLOUD-170, fork #363): this page
+		// first, then the cloud folder step when the device has a folder to
+		// settle, armed as the boot arms it -- up once the startup sync has
+		// ended and nothing else is open. Only from the restore's own flow:
+		// the RetroAchievements prompt opens this page with no marker, and
+		// the boot armed the step for that boot already.
+		if (restoreFlow)
+			GuiMenu::armCloudFolderStep(w);
 	});
 
 	window->pushGui(s);

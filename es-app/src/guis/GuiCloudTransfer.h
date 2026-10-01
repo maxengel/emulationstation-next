@@ -86,6 +86,14 @@ public:
 	// CANCEL stays while it runs. Taken on the interface thread, posted
 	// from update(), and refused when the page shows another command's run.
 	void setAutoContinue(const std::function<void()>& action);
+	// What the page does once it is closed without its completed action:
+	// a run that did not complete, or another command's run. The cloud
+	// folder step (D-CLOUD-170, fork #363) goes on when its scan or its
+	// move did not complete -- at the end of cloud setup the wizard's last
+	// page must still come -- where a transfer page's CLOSE goes back to
+	// the page underneath. Taken in place of a script's offer: the step's
+	// pages raise none.
+	void setDismissedAction(const std::function<void()>& action);
 	// Line 5 when the run did not complete, in place of the verb's clause:
 	// the folder move says what it leaves (YOUR CLOUD STILL HAS /ROCKNIX.
 	// NOTHING WAS REMOVED.), which no verb's words say.
@@ -218,6 +226,8 @@ private:
 	// The step a completed run takes by itself (setAutoContinue), and the
 	// token the posted step checks before touching a page that may be gone.
 	std::function<void()> mAutoContinue;
+	// What a close without the completed action goes on to (setDismissedAction).
+	std::function<void()> mDismissedAction;
 	std::shared_ptr<bool> mAlive;
 	bool mAdvancePosted = false;
 	// Line 5 for a run that did not complete, when a page set one.

@@ -1115,6 +1115,14 @@ int main(int argc, char* argv[])
 	if (!journeyPending)
 		startStartupSavesSync(&window);
 
+	// The cloud folder step at boot (D-CLOUD-170, fork #363): a device
+	// linked to a folder an earlier version made its default is asked about
+	// it once the startup sync has ended, at every boot until it is settled.
+	// Not beside the restore's own page, whose FINISH goes on to it (one
+	// setup page at a time), and not on the one-touch restore's boot.
+	if (!journeyPending && !Utils::FileSystem::exists("/storage/.config/.restore-finish-pending", false))
+		GuiMenu::armCloudFolderStep(&window);
+
 	// Play music
 	AudioManager::getInstance()->init();
 

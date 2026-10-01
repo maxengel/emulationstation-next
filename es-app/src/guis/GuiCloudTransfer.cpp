@@ -192,6 +192,11 @@ void GuiCloudTransfer::setFailedNote(const std::string& note)
 	mFailedNote = note;
 }
 
+void GuiCloudTransfer::setDismissedAction(const std::function<void()>& action)
+{
+	mDismissedAction = action;
+}
+
 // The completed run's step, taken from a posted function (update() must
 // not delete the page it is updating): the run is dismissed as a press
 // would dismiss it, the page goes, and the step runs with the window.
@@ -293,6 +298,8 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 		completedAction = mCompletedAction;
 	else if (o.completed && mAutoContinue && !mOtherRun)
 		completedAction = mAutoContinue;   // a press in the frame before the posted step: the same step
+	// The close's own step when there is no completed one (setDismissedAction).
+	const std::function<void()> dismissedAction = completedAction ? std::function<void()>() : mDismissedAction;
 	// A question a script asked us to put to the player (#100, #127, #145),
 	// raised here rather than when the line arrived: this page ends when it
 	// is dismissed (es-native-ui.md, the fourth tier), and the run's outcome
@@ -326,6 +333,11 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	}
 	if (restored)
 		window->postToUiThread([] { SystemData::rescanChangedFolders(); });
+	if (dismissedAction)
+	{
+		dismissedAction();
+		return true;
+	}
 	CloudOffer::present(window, offer, offerArgs);
 	return true;
 }
