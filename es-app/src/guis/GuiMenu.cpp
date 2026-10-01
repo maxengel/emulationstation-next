@@ -4043,14 +4043,24 @@ static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, 
 // A row that is there and not for pressing: dimmed, its one line saying
 // why (D-CLOUD-162's SETTINGS row with no backup from this device). Not
 // selectable, so the cursor passes over it; dimmed by the entry on every
-// frame, as the gated rows are (fork #182).
+// frame, as the gated rows are (fork #182). A row that is not selectable
+// is laid out from the list's edge with no inset -- the section headers
+// pad their own text -- so this one carries the selectable rows' inset on
+// both sides itself; without it the row sat flush with the panel's edge,
+// out of line with the rows above it (guest d, run 95; vm-qa run 97).
 static void cloudAddDimmedRow(GuiSettings* s, Window* window, const std::string& label, const std::string& description)
 {
 	ComponentListRow row;
 	row.selectable = false;
+	auto left = std::make_shared<GuiComponent>(window);
+	left->setSize(ComponentList::rowInset(), 0);
+	row.addElement(left, false);
 	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
 	entry->setDimmed(true);
 	row.addElement(entry, true);
+	auto right = std::make_shared<GuiComponent>(window);
+	right->setSize(ComponentList::rowInset(), 0);
+	row.addElement(right, false);
 	s->addRow(row);
 }
 static std::string cloudShellQuote(const std::string& value);

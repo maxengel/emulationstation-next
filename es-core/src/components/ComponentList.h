@@ -106,6 +106,11 @@ public:
 	std::string getSelectedUserData();
 	
 	float getTotalRowHeight() const;
+
+	// The inset a selectable row's elements are laid out with, on each
+	// side. A row that is not selectable gets none and pads itself, as
+	// addGroup's header does (updateElementPosition, updateElementSize).
+	static float rowInset();
 	inline float getRowHeight(int row) const { return getRowHeight(mEntries.at(row).data); }
 
 	inline void setCursorChangedCallback(const std::function<void(CursorState state)>& callback) { mCursorChangedCallback = callback; };

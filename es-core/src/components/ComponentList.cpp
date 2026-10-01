@@ -488,6 +488,11 @@ float ComponentList::getTotalRowHeight() const
 	return height;
 }
 
+float ComponentList::rowInset()
+{
+	return TOTAL_HORIZONTAL_PADDING_PX / 2;
+}
+
 void ComponentList::updateElementPosition(const ComponentListRow& row, float yOffset)
 {
 	if (yOffset < 0)
