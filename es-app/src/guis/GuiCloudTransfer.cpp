@@ -780,7 +780,8 @@ void GuiCloudTransfer::update(int deltaTime)
 					summary = std::to_string(job.mRunFiles) + " " + std::string(job.mRunFiles == 1 ? _("FILE") : _("FILES"));
 				if (sized)
 					summary += (summary.empty() ? "" : " · ") + sizeLabel((unsigned long) job.mRunBytes);
-				summary += " " + std::string(restore ? _("RESTORED") : _("BACKED UP"));
+				summary += " " + std::string(restore ? _("RESTORED")
+					: CloudText::transferKind(job.mCommand) == CloudText::TransferKind::Move ? _("MOVED") : _("BACKED UP"));
 			}
 			else if (job.mRunSized && o.completed)
 			{
@@ -988,7 +989,15 @@ void GuiCloudTransfer::update(int deltaTime)
 		// the content scan's; the folder move's three steps (#353). Each
 		// is cut to the line as every row 3 is.
 		else if (job.mDoing == "scan")
-			doing = fitOneLine(mTextFont, _("CHECKING WHAT SETTINGS AND CONTENT YOUR CLOUD HAS FOR THIS DEVICE..."), mLineWidth);
+		{
+			// The approved sentence where it fits; at 640 px it was cut
+			// mid-word (guest d, 2026-10-01), so the clause goes whole
+			// (D-UI-035) before the line is clipped at all.
+			doing = CloudText::chooseThatFits({ _("CHECKING WHAT SETTINGS AND CONTENT YOUR CLOUD HAS FOR THIS DEVICE..."),
+				_("CHECKING WHAT YOUR CLOUD HAS FOR THIS DEVICE...") }, mLineWidth,
+				[this](const std::string& t) { return mTextFont ? mTextFont->sizeText(t).x() : 0.0f; });
+			doing = fitOneLine(mTextFont, doing, mLineWidth);
+		}
 		else if (job.mDoing == "compare")
 			doing = _("COMPARING WITH THIS DEVICE...");
 		else if (job.mDoing == "copy")

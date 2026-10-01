@@ -4850,7 +4850,10 @@ static void cloudOpenTransferOptions(Window* window, bool backup)
 	}
 	else
 		s->addWithDescription(_("SETTINGS"),
-			scanned ? CloudText::deviceNameFromLabel(mine.label) + ", " + Utils::String::toUpper(Utils::Time::timeToString(mine.when, "%d %b %Y"))
+			// The date in the system's own shape, as every LAST line is
+			// (cloudLastLabel): the formatter knows no month names, and
+			// "%b" printed nothing (guest d, 2026-10-01).
+			scanned ? CloudText::deviceNameFromLabel(mine.label) + ", " + Utils::Time::timeToString(mine.when, Utils::Time::getSystemDateFormat())
 			        : std::string(_("CONFIGURATION, CONTROLS, AND THEMES")), settings);
 
 	// Written on the way out, by whichever exit -- BACK included, because a
@@ -4897,6 +4900,16 @@ static void cloudOpenTransferOptions(Window* window, bool backup)
 	auto run = std::make_shared<std::function<void()>>();
 	*run = [window, s, backup, configured, saves, content, media, settings, hasContent]
 	{
+		// Copied out before anything below closes the page: s->close()
+		// deletes the page, its button bar, the button whose press this
+		// is, and with them every holder of this function -- so the
+		// captures are freed memory by the time the transfer page is
+		// pushed. It read `window` from that memory for weeks and got
+		// away with it; on the scan-opened page the block was reused and
+		// the push crashed (guest d, 2026-10-01: pushGui with a misaligned
+		// Window*). The same rule as the button bar's (es-code-traps.md).
+		Window* const w = window;
+		const bool up = backup;
 		if (!configured)
 		{
 			window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nSET IT UP NOW?"), _("YES"),
@@ -5083,9 +5096,9 @@ static void cloudOpenTransferOptions(Window* window, bool backup)
 		if (!cmd.empty())
 			cmd += " ; exit $rc";
 
+		const std::string title = up ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD");
 		s->close();
-		window->pushGui(new GuiCloudTransfer(window, cmd,
-			backup ? _("BACKING UP TO THE CLOUD") : _("RESTORING FROM THE CLOUD"), items, itemsAfterContent));
+		w->pushGui(new GuiCloudTransfer(w, cmd, title, items, itemsAfterContent));
 	};
 
 	// Which systems is a question only the per-system classes raise -- ROMS AND
@@ -5103,6 +5116,9 @@ static void cloudOpenTransferOptions(Window* window, bool backup)
 			staged ? _("choose systems") : (backup ? _("back up") : _("restore")),
 			[window, staged, run, backup, content, media, perSystemLine, wholeDeviceLine]
 			{
+				// A holder of its own, on the stack: the verb closes the page
+				// that holds every other one (the comment in run).
+				const auto keep = run;
 				if (staged)
 					cloudScanContent(window, backup, content->getState(), media->getState(),
 						[window, run, backup, content, media, perSystemLine, wholeDeviceLine]
@@ -5112,7 +5128,7 @@ static void cloudOpenTransferOptions(Window* window, bool backup)
 								content->getState(), media->getState(), perSystemLine(), wholeDeviceLine());
 						});
 				else
-					(*run)();
+					(*keep)();
 			});
 	};
 	rebuildButtons();
@@ -5290,8 +5306,10 @@ static void cloudOfferFolder(Window* window, bool backup, const std::function<vo
 				LOG(LogInfo) << "cloud folder: moving " << oldRoot << " to " << newRoot;
 				auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_migrate_layout --apply", _("MOVING YOUR CLOUD FOLDER"));
 				page->setFailedNote(Utils::String::format(_("YOUR CLOUD STILL HAS %s. NOTHING WAS REMOVED.").c_str(), oldRoot.c_str()));
+				// One short sentence: the longer one, naming the three tiers,
+				// was cut at 640 px (guest d, 2026-10-01).
 				page->setCompletedAction(rescan, _("CONTINUE"), _("PRESS ANY BUTTON TO CONTINUE"),
-					Utils::String::format(_("YOUR SAVES, SETTINGS BACKUPS, AND GAME CONTENT ARE NOW UNDER %s.").c_str(), newRoot.c_str()), true);
+					Utils::String::format(_("YOUR CLOUD FOLDER IS NOW %s.").c_str(), newRoot.c_str()), true);
 				window->pushGui(page);
 			},
 			Utils::String::format(_("KEEP USING %s").c_str(), oldRoot.c_str()), [window, oldRoot, then]
