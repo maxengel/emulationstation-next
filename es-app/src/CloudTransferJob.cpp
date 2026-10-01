@@ -230,8 +230,11 @@ void CloudTransferJob::handleLine(const std::string& line)
 	//     not running yet. "archive": backuptool is writing the settings
 	//     archive (its own output is discarded), and row 3 says so until the
 	//     next per-file, checks or totals line, or the next unit. "unpack":
-	//     the same tool putting one back. Any other keyword is a newer
-	//     script's and is ignored rather than shown raw.
+	//     the same tool putting one back. "scan" and "compare": cloud_scan
+	//     checking the cloud and comparing its content (#350); "copy",
+	//     "verify", "remove": the folder move's three steps (#353). Any
+	//     other keyword is a newer script's and is ignored rather than
+	//     shown raw.
 	//   ">>> removed <files>|<bytes>|<per-system>" -- a match's summary, for
 	//     the done page (below). A match cut off by the network prints it
 	//     before exiting 69, so the page can say what had already gone.
@@ -380,7 +383,11 @@ void CloudTransferJob::handleLine(const std::string& line)
 			// Any keyword a newer script prints is ignored rather than shown
 			// raw: row 3 says what the item is doing in the player's words,
 			// and a word out of a script is not those.
-			if (protocol.text == "archive" || protocol.text == "unpack")
+			// scan and compare are cloud_scan's (fork #350); copy, verify and
+			// remove are the folder move's (cloud_migrate_layout --apply, #353).
+			if (protocol.text == "archive" || protocol.text == "unpack"
+				|| protocol.text == "scan" || protocol.text == "compare"
+				|| protocol.text == "copy" || protocol.text == "verify" || protocol.text == "remove")
 				mDoing = protocol.text;
 			break;
 		case CloudText::ProtocolKind::Offer:

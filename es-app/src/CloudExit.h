@@ -20,5 +20,11 @@ namespace CloudExit
 {
 	constexpr int LockHeld  = 75;   // EX_TEMPFAIL: another cloud sync holds the flock
 	constexpr int NoNetwork = 69;   // EX_UNAVAILABLE: no default route, or no probe answered
+	// EX_CONFIG: the cloud has no saves folder to sync with yet. The scripts
+	// exit 0 and print ">>> offer create-saves-folder"; an automatic sync
+	// (startup, exit) records this code instead and says SKIPPED - YOUR
+	// CLOUD FOLDER ISN'T SET UP YET with the row to set it up on, rather
+	// than raising the question at startup (fork #353, D-CLOUD-166).
+	constexpr int NoFolder  = 78;
 	constexpr int Stopped   = 130;  // the scripts' SIGINT/SIGTERM trap; a cancelled run
 }

@@ -73,8 +73,23 @@ public:
 	// happens next. Nothing is called when the run did not complete; TRY
 	// AGAIN and CLOSE apply then exactly as they always do (#114). A page
 	// with an action set is not left while it runs, for the same reason.
+	// `cancellable` keeps B while it runs: the folder move (#353) is safe to
+	// interrupt -- copy and verify resume, the delete runs only after the
+	// verified copy -- where the settings restore is not.
 	void setCompletedAction(const std::function<void()>& action, const std::string& helpVerb,
-		const std::string& footer, const std::string& note);
+		const std::string& footer, const std::string& note, bool cancellable = false);
+	// What the page does the moment the run completes, without a press: the
+	// scan before the options page (fork #350, D-CLOUD-156) has no outcome
+	// of its own to read -- the page it opens is the outcome -- so a
+	// completed scan goes straight on, where a run that did not complete
+	// stays with its why and TRY AGAIN beside CLOSE as every page does.
+	// CANCEL stays while it runs. Taken on the interface thread, posted
+	// from update(), and refused when the page shows another command's run.
+	void setAutoContinue(const std::function<void()>& action);
+	// Line 5 when the run did not complete, in place of the verb's clause:
+	// the folder move says what it leaves (YOUR CLOUD STILL HAS /ROCKNIX.
+	// NOTHING WAS REMOVED.), which no verb's words say.
+	void setFailedNote(const std::string& note);
 
 	void render(const Transform4x4f& parentTrans) override;
 	bool input(InputConfig* config, Input input) override;
@@ -136,7 +151,7 @@ private:
 	// completed run has an action in place of an exit (setCompletedAction):
 	// a settings restore is replacing the configuration under this process,
 	// and there is nowhere safe to stop.
-	bool cancellable() const { return !mCompletedAction; }
+	bool cancellable() const { return !mCompletedAction || mActionCancellable; }
 	// The CANCEL confirmation: what cancelling means, then
 	// CloudTransferJob::stopByPlayer() on YES.
 	void askCancel();
@@ -199,4 +214,13 @@ private:
 	// The completed run's one exit, and the words for it (setCompletedAction).
 	std::function<void()> mCompletedAction;
 	std::string mCompletedHelpVerb, mCompletedFooter, mCompletedNote;
+	bool mActionCancellable = false;
+	// The step a completed run takes by itself (setAutoContinue), and the
+	// token the posted step checks before touching a page that may be gone.
+	std::function<void()> mAutoContinue;
+	std::shared_ptr<bool> mAlive;
+	bool mAdvancePosted = false;
+	// Line 5 for a run that did not complete, when a page set one.
+	std::string mFailedNote;
+	void advance();
 };

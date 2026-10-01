@@ -39,7 +39,7 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::string& command, c
 
 GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::shared_ptr<CloudTransferJob>& job)
 	: GuiComponent(window), mBusyAnim(window, ""), mBackground(window, ":/frame.png"),
-	  mJob(job), mOtherRun(false), mShownFinished(false), mShownPercent(-1)
+	  mJob(job), mOtherRun(false), mShownFinished(false), mShownPercent(-1), mAlive(std::make_shared<bool>(true))
 {
 	auto theme = ThemeData::getMenuTheme();
 	mBackground.setImagePath(theme->Background.path);
@@ -170,13 +170,42 @@ GuiCloudTransfer::GuiCloudTransfer(Window* window, const std::shared_ptr<CloudTr
 // popped by something other than the player, which the job survives.
 GuiCloudTransfer::~GuiCloudTransfer()
 {
+	if (mAlive)
+		*mAlive = false;
 }
 
 // Set before the page is pushed and read on the interface thread alone
 // (input, update, getHelpPrompts), so no lock: the run's mutex guards the
 // run's state, and this is the page's.
+void GuiCloudTransfer::setAutoContinue(const std::function<void()>& action)
+{
+	if (mOtherRun)
+	{
+		LOG(LogWarning) << "GuiCloudTransfer: auto-continue refused, the page shows another command's run";
+		return;
+	}
+	mAutoContinue = action;
+}
+
+void GuiCloudTransfer::setFailedNote(const std::string& note)
+{
+	mFailedNote = note;
+}
+
+// The completed run's step, taken from a posted function (update() must
+// not delete the page it is updating): the run is dismissed as a press
+// would dismiss it, the page goes, and the step runs with the window.
+void GuiCloudTransfer::advance()
+{
+	std::function<void()> action = mAutoContinue;
+	CloudTransferJob::dismiss(mJob);
+	delete this;
+	if (action)
+		action();
+}
+
 void GuiCloudTransfer::setCompletedAction(const std::function<void()>& action, const std::string& helpVerb,
-	const std::string& footer, const std::string& note)
+	const std::string& footer, const std::string& note, bool cancellable)
 {
 	if (mOtherRun)
 	{
@@ -184,6 +213,7 @@ void GuiCloudTransfer::setCompletedAction(const std::function<void()>& action, c
 		return;
 	}
 	mCompletedAction = action;
+	mActionCancellable = cancellable;
 	mCompletedHelpVerb = helpVerb;
 	mCompletedFooter = footer;
 	mCompletedNote = note;
@@ -261,6 +291,8 @@ bool GuiCloudTransfer::input(InputConfig* config, Input input)
 	std::function<void()> completedAction;
 	if (o.completed && mCompletedAction)
 		completedAction = mCompletedAction;
+	else if (o.completed && mAutoContinue && !mOtherRun)
+		completedAction = mAutoContinue;   // a press in the frame before the posted step: the same step
 	// A question a script asked us to put to the player (#100, #127, #145),
 	// raised here rather than when the line arrived: this page ends when it
 	// is dismissed (es-native-ui.md, the fourth tier), and the run's outcome
@@ -404,13 +436,16 @@ GuiCloudTransfer::Outcome GuiCloudTransfer::outcome(const CloudTransferJob& job)
 	o.partial = !o.completed && ((anyOk && anyBad) || anyUnitOk || (match && job.mRemovedFiles > 0));
 	const int code = job.mTiers.empty() ? job.mExit : onlyCode;
 	const bool progressed = job.mAnyTransferred || job.mRunFiles > 0 || job.mUnitFiles > 0;
-	o.skipped = !o.completed && !o.partial && !progressed && (code == CloudExit::LockHeld || code == CloudExit::NoNetwork);
+	o.skipped = !o.completed && !o.partial && !progressed
+		&& (code == CloudExit::LockHeld || code == CloudExit::NoNetwork || code == CloudExit::NoFolder);
 	if (o.completed)
 		o.word = _("COMPLETED");
 	else if (o.partial)
 		o.word = _("COULDN'T FINISH");
 	else if (o.skipped && code == CloudExit::LockHeld)
 		o.word = _("SKIPPED - A SYNC IS ALREADY RUNNING");
+	else if (o.skipped && code == CloudExit::NoFolder)
+		o.word = _("SKIPPED - YOUR CLOUD FOLDER ISN'T SET UP YET");
 	else if (o.skipped)
 		o.word = _("SKIPPED - YOU'RE NOT ONLINE");
 	else
@@ -429,6 +464,9 @@ std::string GuiCloudTransfer::verbWord(const CloudTransferJob& job)
 		case CloudText::TransferKind::Backup:  return _("BACKING UP...");
 		case CloudText::TransferKind::Restore: return _("RESTORING...");
 		case CloudText::TransferKind::Match:   return _("MATCHING...");
+		case CloudText::TransferKind::Scan:    return _("CHECKING...");
+		case CloudText::TransferKind::Move:    return _("MOVING...");
+		case CloudText::TransferKind::Create:  return _("CREATING...");
 		default:                               return _("WORKING...");
 	}
 }
@@ -472,6 +510,9 @@ std::string GuiCloudTransfer::stillRunningSentence(const std::shared_ptr<CloudTr
 		case CloudText::TransferKind::Backup:  return _("YOUR BACKUP TO THE CLOUD IS STILL RUNNING.");
 		case CloudText::TransferKind::Restore: return _("YOUR RESTORE FROM THE CLOUD IS STILL RUNNING.");
 		case CloudText::TransferKind::Match:   return _("THIS DEVICE IS STILL BEING MATCHED TO THE CLOUD.");
+		case CloudText::TransferKind::Scan:    return _("YOUR CLOUD IS STILL BEING CHECKED.");
+		case CloudText::TransferKind::Move:    return _("YOUR CLOUD FOLDER IS STILL BEING MOVED.");
+		case CloudText::TransferKind::Create:  return _("YOUR CLOUD FOLDER IS STILL BEING CREATED.");
 		default:                               return _("YOUR CLOUD TRANSFER IS STILL RUNNING.");
 	}
 }
@@ -647,6 +688,12 @@ void GuiCloudTransfer::update(int deltaTime)
 	const bool justFinished = job.mFinished && !mShownFinished;
 	mShownFinished = job.mFinished;
 	mShownPercent  = job.mPercent;
+	// A completed run with a step of its own goes on by itself
+	// (setAutoContinue), from a posted function rather than from inside
+	// this update: the window is walking its pages, and a page deleted
+	// under that walk is the use-after-free a press from input() never
+	// risks. The token says whether the page is still here when it runs.
+	const bool advance = justFinished && mAutoContinue && !mOtherRun && !mAdvancePosted && outcome(job).completed;
 	// The run's clock, not a page's: this page may be the second one opened
 	// on the run, and elapsed is how long the run has been going.
 	const int elapsedMs = job.elapsedMsLocked();
@@ -820,6 +867,8 @@ void GuiCloudTransfer::update(int deltaTime)
 		// nothing to put (setCompletedAction).
 		if (o.completed && mCompletedAction && !mCompletedNote.empty())
 			note = mCompletedNote;
+		if (!o.completed && !o.skipped && !mFailedNote.empty())
+			note = mFailedNote;
 		// Two sentences on a 640px panel do not fit the small font; the
 		// first alone says what is in place, so it is what survives.
 		mNote->setText(fitSentences(mSmallFont, note, mLineWidth));
@@ -935,6 +984,19 @@ void GuiCloudTransfer::update(int deltaTime)
 			// page can use either (">>> doing unpack", #114).
 			doing = _("PUTTING YOUR SETTINGS BACK...");
 		}
+		// The scan page's one line (the approved string, D-CLOUD-164) and
+		// the content scan's; the folder move's three steps (#353). Each
+		// is cut to the line as every row 3 is.
+		else if (job.mDoing == "scan")
+			doing = fitOneLine(mTextFont, _("CHECKING WHAT SETTINGS AND CONTENT YOUR CLOUD HAS FOR THIS DEVICE..."), mLineWidth);
+		else if (job.mDoing == "compare")
+			doing = _("COMPARING WITH THIS DEVICE...");
+		else if (job.mDoing == "copy")
+			doing = _("COPYING...");
+		else if (job.mDoing == "verify")
+			doing = _("CHECKING THE COPY...");
+		else if (job.mDoing == "remove")
+			doing = _("REMOVING THE OLD FOLDER...");
 		else if (job.mItemIndex > 0)
 			doing = _("WORKING...");
 		mActivity->setText(doing);
@@ -967,4 +1029,16 @@ void GuiCloudTransfer::update(int deltaTime)
 	lock.unlock();
 	if (justFinished)
 		updateHelpPrompts();
+	if (advance)
+	{
+		mAdvancePosted = true;
+		std::weak_ptr<bool> alive = mAlive;
+		GuiCloudTransfer* page = this;
+		mWindow->postToUiThread([page, alive]
+		{
+			if (auto token = alive.lock())
+				if (*token)
+					page->advance();
+		});
+	}
 }

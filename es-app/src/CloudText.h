@@ -19,6 +19,7 @@
 
 #include <ctime>
 #include <functional>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -87,6 +88,7 @@ namespace CloudText
 		SkippedNoNetwork,
 		SkippedGameStarted,
 		SkippedCancelled,     // the player's CANCEL on the transfer page (D-UI-078)
+		SkippedNoFolder,      // an automatic sync with no saves folder in the cloud yet (CloudExit::NoFolder)
 		Failed
 	};
 
@@ -274,7 +276,11 @@ namespace CloudText
 	// backup alike, and the cloud script beside it says which. A command
 	// naming a restore and a backup script both is the card's sync, not a
 	// page's run, and Other.
-	enum class TransferKind { Backup, Restore, Match, Other };
+	// Scan: cloud_scan, the check before the options page (fork #350);
+	// Move: cloud_migrate_layout --apply, the folder move the dialog offers
+	// (#353); Create: cloud_setup --seed-folders, the folder the offer
+	// makes. Each has its own running word and still-running sentence.
+	enum class TransferKind { Backup, Restore, Match, Scan, Move, Create, Other };
 	TransferKind transferKind(const std::string& cmd);
 
 	// The first candidate that fits the width, else the last one offered.
@@ -521,6 +527,22 @@ namespace CloudText
 	std::vector<std::pair<std::string, std::string>> unitLabels();
 	std::string unitLabel(const std::string& label);
 	bool isKnownUnitLabel(const std::string& label);
+
+	// The scan's facts (cloud_scan writes "KEY=value" lines; so do
+	// cloud_migrate_layout --state and cloud_setup --content-location): one
+	// map, the last value for a repeated key, lines without = ignored.
+	std::map<std::string, std::string> parseKeyValues(const std::string& text);
+
+	// A settings archive's name, as backuptool writes it:
+	// "YYYY_MM_DD-HHMMSS-<device label>-<OS>_SETTINGS.tar.gz". ok is false
+	// for any other shape; when is the local time the name carries.
+	struct SettingsArchive { bool ok = false; std::string label; time_t when = 0; };
+	SettingsArchive parseSettingsArchive(const std::string& name);
+
+	// A device label as the row shows it: cloud_device_id writes the
+	// model with hyphens for spaces ("Retroid-Pocket-Nova"), so the row
+	// reads RETROID POCKET NOVA (the approved line is "<DEVICE>, <DATE>").
+	std::string deviceNameFromLabel(const std::string& label);
 
 	// "route=<scan|topup> at=<epoch> index=<i> total=<n> name=<game>" from
 	// raofflineproxy-ctl's running file (fork #189): the one line the ctl

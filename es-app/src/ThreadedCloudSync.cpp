@@ -90,6 +90,7 @@ std::string ThreadedCloudSync::whyForCode(int rc)
 		// outcome uses, so one code is never called two things.
 		case CloudExit::NoNetwork: return _("YOU'RE NOT ONLINE");
 		case CloudExit::LockHeld:  return _("A SYNC IS ALREADY RUNNING");
+		case CloudExit::NoFolder:  return _("YOUR CLOUD FOLDER ISN'T SET UP YET");
 		default:        return _("SOMETHING WENT WRONG");
 	}
 }
@@ -110,6 +111,7 @@ std::string ThreadedCloudSync::tokenForCode(int rc)
 		case CloudExit::Stopped:   return "stopped";
 		case CloudExit::NoNetwork: return "no-network";
 		case CloudExit::LockHeld:  return "lock-held";
+		case CloudExit::NoFolder:  return "no-folder";
 		default:        return "unknown";
 	}
 }
@@ -122,6 +124,7 @@ std::string ThreadedCloudSync::whyForToken(const std::string& token)
 	if (token == "cloud-stopped")  return whyForCode(5);
 	if (token == "cloud-refused")  return whyForCode(7);
 	if (token == "stopped")        return whyForCode(CloudExit::Stopped);
+	if (token == "no-folder")      return whyForCode(CloudExit::NoFolder);
 	return "";
 }
 
@@ -478,7 +481,17 @@ void ThreadedCloudSync::run()
 	std::vector<std::string> okTiers, badTiers;
 	for (auto& t : mTiers)
 		(t.second == 0 || t.second == 9 ? okTiers : badTiers).push_back(t.first);
-	const bool completed = !cancelled && (ret == 0 || ret == 9);
+	// A cloud with no saves folder yet: the scripts exit 0 and ask for the
+	// folder (">>> offer create-saves-folder"). An automatic sync does not
+	// raise that question -- the maintainer met it at startup on the Nova,
+	// 2026-10-01, and the folder is the cloud setup's and the transfer
+	// pages' to ask about (D-CLOUD-166, fork #353) -- it says SKIPPED with
+	// the row that sets it up, and stamps CloudExit::NoFolder so the row
+	// under SYNC SAVES DURING STARTUP says the same. A sync the player
+	// pressed keeps the question: they are standing there.
+	const bool noFolder = !cancelled && (ret == 0 || ret == 9) && mOffer == "create-saves-folder"
+		&& (mOrigin == Origin::Startup || mOrigin == Origin::Exit);
+	const bool completed = !cancelled && (ret == 0 || ret == 9) && !noFolder;
 	const bool gaps = !cancelled && !completed && !okTiers.empty() && !badTiers.empty();
 	// In the player's language: the scripts speak English whatever the
 	// interface does (#308 F-CS-31). The stamp below keeps mWhy as printed.
@@ -507,6 +520,11 @@ void ThreadedCloudSync::run()
 	{
 		outcome = _("COMPLETED");
 		token = "completed";
+	}
+	else if (noFolder)
+	{
+		outcome = _("SKIPPED - YOUR CLOUD FOLDER ISN'T SET UP YET");
+		token = "no-folder";
 	}
 	else if (gaps)
 	{
@@ -545,7 +563,7 @@ void ThreadedCloudSync::run()
 	// row -- LAST 00:48 - COULDN'T FINISH on a row nobody had pressed (guest
 	// d, 2026-09-10). Automatic origins stamp whatever they ran.
 	if (mOrigin != Origin::Manual || CloudText::verbOf(mCommand) == CloudText::Verb::Sync)
-		recordOutcome(mOrigin, ret, token, offlineGaps && mWhy.empty() ? offlineWhy : mWhy);
+		recordOutcome(mOrigin, noFolder ? CloudExit::NoFolder : ret, token, offlineGaps && mWhy.empty() ? offlineWhy : mWhy);
 
 	// A run stopped for a game (the player's answer to the launch question,
 	// D-CLOUD-129): the script's own stamp -- what the BACK UP and RESTORE
@@ -633,10 +651,15 @@ void ThreadedCloudSync::run()
 		else
 		{
 			const CloudText::Verb verb = CloudText::verbOf(mCommand);
-			const std::string inPlace = inPlaceClause(verb, moved);
+			// Nothing ran on a sync with no folder to sync with: no in-place
+			// clause, and the one line names the row (the approved action
+			// line, D-CLOUD-164).
+			const std::string inPlace = noFolder ? "" : inPlaceClause(verb, moved);
 
 			std::string recover;
-			if (cancelled && mGameExitSync)
+			if (noFolder)
+				recover = _("SET IT UP: GAME SETTINGS > MANAGE CLOUD STORAGE");
+			else if (cancelled && mGameExitSync)
 				recover = _("THEY GO UP WHEN YOU EXIT THE GAME.");
 			else if (mOrigin == Origin::Startup)
 				recover = _("IT'LL TRY AGAIN AT STARTUP, OR SYNC NOW FROM GAME SETTINGS.");
@@ -665,7 +688,7 @@ void ThreadedCloudSync::run()
 			// startup sentence has a short form for a panel where even it
 			// alone does not fit.
 			std::vector<std::string> recoveries = { recover };
-			if (mOrigin == Origin::Startup)
+			if (mOrigin == Origin::Startup && !noFolder)
 				recoveries.push_back(_("IT'LL TRY AGAIN NEXT STARTUP."));
 			action = CloudText::actionCandidates(inPlace, recoveries, keepInPlace);
 		}

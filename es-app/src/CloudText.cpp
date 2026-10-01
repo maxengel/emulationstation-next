@@ -1,4 +1,6 @@
 #include "CloudText.h"
+#include <map>
+#include <ctime>
 
 #include "CloudExit.h"
 #include "LocaleES.h"
@@ -149,7 +151,7 @@ bool isOutcomeToken(const std::string& token)
 {
 	static const std::set<std::string> ourTokens = {
 		"completed", "gaps", "no-network", "lock-held", "cancelled", "player-cancelled", "stopped",
-		"folder-missing", "cloud-stopped", "cloud-refused", "unknown" };
+		"folder-missing", "cloud-stopped", "cloud-refused", "unknown", "no-folder" };
 	return ourTokens.find(token) != ourTokens.cend();
 }
 
@@ -341,6 +343,8 @@ LastRun parseLastRun(const std::string& text)
 		r.outcome = Outcome::SkippedLockHeld;
 	else if (code == CloudExit::NoNetwork)
 		r.outcome = Outcome::SkippedNoNetwork;
+	else if (code == CloudExit::NoFolder)
+		r.outcome = Outcome::SkippedNoFolder;
 	else if (token == "cancelled")
 		r.outcome = Outcome::SkippedGameStarted;
 	else if (token == "player-cancelled")
@@ -642,6 +646,14 @@ TransferKind transferKind(const std::string& cmd)
 {
 	if (cmd.find("--match") != std::string::npos)
 		return TransferKind::Match;
+	if (cmd.find("cloud_scan") != std::string::npos)
+		return TransferKind::Scan;
+	// The folder the offer creates runs the re-point and the seeding in one
+	// command (GuiMenu's cloudOfferFolder): the seeding names the kind.
+	if (cmd.find("--seed-folders") != std::string::npos)
+		return TransferKind::Create;
+	if (cmd.find("cloud_migrate_layout") != std::string::npos && cmd.find("--apply") != std::string::npos)
+		return TransferKind::Move;
 	const bool restore = cmd.find("cloud_restore") != std::string::npos || cmd.find("cloud_content_restore") != std::string::npos;
 	const bool backup  = cmd.find("cloud_backup")  != std::string::npos || cmd.find("cloud_content_backup")  != std::string::npos;
 	if (restore && !backup) return TransferKind::Restore;
@@ -1081,7 +1093,69 @@ std::vector<std::pair<std::string, std::string>> CloudText::unitLabels()
 		{ "RESTORING SAVES", _("RESTORING SAVES") },
 		{ "BACKING UP SAVES", _("BACKING UP SAVES") },
 		{ "RESTORING ROMS AND BIOS", _("RESTORING ROMS AND BIOS") },
+		// The scan page's three items and the move page's set-aside (fork
+		// #350, #353); SAVES and SETTINGS are the move's other two.
+		{ "CLOUD FOLDER", _("CLOUD FOLDER") },
+		{ "SETTINGS BACKUPS", _("SETTINGS BACKUPS") },
+		{ "DISCARDED SAVES", _("DISCARDED SAVES") },
 	};
+}
+
+std::map<std::string, std::string> CloudText::parseKeyValues(const std::string& text)
+{
+	std::map<std::string, std::string> facts;
+	for (auto& raw : Utils::String::split(text, '\n', true))
+	{
+		const std::string line = Utils::String::trim(raw);
+		const size_t eq = line.find('=');
+		if (eq == std::string::npos || eq == 0)
+			continue;
+		facts[line.substr(0, eq)] = line.substr(eq + 1);
+	}
+	return facts;
+}
+
+CloudText::SettingsArchive CloudText::parseSettingsArchive(const std::string& name)
+{
+	SettingsArchive a;
+	// YYYY_MM_DD-HHMMSS-<label>-<OS>_SETTINGS.tar.gz: the date and time are
+	// fixed-width, the label is everything between the time's dash and the
+	// last dash before the OS name.
+	static const std::string suffix = "_SETTINGS.tar.gz";
+	if (name.size() < 18 + 1 + suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0)
+		return a;
+	for (size_t i = 0; i < 17; i++)
+	{
+		const char c = name[i];
+		const bool sep = (i == 4 || i == 7) ? c == '_' : i == 10 ? c == '-' : false;
+		if (!sep && !(i != 4 && i != 7 && i != 10 && isdigit((unsigned char) c)))
+			return a;
+	}
+	if (name[17] != '-')
+		return a;
+	const std::string rest = name.substr(18, name.size() - 18 - suffix.size());   // "<label>-<OS>"
+	const size_t cut = rest.rfind('-');
+	if (cut == std::string::npos || cut == 0)
+		return a;
+	struct tm t = {};
+	t.tm_year = atoi(name.substr(0, 4).c_str()) - 1900;
+	t.tm_mon  = atoi(name.substr(5, 2).c_str()) - 1;
+	t.tm_mday = atoi(name.substr(8, 2).c_str());
+	t.tm_hour = atoi(name.substr(11, 2).c_str());
+	t.tm_min  = atoi(name.substr(13, 2).c_str());
+	t.tm_sec  = atoi(name.substr(15, 2).c_str());
+	t.tm_isdst = -1;
+	if (t.tm_mon < 0 || t.tm_mon > 11 || t.tm_mday < 1 || t.tm_mday > 31)
+		return a;
+	a.when = mktime(&t);
+	a.label = rest.substr(0, cut);
+	a.ok = a.when > 0;
+	return a;
+}
+
+std::string CloudText::deviceNameFromLabel(const std::string& label)
+{
+	return Utils::String::toUpper(Utils::String::replace(label, "-", " "));
 }
 
 std::string CloudText::unitLabel(const std::string& label)

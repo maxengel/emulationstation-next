@@ -4028,6 +4028,10 @@ void GuiMenu::addFeatures(const VectorEx<CustomFeature>& features, Window* windo
 // these for the CLOUD FOLDER row and for rows that must stay visible
 // before a remote is configured.
 static void cloudSetupOpenSyncPathEditor(Window* window, const std::string& current, const std::function<void()>& onDone);
+// The transfer flow since #350 (D-CLOUD-156): the scan page first, then the
+// folder dialogs it may raise, then the options page built from its files.
+static void cloudOpenTransferOptions(Window* window, bool backup);
+static void cloudScanContent(Window* window, bool backup, bool content, bool media, const std::function<void()>& then);
 
 void GuiMenu::openCloudFolderEditor(Window* window, const std::string& current)
 {
@@ -4036,6 +4040,19 @@ void GuiMenu::openCloudFolderEditor(Window* window, const std::string& current)
 static std::map<std::string, std::string> cloudSetupInfo();
 
 static void cloudAddGatedEntry(GuiSettings* s, Window* window, bool configured, const std::string& label, const std::string& description, const std::function<void()>& action);
+// A row that is there and not for pressing: dimmed, its one line saying
+// why (D-CLOUD-162's SETTINGS row with no backup from this device). Not
+// selectable, so the cursor passes over it; dimmed by the entry on every
+// frame, as the gated rows are (fork #182).
+static void cloudAddDimmedRow(GuiSettings* s, Window* window, const std::string& label, const std::string& description)
+{
+	ComponentListRow row;
+	row.selectable = false;
+	auto entry = std::make_shared<MultiLineMenuEntry>(window, Utils::String::toUpper(label), description, true);
+	entry->setDimmed(true);
+	row.addElement(entry, true);
+	s->addRow(row);
+}
 static std::string cloudShellQuote(const std::string& value);
 
 // The picker's selection, handed to the content script as it closes. The
@@ -4085,6 +4102,45 @@ static bool cloudSelectionRead(const std::string& path, std::vector<std::string>
 			names.push_back(line);
 	}
 	return in.eof() && !in.bad();
+}
+
+// What the scan page wrote (cloud_scan, fork #350): the options page and the
+// systems page are built from these files, never from a loader of their own.
+// Read with the selection reader above -- line by line, so a file under
+// three bytes is not read as empty (es-code-traps.md) -- and uncached: the
+// scan writes them while this process runs.
+static const char* CLOUD_SCAN_DIR = "/storage/.cache/cloud_sync/scan";
+static bool cloudScanLines(const std::string& name, std::vector<std::string>& lines)
+{
+	return cloudSelectionRead(std::string(CLOUD_SCAN_DIR) + "/" + name, lines);
+}
+static std::map<std::string, std::string> cloudScanFacts(const std::string& name)
+{
+	std::vector<std::string> lines;
+	cloudScanLines(name, lines);
+	std::string text;
+	for (auto& l : lines)
+		text += l + "\n";
+	return CloudText::parseKeyValues(text);
+}
+static std::string cloudScanFact(const std::map<std::string, std::string>& facts, const std::string& key)
+{
+	auto it = facts.find(key);
+	return it == facts.end() ? "" : it->second;
+}
+static bool cloudScanStamped(const std::string& name)
+{
+	return Utils::FileSystem::exists(std::string(CLOUD_SCAN_DIR) + "/" + name, false);
+}
+// The folder a player sees for a saves folder: its parent (/ROCKNIX for
+// /ROCKNIX/Saves), or the folder itself when it sits at the root (/GAMES).
+static std::string cloudRootOf(const std::string& saves)
+{
+	const std::string path = saves.size() > 1 && saves.back() == '/' ? saves.substr(0, saves.size() - 1) : saves;
+	const size_t cut = path.rfind('/');
+	if (cut == std::string::npos || cut == 0)
+		return path;
+	return path.substr(0, cut);
 }
 
 // The picker's selection, saved and then read back before anything moves on
@@ -4185,20 +4241,12 @@ struct CloudScanResult
 
 static void cloudContentSystemPicker(Window* window, const std::function<void()>& onDone, const std::string& proceedLabel, bool backup, bool content, bool media, const std::string& perSystem, const std::string& wholeDevice)
 {
-	window->pushGui(new GuiLoading<CloudScanResult>(
-		window, backup ? _("COMPARING THIS DEVICE'S CONTENT WITH YOUR CLOUD") : _("COMPARING YOUR CLOUD'S CONTENT WITH THIS DEVICE"),
-		[content, media](auto gui)
-		{
-			// The pair form, for the exit code: the list form threw it away,
-			// and a scan that exited 69 with nothing on stdout -- no network
-			// -- was handed to the page as an empty cloud (#105).
-			CloudScanResult r;
-			r.rc = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudContentMode(content, media),
-				[&r](const std::string& line) { r.scan.push_back(line); }).second;
-			r.selected = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
-			return r;
-		},
-		[window, onDone, proceedLabel, backup, content, perSystem, wholeDevice](CloudScanResult result)
+	// The listing is the content scan's, run on a page of its own before
+	// this is built (cloud_scan --content, #350): the page is built from
+	// its files. A loader over the options page was the pop-up over a
+	// pop-up the maintainer met (2026-09-30); it remains only for scripts
+	// older than cloud_scan.
+	auto build = [window, onDone, proceedLabel, backup, content, perSystem, wholeDevice](CloudScanResult result)
 		{
 			// A scan that could not read the cloud says so, and says what to
 			// do; only a scan that read it and found nothing shows the
@@ -4483,7 +4531,30 @@ static void cloudContentSystemPicker(Window* window, const std::function<void()>
 			// The page owns the rebuild; nothing else holds the shared_ptr, so
 			// the weak references above go dead the moment the page does.
 			s->onFinalize([buttons, proceed, onDone] { if (*proceed && onDone) onDone(); });
-		}));
+		};
+	if (Utils::FileSystem::exists("/usr/bin/cloud_scan"))
+	{
+		CloudScanResult r;
+		r.rc = cloudScanStamped("content-done") ? 0 : -1;
+		cloudScanLines("scan", r.scan);
+		cloudScanLines("systems", r.selected);
+		build(r);
+		return;
+	}
+	window->pushGui(new GuiLoading<CloudScanResult>(
+		window, backup ? _("COMPARING THIS DEVICE'S CONTENT WITH YOUR CLOUD") : _("COMPARING YOUR CLOUD'S CONTENT WITH THIS DEVICE"),
+		[content, media](auto gui)
+		{
+			// The pair form, for the exit code: the list form threw it away,
+			// and a scan that exited 69 with nothing on stdout -- no network
+			// -- was handed to the page as an empty cloud (#105).
+			CloudScanResult r;
+			r.rc = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --scan" + cloudContentMode(content, media),
+				[&r](const std::string& line) { r.scan.push_back(line); }).second;
+			r.selected = ApiSystem::executeScriptLegacy("/usr/bin/cloud_content_restore --systems");
+			return r;
+		},
+		build));
 }
 
 // What happened the last time this ran: when, how it ended, and -- when it
@@ -4563,6 +4634,11 @@ static CloudLastRun cloudReadLastRun(const std::string& name)
 		break;
 	case CloudText::Outcome::SkippedCancelled:
 		r.outcome = _("SKIPPED, YOU CANCELLED IT");
+		break;
+	case CloudText::Outcome::SkippedNoFolder:
+		// An automatic sync with no saves folder in the cloud yet (D-CLOUD-166):
+		// the card's SKIPPED word, with the row's comma.
+		r.outcome = _("SKIPPED, YOUR CLOUD FOLDER ISN'T SET UP YET");
 		break;
 	case CloudText::Outcome::Failed:
 	{
@@ -4706,7 +4782,7 @@ static void cloudAddClassRow(GuiSettings* s, Window* window, bool configured,
 // an EVERYTHING row is a fourth thing to read that exists only because the
 // first three could not be combined. The button bar carries the verb, so the
 // page states a selection and the action happens once.
-static void cloudOpenTransfer(Window* window, bool backup)
+static void cloudOpenTransferOptions(Window* window, bool backup)
 {
 	const bool configured = Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false);
 	auto s = new GuiSettings(window, backup ? _("BACK UP TO THE CLOUD") : _("RESTORE FROM THE CLOUD"));
@@ -4755,8 +4831,27 @@ static void cloudOpenTransfer(Window* window, bool backup)
 
 	auto settings = std::make_shared<SwitchComponent>(window);
 	settings->setState(remembered("settings", false));
-	s->addWithDescription(_("SETTINGS"),
-		_("CONFIGURATION, CONTROLS, AND THEMES"), settings);
+	// On a restore the row is offered only when the cloud holds a settings
+	// backup from this device model (D-CLOUD-162, #349): the scan page before
+	// this one listed the archives by the label in their names (cloud_scan's
+	// settings file, MINE= this device's newest). With none the row stays,
+	// dimmed, with its reason -- es-ui-style-guide.md dims rather than hides
+	// -- and nothing is ticked; offered, its line says which device and when,
+	// the approved "<DEVICE>, <DATE>" (D-CLOUD-164). A backup always has
+	// settings to send, and a page with no scan behind it (older scripts)
+	// reads as it always did.
+	const std::map<std::string, std::string> archives = backup ? std::map<std::string, std::string>() : cloudScanFacts("settings");
+	const bool scanned = !backup && archives.count("MINE") > 0;
+	const CloudText::SettingsArchive mine = scanned ? CloudText::parseSettingsArchive(cloudScanFact(archives, "MINE")) : CloudText::SettingsArchive();
+	if (scanned && !mine.ok)
+	{
+		settings->setState(false);
+		cloudAddDimmedRow(s, window, _("SETTINGS"), _("NO SETTINGS BACKUP FROM THIS DEVICE YET"));
+	}
+	else
+		s->addWithDescription(_("SETTINGS"),
+			scanned ? CloudText::deviceNameFromLabel(mine.label) + ", " + Utils::String::toUpper(Utils::Time::timeToString(mine.when, "%d %b %Y"))
+			        : std::string(_("CONFIGURATION, CONTROLS, AND THEMES")), settings);
 
 	// Written on the way out, by whichever exit -- BACK included, because a
 	// tick somebody set and then thought better of running is still their
@@ -5009,9 +5104,13 @@ static void cloudOpenTransfer(Window* window, bool backup)
 			[window, staged, run, backup, content, media, perSystemLine, wholeDeviceLine]
 			{
 				if (staged)
-					cloudContentSystemPicker(window, [run] { (*run)(); },
-						backup ? _("BACK UP") : _("RESTORE"), backup,
-						content->getState(), media->getState(), perSystemLine(), wholeDeviceLine());
+					cloudScanContent(window, backup, content->getState(), media->getState(),
+						[window, run, backup, content, media, perSystemLine, wholeDeviceLine]
+						{
+							cloudContentSystemPicker(window, [run] { (*run)(); },
+								backup ? _("BACK UP") : _("RESTORE"), backup,
+								content->getState(), media->getState(), perSystemLine(), wholeDeviceLine());
+						});
 				else
 					(*run)();
 			});
@@ -5036,6 +5135,244 @@ static void cloudOpenTransfer(Window* window, bool backup)
 	}
 
 	window->pushGui(s);
+}
+
+// The content folder, settled before the content scan on a restore (#352,
+// D-CLOUD-156): the scan page found where the games are (cloud_setup
+// --content-location). Found under the cloud root's Content folder while
+// the configured root holds nothing of ours, the device is pointed there
+// with no question -- it is ours, by name. Found nowhere, the approved
+// question offers the chooser; NOT NOW goes on to a listing that will say
+// no system holds what was ticked. Anything else is as configured.
+static void cloudOpenContentFolderChooser(Window* window, const std::function<void()>& then);
+static void cloudSetContentFolder(Window* window, const std::string& folder, const std::function<void()>& then)
+{
+	window->pushGui(new GuiLoading<std::pair<std::string, std::string>>(window, _("WORKING..."),
+		[folder](IGuiLoadingHandler*)
+		{
+			std::string why, rc;
+			for (auto& line : Utils::Platform::GetShOutputLines(
+				"timeout 30 /usr/bin/cloud_setup --set-content-remote " + Utils::String::shellQuote(folder) + " 2>&1; echo \"RC=$?\""))
+			{
+				const std::string l = Utils::String::trim(line);
+				if (Utils::String::startsWith(l, "RC="))
+					rc = l.substr(3);
+				else if (!l.empty())
+					why += (why.empty() ? "" : "\n") + l;
+			}
+			return std::make_pair(rc, why);
+		},
+		[window, folder, then](std::pair<std::string, std::string> result)
+		{
+			if (result.first != "0")
+			{
+				LOG(LogWarning) << "cloud content folder: " << folder << " was refused: " << result.second;
+				window->pushGui(new GuiMsgBox(window,
+					_("THE CLOUD FOLDER WAS NOT CHANGED") + (result.second.empty() ? "" : "\n\n" + result.second), _("OK"), nullptr));
+				return;
+			}
+			LOG(LogInfo) << "cloud content folder: now " << folder;
+			then();
+		}));
+}
+static void cloudOfferContentFolder(Window* window, const std::function<void()>& then)
+{
+	const auto facts = cloudScanFacts("content-location");
+	const std::string state = cloudScanFact(facts, "STATE");
+	const std::string found = cloudScanFact(facts, "FOUND");
+	if (state == "found-elsewhere" && !found.empty())
+	{
+		LOG(LogInfo) << "cloud content folder: nothing of ours at the configured root; using " << found;
+		cloudSetContentFolder(window, found, then);
+		return;
+	}
+	if (state != "empty")
+	{
+		then();
+		return;
+	}
+	std::string folder = cloudScanFact(facts, "CONTENT_REMOTE");
+	if (folder.empty())
+		folder = "/";
+	window->pushGui(new GuiMsgBox(window,
+		Utils::String::format(_("YOUR CLOUD HAS NO ROMS OR BIOS AT %s.\n\nCHOOSE THE FOLDER WHERE YOUR GAMES ARE?").c_str(), folder.c_str()),
+		_("CHOOSE A FOLDER"), [window, then] { cloudOpenContentFolderChooser(window, then); },
+		_("NOT NOW"), then));
+}
+// CHOOSE A CLOUD FOLDER (#352, the approved title): the folders at the
+// cloud's root, as the scan listed them (root-dirs), the one the scan
+// found first when it found one. A press points the device's content root
+// there and goes on to the content scan.
+static void cloudOpenContentFolderChooser(Window* window, const std::function<void()>& then)
+{
+	auto s = new GuiSettings(window, _("CHOOSE A CLOUD FOLDER"));
+	std::vector<std::string> dirs;
+	const std::string found = cloudScanFact(cloudScanFacts("content-location"), "FOUND");
+	if (!found.empty())
+		dirs.push_back(found);
+	std::vector<std::string> roots;
+	cloudScanLines("root-dirs", roots);
+	for (auto& d : roots)
+		if (!d.empty() && "/" + d != found)
+			dirs.push_back("/" + d);
+	if (dirs.empty())
+		cloudSetupAddInfoRow(s, window, _("NONE"), false);
+	for (auto& d : dirs)
+		s->addEntry(d, false, [window, s, d, then]
+		{
+			cloudSetContentFolder(window, d, [s, then] { s->close(); then(); });
+		});
+	window->pushGui(s);
+}
+
+// The content scan, on a page of its own (#350): the content folder is
+// settled first on a restore (above), then cloud_scan --content lists the
+// cloud's systems in the classes ticked, and the systems page is built
+// from its files. A scan that did not complete stays on its page with its
+// why and TRY AGAIN beside CLOSE; one that did goes straight on, since the
+// systems page is its outcome (GuiCloudTransfer::setAutoContinue). Scripts
+// older than cloud_scan run the listing in the picker as they always did.
+static void cloudScanContent(Window* window, bool backup, bool content, bool media, const std::function<void()>& then)
+{
+	if (!Utils::FileSystem::exists("/usr/bin/cloud_scan"))
+	{
+		then();
+		return;
+	}
+	auto scan = [window, content, media, then]
+	{
+		auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_scan --content" + cloudContentMode(content, media), _("CHECKING YOUR CLOUD"), 1);
+		page->setAutoContinue(then);
+		window->pushGui(page);
+	};
+	if (backup)
+		scan();
+	else
+		cloudOfferContentFolder(window, scan);
+}
+
+// The folder dialogs the scan can raise, before anything is offered (#353;
+// the state is cloud_migrate_layout --state's, written by the scan page):
+//
+// - superseded-with-files: the cloud holds the fork's earlier folder
+//   (/ROCKNIX) or upstream's (/GAMES) with saves in it and no current one.
+//   One question, MOVE first (D-CLOUD-160): MOVE runs the move on its own
+//   page -- copy, verify, then remove, safe to interrupt -- and scans again
+//   when it is dismissed; KEEP USING records the folder as kept, so the
+//   question is not asked again for it; NOT NOW asks again next time.
+// - superseded-empty, or the current folder absent on a restore: the
+//   offer the cloud setup step makes (D-CLOUD-161), CREATE IT / CHOOSE A
+//   FOLDER / NOT NOW. CREATE IT re-points a carried setting at the current
+//   layout and seeds the three folders, then scans again; CHOOSE A FOLDER
+//   is the CLOUD FOLDER keyboard, then the scan again.
+// - anything else (current, kept, the player's own): straight on.
+//
+// A backup into an absent current folder asks nothing: the backup makes it.
+static void cloudOpenTransfer(Window* window, bool backup);
+static void cloudOfferFolder(Window* window, bool backup, const std::function<void()>& then)
+{
+	const auto st = cloudScanFacts("state");
+	const std::string state = cloudScanFact(st, "STATE");
+	const std::string current = cloudScanFact(st, "CURRENT").empty() ? "/Rasteratops/Saves" : cloudScanFact(st, "CURRENT");
+	const std::string newRoot = cloudRootOf(current);
+	const auto rescan = [window, backup] { cloudOpenTransfer(window, backup); };
+	if (state == "superseded-with-files")
+	{
+		const std::string source = cloudScanFact(st, "SOURCE") == "-" || cloudScanFact(st, "SOURCE").empty()
+			? cloudScanFact(st, "SAVES") : cloudScanFact(st, "SOURCE");
+		const std::string oldRoot = cloudRootOf(source);
+		LOG(LogInfo) << "cloud folder: " << oldRoot << " holds saves and " << newRoot << " does not exist; offering the move";
+		window->pushGui(new GuiMsgBox(window,
+			Utils::String::format(_("YOUR CLOUD HAS A %s FOLDER FROM AN EARLIER VERSION.\n\nMOVE IT TO %s? YOUR OTHER DEVICES WILL FOLLOW.").c_str(),
+				oldRoot.c_str(), newRoot.c_str()),
+			_("MOVE"), [window, oldRoot, newRoot, rescan]
+			{
+				LOG(LogInfo) << "cloud folder: moving " << oldRoot << " to " << newRoot;
+				auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_migrate_layout --apply", _("MOVING YOUR CLOUD FOLDER"));
+				page->setFailedNote(Utils::String::format(_("YOUR CLOUD STILL HAS %s. NOTHING WAS REMOVED.").c_str(), oldRoot.c_str()));
+				page->setCompletedAction(rescan, _("CONTINUE"), _("PRESS ANY BUTTON TO CONTINUE"),
+					Utils::String::format(_("YOUR SAVES, SETTINGS BACKUPS, AND GAME CONTENT ARE NOW UNDER %s.").c_str(), newRoot.c_str()), true);
+				window->pushGui(page);
+			},
+			Utils::String::format(_("KEEP USING %s").c_str(), oldRoot.c_str()), [window, oldRoot, then]
+			{
+				LOG(LogInfo) << "cloud folder: keeping " << oldRoot;
+				window->pushGui(new GuiLoading<int>(window, _("WORKING..."),
+					[](IGuiLoadingHandler*) -> int
+					{
+						// The pair form, for the exit code (the list form throws it away).
+						return ApiSystem::executeScriptLegacy("timeout 30 /usr/bin/cloud_migrate_layout --keep",
+							[](const std::string&) {}).second;
+					},
+					[then](int rc)
+					{
+						if (rc != 0)
+							LOG(LogWarning) << "cloud folder: --keep exited " << rc << "; the question will be asked again";
+						then();
+					}));
+			},
+			_("NOT NOW"), then));
+		return;
+	}
+	const bool absent = state == "superseded-empty"
+		|| (state == "current" && cloudScanFact(st, "CURRENT_EXISTS") == "0" && !backup);
+	if (!absent)
+	{
+		then();
+		return;
+	}
+	const std::string saves = cloudScanFact(st, "SAVES").empty() ? current : cloudScanFact(st, "SAVES");
+	LOG(LogInfo) << "cloud folder: no " << newRoot << " in the cloud (state " << state << "); offering to create it";
+	window->pushGui(new GuiMsgBox(window,
+		Utils::String::format(_("YOUR CLOUD HAS NO %s FOLDER YET.\n\nCREATE IT, WITH FOLDERS FOR SAVES, SETTINGS BACKUPS, AND GAME CONTENT?").c_str(), newRoot.c_str()),
+		_("CREATE IT"), [window, newRoot, rescan]
+		{
+			// The re-point first (a carried /GAMES reads as no folder at all,
+			// D-CLOUD-161; 3 is "already on the current layout"), then the
+			// setup step's own seeding, with a folder and a README each.
+			LOG(LogInfo) << "cloud folder: creating " << newRoot;
+			auto page = new GuiCloudTransfer(window,
+				"echo '>>> unit CLOUD FOLDER||'; /usr/bin/cloud_migrate_layout --apply; r=$?; [ \"$r\" = 0 ] || [ \"$r\" = 3 ] || exit \"$r\"; /usr/bin/cloud_setup --seed-folders",
+				_("CREATING YOUR CLOUD FOLDER"), 1);
+			page->setAutoContinue(rescan);
+			window->pushGui(page);
+		},
+		_("CHOOSE A FOLDER"), [window, saves, rescan]
+		{
+			cloudSetupOpenSyncPathEditor(window, saves, rescan);
+		},
+		_("NOT NOW"), then));
+}
+
+// BACK UP TO THE CLOUD and RESTORE FROM THE CLOUD open on the scan page
+// (D-CLOUD-156, #350; the maintainer, 2026-09-30: "the scanning the cloud
+// step should come first, and that way we can only offer options that we
+// can actually support"): cloud_scan reads the folder's state, the
+// settings archives and where the content is, on a page of its own, and
+// a completed scan goes straight to the folder dialogs it may need and
+// then the options page, which is built from what it wrote. A scan that
+// did not complete stays with its why and TRY AGAIN beside CLOSE. No
+// cloud storage set up asks SET IT UP NOW? here, before any page; scripts
+// older than cloud_scan open the options page as they always did.
+static void cloudOpenTransfer(Window* window, bool backup)
+{
+	if (!Utils::FileSystem::exists("/storage/.config/rclone/rclone.conf", false))
+	{
+		window->pushGui(new GuiMsgBox(window, _("NO CLOUD STORAGE IS SET UP ON THIS DEVICE YET.\n\nSET IT UP NOW?"), _("YES"),
+			[window] { GuiMenu::openCloudAddRemote(window); }, _("NO"), nullptr));
+		return;
+	}
+	if (!Utils::FileSystem::exists("/usr/bin/cloud_scan"))
+	{
+		cloudOpenTransferOptions(window, backup);
+		return;
+	}
+	auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_scan", _("CHECKING YOUR CLOUD"), 3);
+	page->setAutoContinue([window, backup]
+	{
+		cloudOfferFolder(window, backup, [window, backup] { cloudOpenTransferOptions(window, backup); });
+	});
+	window->pushGui(page);
 }
 
 // Step three: make this device match the cloud.

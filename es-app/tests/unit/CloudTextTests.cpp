@@ -12,6 +12,7 @@
 
 #include "CloudText.h"
 
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -189,6 +190,10 @@ TEST_CASE("parseLastRun names each of the four outcomes")
 	// The two sentinels, by code (CloudExit.h).
 	CHECK(parseLastRun("1789000000 75").outcome == Outcome::SkippedLockHeld);
 	CHECK(parseLastRun("1789000000 69").outcome == Outcome::SkippedNoNetwork);
+	// The third sentinel (D-CLOUD-166): an automatic sync with no saves
+	// folder in the cloud yet, stamped by ThreadedCloudSync with its token.
+	CHECK(parseLastRun("1789000000 78 no-folder").outcome == Outcome::SkippedNoFolder);
+	CHECK(isOutcomeToken("no-folder"));
 
 	// The launch cancel, by token: a 130 that was not one reads as a
 	// failure instead.
@@ -811,7 +816,16 @@ TEST_CASE("transferKind reads which transfer a page's command runs")
 	// Both directions is the card's sync, not a page's run; nothing named
 	// is nothing known.
 	CHECK(transferKind("/usr/bin/cloud_restore --yes --method=copy --update --saves-only; /usr/bin/cloud_backup --yes --method=copy --update --saves-only") == TransferKind::Other);
-	CHECK(transferKind("/usr/bin/cloud_migrate_layout --apply") == TransferKind::Other);
+	// The folder move the dialog offers (#353) is a kind of its own, with
+	// MOVING... for its word; the check before it is not a transfer.
+	CHECK(transferKind("/usr/bin/cloud_migrate_layout --apply") == TransferKind::Move);
+	CHECK(transferKind("/usr/bin/cloud_migrate_layout --check") == TransferKind::Other);
+	// The scan before the options page (#350), in both of its modes; the
+	// folder the offer creates, which runs the re-point and the seeding in
+	// one command and is named by the seeding.
+	CHECK(transferKind("/usr/bin/cloud_scan") == TransferKind::Scan);
+	CHECK(transferKind("/usr/bin/cloud_scan --content --with-media") == TransferKind::Scan);
+	CHECK(transferKind("/usr/bin/cloud_migrate_layout --apply >/dev/null; r=$?; [ \"$r\" = 0 ] || [ \"$r\" = 3 ] || exit \"$r\"; /usr/bin/cloud_setup --seed-folders") == TransferKind::Create);
 	CHECK(transferKind("") == TransferKind::Other);
 
 	// verbOf, the card's reader, does not know the content scripts; that is
@@ -1629,6 +1643,9 @@ TEST_CASE("the page's item names: every label EmulationStation composes has its 
 		{ "RESTORING SAVES", "main.cpp the startup sync; GuiMenu.cpp SYNC SAVES; JourneyTiers.h" },
 		{ "BACKING UP SAVES", "main.cpp the startup sync; GuiMenu.cpp SYNC SAVES" },
 		{ "RESTORING ROMS AND BIOS", "JourneyTiers.h, an earlier build's marker" },
+		{ "CLOUD FOLDER", "cloud_scan's first item; cloud_migrate_layout --apply" },
+		{ "SETTINGS BACKUPS", "cloud_scan's second item; cloud_migrate_layout --apply" },
+		{ "DISCARDED SAVES", "cloud_migrate_layout --apply, the set-aside (D-CLOUD-165)" },
 	};
 	for (auto& l : labels)
 	{
@@ -1685,4 +1702,46 @@ TEST_CASE("an exit sync the network cut part-way is still owed (audit of the fix
 	CHECK_FALSE(CloudText::exitSyncOwed("1790440038 69 gaps YOU WENT OFFLINE PART-WAY THROUGH", "", "1790440130 0"));
 	// A gaps stamp that is not the network's is not owed to the link.
 	CHECK_FALSE(CloudText::exitSyncOwed("1790440038 5 gaps YOUR CLOUD STOPPED ANSWERING", "", ""));
+}
+
+// ------------------------------------------------------------------ the scan's facts (#350)
+
+TEST_CASE("parseKeyValues reads the scan's fact files")
+{
+	const auto f = parseKeyValues("SAVES=/ROCKNIX/Saves\nCURRENT=/Rasteratops/Saves\nSOURCE=-\nCURRENT_EXISTS=0\nMARKER=-\nSTATE=superseded-with-files\n");
+	CHECK(f.at("STATE") == "superseded-with-files");
+	CHECK(f.at("SAVES") == "/ROCKNIX/Saves");
+	CHECK(f.at("CURRENT_EXISTS") == "0");
+	CHECK(f.count("MINE") == 0);
+	// An empty value is a fact too (MINE= with no archive of this device's).
+	CHECK(parseKeyValues("LABEL=QA\nMINE=\nCOUNT=4\n").at("MINE") == "");
+	// A line with no =, a blank line, a line starting with = are skipped.
+	CHECK(parseKeyValues("junk\n\n=x\nA=1\n").size() == 1);
+	// The last value wins when a key repeats (the state read twice after a follow).
+	CHECK(parseKeyValues("STATE=superseded-empty\nSTATE=current\n").at("STATE") == "current");
+}
+
+TEST_CASE("parseSettingsArchive reads the device label and the time out of an archive's name")
+{
+	const auto a = parseSettingsArchive("2026_09_30-143005-Retroid-Pocket-Nova-ROCKNIX_SETTINGS.tar.gz");
+	CHECK(a.ok);
+	CHECK(a.label == "Retroid-Pocket-Nova");
+	struct tm t = *localtime(&a.when);
+	CHECK(t.tm_year + 1900 == 2026);
+	CHECK(t.tm_mon + 1 == 9);
+	CHECK(t.tm_mday == 30);
+	CHECK(t.tm_hour == 14);
+	CHECK(t.tm_min == 30);
+	// A one-word label, and the OS name with its own hyphen-free shape.
+	CHECK(parseSettingsArchive("2026_09_10-000000-QA-ROCKNIX_SETTINGS.tar.gz").label == "QA");
+	CHECK(parseSettingsArchive("2026_09_10-000000-QA-RASTERATOPS_SETTINGS.tar.gz").label == "QA");
+	// Not an archive of this shape: the legacy zip, a name without the time, a date that is not one.
+	CHECK_FALSE(parseSettingsArchive("ROCKNIX_BACKUP.zip").ok);
+	CHECK_FALSE(parseSettingsArchive("QA-ROCKNIX_SETTINGS.tar.gz").ok);
+	CHECK_FALSE(parseSettingsArchive("2026_13_40-000000-QA-ROCKNIX_SETTINGS.tar.gz").ok);
+	CHECK_FALSE(parseSettingsArchive("").ok);
+	// The row's name for the device: hyphens back to spaces, upper case.
+	CHECK(deviceNameFromLabel("Retroid-Pocket-Nova") == "RETROID POCKET NOVA");
+	CHECK(deviceNameFromLabel("Anbernic-RG35XX-SP") == "ANBERNIC RG35XX SP");
+	CHECK(deviceNameFromLabel("") == "");
 }
