@@ -5113,8 +5113,8 @@ msgstr "ACTIVER LA SURCOUCHE MANGOHUD"
 msgid "ENABLE TOUCHSCREEN KEYBOARD"
 msgstr "ACTIVER LE CLAVIER TACTILE"
 
-msgid "ENABLE ROCKNIX SCREENSHOT"
-msgstr "ACTIVER LA CAPTURE D’ÉCRAN ROCKNIX"
+msgid "ENABLE RASTERATOPS SCREENSHOT"
+msgstr "ACTIVER LA CAPTURE D’ÉCRAN RASTERATOPS"
 
 msgid "SCREEN BRIGHTNESS"
 msgstr "LUMINOSITÉ DE L’ÉCRAN"
@@ -6613,3 +6613,9 @@ msgstr "VOUS N’ÊTES PAS EN LIGNE. CONNECTEZ-VOUS POUR TERMINER LA CONFIGURATI
 
 msgid "CONNECT TO WI-FI"
 msgstr "SE CONNECTER AU WI-FI"
+
+msgid "MANUAL UPDATES"
+msgstr "MISES À JOUR MANUELLES"
+
+msgid "This version uses manual updates. Open github.com/rasteratops/distribution/releases on a computer, choose the update for your device, and follow the instructions."
+msgstr "Cette version utilise des mises à jour manuelles. Sur un ordinateur, ouvrez github.com/rasteratops/distribution/releases, choisissez la mise à jour pour votre appareil, puis suivez les instructions."

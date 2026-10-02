@@ -171,7 +171,8 @@ std::string ApiSystem::getVersion(bool extra)
 
 std::string ApiSystem::getApplicationName()
 {
-	return "ROCKNIX";
+    const std::string name = Utils::Platform::GetEnv("OS_NAME");
+    return name.empty() ? "ROCKNIX" : name;
 }
 
 bool ApiSystem::setOverscan(bool enable) 
@@ -447,6 +448,9 @@ bool ApiSystem::canArchitectureUpdate(std::string& architecture) {
 bool ApiSystem::canUpdate(std::vector<std::string>& output) 
 {
 	LOG(LogDebug) << "ApiSystem::canUpdate";
+    // Manual adoption in Rasteratops0.0.1, including inherited force settings.
+    if (getApplicationName() == "RASTERATOPS")
+        return false;
 
 	FILE *pipe = popen("rocknix-update check", "r");
 	if (pipe == NULL)

@@ -559,8 +559,8 @@ void GuiMenu::addVersionInfo()
 
 	if (!ApiSystem::getInstance()->getVersion().empty())
 	{
-		if (ApiSystem::getInstance()->getApplicationName() == "ROCKNIX")
-			label = "ROCKNIX " + ApiSystem::getInstance()->getVersion() + " (" + ApiSystem::getInstance()->getVersion(true) + ")";
+		if (ApiSystem::getInstance()->getApplicationName() == "ROCKNIX" || ApiSystem::getInstance()->getApplicationName() == "RASTERATOPS")
+			label = ApiSystem::getInstance()->getApplicationName() + " " + ApiSystem::getInstance()->getVersion() + " (" + ApiSystem::getInstance()->getVersion(true) + ")";
 		else
 		{
 			std::string aboutInfo = ApiSystem::getInstance()->getApplicationName() + " V" + ApiSystem::getInstance()->getVersion();
@@ -1502,9 +1502,18 @@ void GuiMenu::openUpdatesSettings(bool selectTorrentService)
 		});
 	}
 
-	if (ApiSystem::getInstance()->isScriptingSupported(ApiSystem::UPGRADE))
-	{
-		updateGui->addGroup(_("SOFTWARE UPDATES"));
+    if (ApiSystem::getInstance()->getApplicationName() == "RASTERATOPS")
+    {
+        updateGui->addGroup(_("SOFTWARE UPDATES"));
+        updateGui->addEntry(_("MANUAL UPDATES"), true, [this]
+        {
+            mWindow->pushGui(new GuiMsgBox(mWindow,
+                _("This version uses manual updates. Open github.com/rasteratops/distribution/releases on a computer, choose the update for your device, and follow the instructions."), _("OK")));
+        });
+    }
+    else if (ApiSystem::getInstance()->isScriptingSupported(ApiSystem::UPGRADE))
+    {
+        updateGui->addGroup(_("SOFTWARE UPDATES"));
 
 		// Enable updates
 		updateGui->addSwitch(_("CHECK FOR UPDATES"), "updates.enabled", false);
@@ -1975,7 +1984,7 @@ void GuiMenu::openSystemSettings()
       auto rocknix_screenshot_enabled = std::make_shared<SwitchComponent>(mWindow);
       bool rocknixscreenshotenabled = SystemConf::getInstance()->get("rocknix.screenshot.enabled") == "1";
       rocknix_screenshot_enabled->setState(SystemConf::getInstance()->getBool("rocknix.screenshot.enabled"));
-      s->addWithLabel(_("ENABLE ROCKNIX SCREENSHOT"), rocknix_screenshot_enabled);
+      s->addWithLabel(_("ENABLE RASTERATOPS SCREENSHOT"), rocknix_screenshot_enabled);
       rocknix_screenshot_enabled->setOnChangedCallback([rocknix_screenshot_enabled] {
               bool rocknixscreenshotenabled = rocknix_screenshot_enabled->getState();
                      SystemConf::getInstance()->set("rocknix.screenshot.enabled", rocknixscreenshotenabled ? "1" : "0");
