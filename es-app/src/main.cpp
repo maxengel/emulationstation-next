@@ -675,6 +675,16 @@ static void startStartupSavesSync(Window* window)
 		" done;"
 		" [ \"$_up\" = 1 ] || exit " + noNetwork + ";"
 		" fi;"
+		// Boot-only preparation uses the same join/follow classifier as the
+		// folder page. It must precede writes: a startup backup into an empty
+		// old folder could otherwise make it win over the fleet's real saves
+		// (#365, T08/T11/T12). This does not show or apply the move; its page
+		// still waits for this worker and its outcome card to finish.
+		" if [ -x /usr/bin/cloud_migrate_layout ] && [ -x /usr/bin/cloud_scan ]; then"
+		" /usr/bin/cloud_migrate_layout --needs-step >/dev/null 2>&1; _s=$?;"
+		" if [ \"$_s\" = 0 ]; then"
+		" /usr/bin/cloud_scan --folder; _s=$?; [ \"$_s\" = 0 ] || exit \"$_s\";"
+		" elif [ \"$_s\" != 1 ]; then exit \"$_s\"; fi; fi;"
 		" echo \">>> doing receive\";"
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only --automatic; _r=$?;"
 		" echo \">>> tier RESTORING SAVES|$_r\";"

@@ -5547,8 +5547,13 @@ static bool cloudFolderStepIfQuiet(Window* window)
 	if (sCloudFolderStepOffered)
 		return true;
 	if (window->peekGui() != ViewController::get() || FileData::GetRunningGame() != nullptr
-		|| ThreadedCloudSync::isRunning() || CloudTransferJob::running())
+		|| ThreadedCloudSync::isRunning() || CloudTransferJob::running()
+		|| window->hasAsyncNotifications())
 		return false;
+
+	// Worker completion releases the sync lock before its outcome card's
+	// linger and fade finish. Let the actual window relinquish that surface
+	// before the setup step takes it (#363), including any queued card.
 	sCloudFolderStepOffered = true;
 	cloudFolderStepAtBoot(window);
 	return true;

@@ -97,6 +97,8 @@ public:
 	std::shared_ptr<BatteryIndicatorComponent>	getBatteryIndicator() { return mBatteryIndicator; }
 
 	AsyncNotificationComponent* createAsyncNotificationComponent(bool actionLine = false);
+	// Includes queued, lingering and fading cards until the window removes them.
+	bool hasAsyncNotifications();
 
 	bool isCalibratingGun() { return mCalibrationText != nullptr; }
 	void setGunCalibrationState(bool isCalibrating);

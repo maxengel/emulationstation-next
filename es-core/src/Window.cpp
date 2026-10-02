@@ -1143,6 +1143,12 @@ void Window::renderScreenSaver()
 		mScreenSaver->renderScreenSaver();
 }
 
+bool Window::hasAsyncNotifications()
+{
+	std::unique_lock<std::mutex> lock(mNotificationMessagesLock);
+	return !mAsyncNotificationComponent.empty();
+}
+
 AsyncNotificationComponent* Window::createAsyncNotificationComponent(bool actionLine)
 {
 	std::unique_lock<std::mutex> lock(mNotificationMessagesLock);
