@@ -683,7 +683,7 @@ static void startStartupSavesSync(Window* window)
 		" if [ -x /usr/bin/cloud_migrate_layout ] && [ -x /usr/bin/cloud_scan ]; then"
 		" /usr/bin/cloud_migrate_layout --needs-step >/dev/null 2>&1; _s=$?;"
 		" if [ \"$_s\" = 0 ]; then"
-		" /usr/bin/cloud_scan --folder; _s=$?; [ \"$_s\" = 0 ] || exit \"$_s\";"
+		" timeout 30 /usr/bin/cloud_scan --folder; _s=$?; [ \"$_s\" = 0 ] || exit \"$_s\";"
 		" elif [ \"$_s\" != 1 ]; then exit \"$_s\"; fi; fi;"
 		" echo \">>> doing receive\";"
 		" /usr/bin/cloud_restore --yes --method=copy --update --saves-only --automatic; _r=$?;"
