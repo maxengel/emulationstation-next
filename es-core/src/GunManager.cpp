@@ -938,6 +938,7 @@ void GunManager::udev_initial_gunsList()
 	bool bGunborder;
 
 	struct udev_enumerate *enumerate = udev_enumerate_new(udev);
+	if (enumerate == NULL) return;
 	udev_enumerate_add_match_property(enumerate, "ID_INPUT_GUN", "1");
 	udev_enumerate_add_match_subsystem(enumerate, "input");
 	udev_enumerate_scan_devices(enumerate);
@@ -956,6 +957,7 @@ void GunManager::udev_initial_gunsList()
 
 		if (udev_addGun(dev, NULL, bGunborder) == false) udev_device_unref(dev); // unhandled device
 	}
+	udev_enumerate_unref(enumerate);
 }
 
 bool GunManager::udev_addGun(struct udev_device *dev, Window* window, bool needGunBorder)
