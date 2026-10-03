@@ -69,6 +69,7 @@ std::string getDeviceParentSyspath(const std::string& path) {
   if (udev != NULL)
     {
       struct udev_enumerate *enumerate = udev_enumerate_new(udev);
+      if (enumerate == NULL) { udev_unref(udev); return res; }
       udev_enumerate_add_match_subsystem(enumerate, "input");
       udev_enumerate_scan_devices(enumerate);
       devs = udev_enumerate_get_list_entry(enumerate);
@@ -85,6 +86,7 @@ std::string getDeviceParentSyspath(const std::string& path) {
 		const char *bt_parent_sysname = udev_device_get_syspath(bt_parent);
 		res = bt_parent_sysname;
 		udev_device_unref(ud);
+		udev_enumerate_unref(enumerate);
 		udev_unref(udev);
 		return res;
 	      }
@@ -95,6 +97,7 @@ std::string getDeviceParentSyspath(const std::string& path) {
 		const char *usb_parent_sysname = udev_device_get_syspath(usb_parent);
 		res = usb_parent_sysname;
 		udev_device_unref(ud);
+		udev_enumerate_unref(enumerate);
 		udev_unref(udev);
 		return res;
 	      }
@@ -103,10 +106,12 @@ std::string getDeviceParentSyspath(const std::string& path) {
 
 	    // fallback (should not happen) ; return the device path
 	    res = name;
+	    udev_enumerate_unref(enumerate);
 	    udev_unref(udev);
-	    return name;
+	    return res;
 	  }
 	}
+      udev_enumerate_unref(enumerate);
       udev_unref(udev);
     }
   return "";
@@ -140,6 +145,7 @@ bool InputConfig::isWheel(const std::string path) {
 	if (udev != NULL)
 	  {
 	    struct udev_enumerate *enumerate = udev_enumerate_new(udev);
+	    if (enumerate == NULL) { udev_unref(udev); return false; }
 	    udev_enumerate_add_match_property(enumerate, "ID_INPUT_WHEEL", "1");
 	    udev_enumerate_add_match_subsystem(enumerate, "input");
 	    udev_enumerate_scan_devices(enumerate);
@@ -160,6 +166,7 @@ bool InputConfig::isWheel(const std::string path) {
 	    	}
 	    	udev_device_unref(dev);
 	      }
+	    udev_enumerate_unref(enumerate);
 	    udev_unref(udev);
 	  }
 	return res;

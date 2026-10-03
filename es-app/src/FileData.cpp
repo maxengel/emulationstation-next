@@ -40,6 +40,9 @@
 #include "guis/GuiLoading.h"
 #include "views/ViewController.h"
 #include <chrono>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 #include <thread>
 #include <atomic>
 #include "OfflineAchievements.h"
@@ -1070,6 +1073,12 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 
 	bool hideWindow = Settings::getInstance()->getBool("HideWindow");
 	window->deinit(hideWindow);
+
+#if defined(__GLIBC__)
+	// Renderer teardown frees large heaps which glibc may keep mapped.
+	// Return those pages before the emulator needs memory (distro #310).
+	malloc_trim(0);
+#endif
 	
 	const std::string rom = Utils::FileSystem::getEscapedPath(getPath());
 	const std::string basename = Utils::FileSystem::getStem(getPath());
@@ -1200,6 +1209,12 @@ bool FileData::launchGame(Window* window, LaunchGameOptions options)
 	}
 
 	window->reactivateGui();
+
+#if defined(__GLIBC__)
+	// Resource reload also leaves temporary heap pages behind. Release
+	// them once the interface is ready, rather than accumulating them.
+	malloc_trim(0);
+#endif
 
 	// A screenshot taken in this session is in a folder the viewer scanned
 	// at boot. Re-read the folders that changed, once the launch has fully

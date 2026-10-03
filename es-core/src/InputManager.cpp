@@ -117,6 +117,7 @@ std::vector<std::string> InputManager::getMice() {
   if (udev != NULL)
     {
       struct udev_enumerate *enumerate = udev_enumerate_new(udev);
+      if (enumerate == NULL) { udev_unref(udev); return mice; }
       udev_enumerate_add_match_property(enumerate, "ID_INPUT_MOUSE", "1");
       udev_enumerate_add_match_subsystem(enumerate, "input");
       udev_enumerate_scan_devices(enumerate);
@@ -141,6 +142,7 @@ std::vector<std::string> InputManager::getMice() {
 	  udev_device_unref(dev);
 	}
 
+      udev_enumerate_unref(enumerate);
       udev_unref(udev);
     }
   #endif
