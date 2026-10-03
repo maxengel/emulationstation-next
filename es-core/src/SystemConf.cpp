@@ -85,6 +85,17 @@ void SystemConf::parseSystemConf(const std::string& text)
 // every start and after every save, and most of those change nothing.
 void SystemConf::recordLastGood(const std::string& text, int recoveredMode)
 {
+	// The load/save released its lock before reaching this publication.
+	// Reacquire and compare the complete current choice under the lock: a
+	// script's newer state must win over this call's older snapshot (#320).
+	Utils::AtomicFile::PidLock lock(sLockPath);
+	if (!lock.acquire(sLockBudgetMs))
+		return;
+	const auto current = Utils::AtomicFile::chooseConfig(mSystemConfFile);
+	if (current.text != text ||
+		(!current.record && current.source != Utils::AtomicFile::LoadedConfig::Source::Backup))
+		return;
+
 	// No less private than the live file it copies (#308 F-ES-08): a record
 	// an earlier build made 0644 beside a 0600 file is rewritten for its mode
 	// even when its text is the same. A recovery passes the mode every copy
@@ -93,7 +104,7 @@ void SystemConf::recordLastGood(const std::string& text, int recoveredMode)
 	// is no file -- made a 0600 temporary's text a 0644 record (audit of the
 	// fix round, gpt G2-E-core-05).
 	const std::string backup = mSystemConfFile + ".backup";
-	const int mode = recoveredMode >= 0 ? recoveredMode : Utils::AtomicFile::modeOf(mSystemConfFile, 0644);
+	const int mode = current.mode & (recoveredMode >= 0 ? recoveredMode : 07777);
 	if (Utils::AtomicFile::readText(backup) == text && Utils::AtomicFile::modeOf(backup, mode) == mode)
 		return;
 	if (!Utils::AtomicFile::writeText(backup, text, mode))
@@ -234,7 +245,8 @@ bool SystemConf::loadFromDisk()
 			<< ".tmp that an interrupted save left -- loading that and writing it back";
 		parseSystemConf(chosen.text);
 		reportWriteBack("its .tmp");
-		recordLastGood(chosen.text, mode);
+		if (wrote != Utils::AtomicFile::RecoveryWrite::LockBusy)
+			recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;
 
@@ -247,7 +259,8 @@ bool SystemConf::loadFromDisk()
 		// copy shares, which the live file is written with (claude
 		// G2-E-core-04 b: a record an earlier build made 0644 stayed so beside
 		// the 0600 file until the next save).
-		recordLastGood(chosen.text, mode);
+		if (wrote != Utils::AtomicFile::RecoveryWrite::LockBusy)
+			recordLastGood(chosen.text, mode);
 		sRecovered = true;
 		return true;
 
@@ -316,7 +329,8 @@ bool SystemConf::saveSystemConf()
 
 	// What was just written is, by construction, the newest good state, so
 	// it becomes the record (D-CLOUD-078: a success becomes the last known
-	// good). Outside the lock: the shell never takes it for the record.
+	// good). recordLastGood reacquires the lock and revalidates that snapshot;
+	// a script may have published a newer state since this save released it.
 	// Unless it was merged onto a file cut short: the record then keeps the
 	// keys the cut lost (audit of the fixes G-E1-04).
 	if (baseWhole)

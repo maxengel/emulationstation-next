@@ -94,6 +94,12 @@ struct SystemConfTestAccess
 		return SystemConf::getInstance();
 	}
 
+	// Resume at the actual publication boundary with a captured earlier read.
+	static void record(SystemConf* conf, const std::string& snapshot)
+	{
+		conf->recordLastGood(snapshot);
+	}
+
 	static bool recovered() { return SystemConf::sRecovered; }
 };
 
@@ -454,4 +460,47 @@ TEST_CASE("a record cut short is neither loaded nor recorded, and the defaults a
 		CHECK(get(path) == whole);
 		CHECK(get(path + ".backup") == whole);
 	}
+}
+
+TEST_CASE("a script's newer good state published between the read and the record is not overwritten")
+{
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	const std::string earlier = "system.hostname=A\naudio.volume=70\n";
+	const std::string newer = "system.hostname=A\naudio.volume=40\n";
+	put(path, earlier);
+	SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 20);
+	// The loader/save retains this snapshot while a script gets its turn.
+	const std::string snapshot = get(path);
+	{
+		PidLock script(lockPath);
+		REQUIRE(script.acquire(1000));
+		REQUIRE(Utils::AtomicFile::writeText(path, newer, 0600));
+		REQUIRE(Utils::AtomicFile::writeText(path + ".backup", newer, 0600));
+	}
+	SystemConfTestAccess::record(conf, snapshot);
+	CHECK(get(path) == newer);
+	CHECK(get(path + ".backup") == newer);
+	CHECK(modeOf(path + ".backup") == 0600);
+}
+
+TEST_CASE("LockBusy recovery reads its temporary without publishing over the holder's record")
+{
+	ScratchDir dir;
+	const std::string path = dir / "system.cfg";
+	const std::string lockPath = dir / ".system.cfg.lock";
+	const std::string unfinished = "system.hostname=A\naudio.volume=70\n";
+	const std::string recorded = "system.hostname=A\naudio.volume=40\n";
+	put(path, "system.hostname=A\naudio.vol");
+	put(path + ".tmp", unfinished);
+	put(path + ".backup", recorded);
+	PidLock script(lockPath);
+	REQUIRE(script.acquire(1000));
+	SystemConf* conf = SystemConfTestAccess::fresh(path, lockPath, 20);
+	CHECK(conf->get("audio.volume") == "70");
+	CHECK(SystemConfTestAccess::recovered());
+	CHECK(get(path) == "system.hostname=A\naudio.vol");
+	CHECK(get(path + ".backup") == recorded);
+	CHECK(get(path + ".tmp") == unfinished);
 }
