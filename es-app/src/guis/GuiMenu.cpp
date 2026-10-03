@@ -5329,6 +5329,24 @@ static void cloudOfferFolder(Window* window, const CloudFolderAsk& ask)
 	const std::string state = cloudScanFact(st, "STATE");
 	const std::string current = cloudScanFact(st, "CURRENT").empty() ? "/Rasteratops/Saves" : cloudScanFact(st, "CURRENT");
 	const std::string newRoot = cloudRootOf(current);
+	if (state == "migration-pending")
+	{
+		LOG(LogInfo) << "cloud folder: interrupted move; offering retry";
+		window->pushGui(new GuiMsgBox(window,
+			_("YOUR CLOUD FOLDER MOVE DIDN'T FINISH.\n\nTRY AGAIN? FILES ALREADY MOVED WILL BE KEPT."),
+			_("TRY AGAIN"), [window, newRoot, rescan, abandon]
+			{
+				auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_migrate_layout --apply", _("MOVING YOUR CLOUD FOLDER"));
+				page->setFailedNote(_("WHAT MOVED IS IN THE NEW FOLDER. TRY AGAIN TO FINISH."));
+				page->setCompletedAction(rescan, _("CONTINUE"), _("PRESS ANY BUTTON TO CONTINUE"),
+					Utils::String::format(_("YOUR CLOUD FOLDER IS NOW %s.").c_str(), newRoot.c_str()), true);
+				if (abandon)
+					page->setDismissedAction(abandon);
+				window->pushGui(page);
+			},
+			_("NOT NOW"), then));
+		return;
+	}
 	if (state == "superseded-with-files")
 	{
 		const std::string source = cloudScanFact(st, "SOURCE") == "-" || cloudScanFact(st, "SOURCE").empty()
@@ -5342,7 +5360,7 @@ static void cloudOfferFolder(Window* window, const CloudFolderAsk& ask)
 			{
 				LOG(LogInfo) << "cloud folder: moving " << oldRoot << " to " << newRoot;
 				auto page = new GuiCloudTransfer(window, "/usr/bin/cloud_migrate_layout --apply", _("MOVING YOUR CLOUD FOLDER"));
-				page->setFailedNote(Utils::String::format(_("YOUR CLOUD STILL HAS %s. NOTHING WAS REMOVED.").c_str(), oldRoot.c_str()));
+				page->setFailedNote(_("WHAT MOVED IS IN THE NEW FOLDER. TRY AGAIN TO FINISH."));
 				// One short sentence: the longer one, naming the three tiers,
 				// was cut at 640 px (guest d, 2026-10-01).
 				page->setCompletedAction(rescan, _("CONTINUE"), _("PRESS ANY BUTTON TO CONTINUE"),
