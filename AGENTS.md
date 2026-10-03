@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This repository is the interface of **Rasteratops**, an immutable Linux distribution forked from ROCKNIX
 for handheld gaming devices. It is built as the `emulationstation` package of the
